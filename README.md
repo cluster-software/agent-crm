@@ -15,18 +15,9 @@
 
 ---
 
-Agent CRM is a headless CRM built for AI-native sales and go-to-market workflows.
-(
-  - what exactly is this, no clear mental picture
-  - the headless CRM that enables claude code to do X (be more concrete)
-  - crm in a box for claude
-    - annoying to setup attio, wire up MCPs
-    - with agent crm you can get started right away
-)
+Agent CRM is a headless CRM built for AI-native GTM workflows.
 
-Every CRM provider now ships with an MCP and a chat bolted on the a dashboard. Underneath, they're still dashboards from 2012 with humans as the core user type in mind with an AI veneer.
-
-Agent CRM is built from the ground-up for agents as the primary user. The source of truth is a `.agent-crm` workspace. UIs, CLIs, and scripts are clients.
+Instead of clicking through a dashboard, you talk to Claude: *"log my call with Acme from the Granola transcript and bump the deal to Negotiation"*, *"prep me for tomorrow's call with Globex"*, *"sweep every deal I haven't touched in the last week and propose next steps"*. Claude does the work against a local file that lives in your repo - no SaaS to log into, no UI to learn, no per-seat pricing.
 
 ```txt
                     ┌──────────────┐
@@ -39,41 +30,42 @@ Agent CRM is built from the ground-up for agents as the primary user. The source
 ```
 
 ## Why Agent CRM
-(
-  - how is this different than just MDs, help claude scalably keep track of conversations without having to pay for Hubspot, Attio, etc
-  - better than markdown becuase you have a datamodel
-  - better than notion because its more opinionated, it doesn't bloat your context window
-)
 
+You get a real CRM data model out of the box — `companies`, `people`, `deals`, and `activities` (calls, emails, meetings, transcripts, stage changes). Typed, related, queryable with plain SQL. Your agent doesn't have to invent what a deal is or how a call transcript links back to a contact — the schema is there from `agent-crm init`.
+
+The alternatives all fall short:
+
+- **Attio + MCP / Salesforce + MCP** — MCPs eat your context window. Every tool definition loads up front, every query round-trips verbose JSON, and you burn tokens on every read and write. The data still lives on their servers, the schema is still theirs, edits hit production with no diff to review, and you're paying per seat on top.
+- **Markdown files in a folder** — works great until you hit ~200 md files: `grep` and `bash` stop returning answers in human time, and cross-file questions like *"which deals slipped this quarter and who owns them?"* need real relations. You end up reinventing SQL — badly.
+- **Roll your own Postgres** — congratulations, you're building a CRM from scratch.
+
+Agent CRM is the substrate underneath: a `.agent-crm` workspace — a single SQLite file in your repo with the schema, the relationships, and version-controlled edits already in the box. Four properties make it work:
+
+- **Opinionated** — four objects, fixed (`companies`, `people`, `deals`, `activities`). Flexible-schema tools (Notion, Airtable, custom Attio objects) hand your agent too many degrees of freedom and the data model drifts between runs. Constraint is what makes agent edits predictable.
 - **Headless** — no built-in UI. Interact via SDK, CLI, or any UI you build on top.
-- **Claude rips on your CRM** — Claude Code writes its own skills against the SDK. Weekly reports, transcript ingestion, enrichment, stale-deal sweeps — all authored by the agent, all living as `.ts` files in your repo.
+- **Claude writes its own skills** — Claude rips on your CRM. Tell it what you want and it writes the skill against the SDK: weekly reports, transcript ingestion, enrichment, stale-deal sweeps — all living as `.ts` files in your repo. No plugin marketplace, no integration vendor, no waiting on a roadmap.
 - **Version controlled** — every change is a checkpoint on a branch. Diff, merge, revert, time-travel. Agents propose changes safely; you review and merge.
 
 ## Who this is for
 
-Technical founders and GTM engineers running their go-to-market motion through Claude Code, **without an existing CRM**. Agent CRM is built for teams going agent-native from day zero — not a migration target for existing HubSpot, Attio or Salesforce pipelines.
+**Founder-led sales, GTM engineers, and solo consultants** whose primary workspace is already Claude Code — going agent-native from day zero. Either you don't have a CRM, or you'd happily rip out the one you have.
 
-
-## Claude automates your CRM
-
-Because the SDK is open and the file lives next to your code, **Claude Code can author its own automations as skills** — no plugin marketplace, no integration vendor, no waiting on a roadmap.
-
-> _"Write me a skill that runs every Monday, reads my call transcripts, updates deal stages, and posts a summary to Slack."_
-
-Claude writes the skill, drops it in `.claude/skills/`, and runs it on a branch first so you can review.
-
-#### More skills Claude can write for you
-
-- `prep` — research prospect and prep for a call
-- `post-call` — extract transcript and add an entry in the crm
-
-Every skill is just an `.md` file in your repo. **You can read it, edit it, version it, delete it.**
+**Not for you (yet):** teams of 5+ AEs that need realtime collaboration, anyone with years of HubSpot, Attio, or Salesforce data to migrate, or shops where reps won't open a terminal.
 
 ## Version controlled
 
-Every change to `.agent-crm` is a **checkpoint** on a **version** (branch). Diff, merge, revert.
+Every change to `.agent-crm` is a **checkpoint** on a **version** (branch). Diff, merge, revert. This is the part that makes agent automation safe.
 
-This is the part that makes agent automation safe.
+The flow: an agent works on a version (`monday-cleanup`), bulk-updates deal stages, enriches contacts. It misclassifies 5 deals. You diff against `main`, reject the 5 bad cells, merge the rest.
+
+```bash
+agent-crm diff monday-cleanup
+agent-crm merge monday-cleanup \
+  --reject deals:globex-q2:stage \
+  --reject deals:initech:value
+```
+
+Every checkpoint is a snapshot you can rewind to with `agent-crm checkout <checkpoint>` — full history with `agent-crm log`.
 
 ## Quickstart
 
@@ -155,22 +147,13 @@ Agent CRM ships with four standard objects
 | `associated_deal`      | → `deals`                                          |
 | `metadata`             | json (type-specific extras, e.g. `{from, to}` for `stage_change`) |
 
-Stage transitions on `people.lifecycle_stage` and `deals.stage` automatically emit `stage_change` activities so the funnel history falls out of the timeline. Pipeline timestamps like "last touch" or "first reply" are derived from activities — they aren't denormalized columns.
-
-Conversation activities (calls, meetings) can carry one or more **transcripts** as a subordinate primitive — same row carries `content`, optional structured `segments` (`[{speaker_label, person_id?, start_seconds?, end_seconds?, text}]`), `source` (`granola`/`otter`/`whisper`/`manual`), and `format`. Stored in a separate `transcripts` table so the activity timeline stays lean; cascade-deletes with the parent activity. The transcript URL itself lives on `activities.source_url`; `transcripts.content` holds the verbatim text once fetched.
-
-Every object also carries `created_at`, `created_by`, and `updated_at` automatically.
-
-Schema is open and extensible — add custom attributes on any object, or define your own objects. Under the hood, `.agent-crm` is a SQLite database. Queryable with plain SQL, backed up by copying a file. No proprietary format, no vendor lock-in.
+Every object carries `created_at`, `created_by`, and `updated_at` automatically. Add custom attributes or define your own objects. Under the hood, `.agent-crm` is a SQLite database — query with plain SQL, back up by copying a file. No proprietary format, no vendor lock-in.
 
 Agent CRM isn't trying to beat Attio at being Attio. If your team needs a polished UI for non-technical reps today, use Attio or HubSpot. If Claude Code is your primary interface and you want agent edits to be *safe*, this is the substrate.
 
-## What this isn't
-
-- **Not a migration target.** There's no HubSpot/Salesforce importer. This is for teams starting their CRM from zero.
-
 
 ## Roadmap
-- [ ] TypeScript SDK + CLI
+- [ ] TypeScript SDK
+- [ ] CLI
 - [ ] Realtime collaboration (multiplayer mode)
 - [ ] Cloud hosting
