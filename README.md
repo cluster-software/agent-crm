@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/agent-crm-header.png" alt="agent-crm">
+<img src="assets/header.png" alt="agent-crm">
 
 </div>
 
