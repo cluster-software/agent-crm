@@ -20,6 +20,23 @@ The source of truth is a `.acrm` workspace. UIs, CLIs, scripts, and agents all o
 └────────────┘      └─────────────┘      └───────────────┘
 ```
 
+## Quickstart
+
+Install the CLI:
+
+```bash
+npm install -g @agent-crm/cli
+```
+
+Create your first workspace and query it:
+
+```bash
+acrm init                              # creates .acrm workspace
+acrm execute "select * from people limit 5;"
+```
+
+Advanced/unsafe: if you understand the risks and want Claude to run commands without permission prompts, start it with `claude --dangerously-skip-permissions`.
+
 ## Why Agent CRM
 - **🧩 Headless:** Ships as a CLI.
 - **⚒️ Skills based:** Claude writes skills against the CLI (transcript ingestion, stale-deal sweeps, weekly reports) as `.md` files.
@@ -68,21 +85,6 @@ description: Pull a Granola transcript, attach it to the person in .acrm, and lo
 Need something custom? Just ask:
 
 > _"Write me a skill that reads my call transcripts, updates deal stages, and posts a summary to Slack."_
-
-## Quickstart
-
-Install the CLI:
-
-```bash
-npm install -g @agent-crm/cli
-```
-
-Create your first workspace and let Claude rip:
-
-```bash
-acrm init                              # creates .acrm workspace
-claude --dangerously-skip-permissions  # let claude rip
-```
 
 Then to import your existing leads, just ask Claude:
 
