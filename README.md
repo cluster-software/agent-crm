@@ -65,7 +65,7 @@ Skills are how Claude does the work. Bring your own, or use the ones we ship —
 
 **[`prep-call`](.claude/skills/prep-call.md).** Before a meeting, Claude pulls the person's full history from your `.acrm`, fetches their LinkedIn profile (cached, 14-day TTL), and hands you a one-pager with discovery questions tied to what they've actually been talking about.
 
-**[`post-call`](.claude/skills/post-call.md).** After a meeting, Claude pulls the transcript from Granola, attaches it to the person, logs a call activity with the extracted problem + would-pay signal, updates the deal stage, and creates follow-up tasks — all on a branch you review before merging.
+**[`post-call`](.claude/skills/post-call.md).** After a meeting, Claude pulls the transcript from Granola, resolves the person in `.acrm`, extracts the problem + would-pay signal, and writes a `last_call` value plus any deal-stage update via `acrm execute`. You review the SQL output before the next sync.
 
 **[`follow-up`](.claude/skills/follow-up.md).** Claude queries `.acrm` for leads with stale activity, reads the prior thread for each, and drafts the next message in your tone of voice. You review and send.
 
@@ -79,28 +79,27 @@ Each skill is a markdown file in `.claude/skills/`. Here's what `post-call` look
 
 ```markdown
 ---
-description: Pull a Granola transcript, attach it to the person in .acrm, and log a call activity — all on a branch you review before merging
+description: Pull a Granola transcript, resolve the person in .acrm, and log the call via SQL — using the CLI's three commands: init, import csv, execute.
 ---
 
 ## Steps
 
-1. **Resolve the person.**
-   `acrm people find --query "$ARGUMENTS" --json`
+1. **Resolve the person** with a SQL lookup against `.acrm`:
+   `acrm execute "SELECT DISTINCT record_id FROM acrm_value WHERE object_slug = 'people' AND attribute_slug = 'email_addresses' AND active_until IS NULL AND normalized_key = ?" '["<email>"]' --json`
 
-2. **Find the Granola meeting** via `mcp__granola__list_meetings`.
-   Filter to meetings where the person's name appears in the title or
+2. **Find the Granola meeting** via `mcp__granola__list_meetings`. Filter
+   to meetings where the person's name appears in the title or
    participants. If multiple, ask the user to pick.
 
 3. **Fetch the transcript** with `mcp__granola__get_meeting_transcript`.
 
-4. **Branch the file.**
-   `acrm branch new sync/<YYYY-MM-DD>-<slug>`
+4. **Extract the call fields** (problem, would-pay, next steps).
 
-5. **Attach the transcript and log the call.** Update the deal stage if
-   it moved. Create tasks for committed next steps.
+5. **Write back via `acrm execute`.** Close the previous `last_call`
+   value (`UPDATE acrm_value SET active_until = …`) and insert a new
+   one. Update the deal's `stage` the same way if it moved.
 
-6. **Show the diff.** Do not merge — the user reviews and runs
-   `acrm merge` themselves.
+6. **Report a short summary.** The user reviews the JSON output.
 ```
 
 Need something custom? Just ask:
