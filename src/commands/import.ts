@@ -5,9 +5,9 @@ import type { Lix, LixRuntimeValue } from "@lix-js/sdk";
 import { openWorkspace } from "../workspace/open.js";
 import { exec } from "../db/execute.js";
 import { fail, ok, setJsonMode } from "../output/json.js";
-import { ulid } from "../lib/ids.js";
+import { generateUuid } from "../lib/ids.js";
 import { nowIso } from "../lib/time.js";
-import { AcrmError } from "../lib/errors.js";
+import { AcrmError, ERR } from "../lib/errors.js";
 import {
   encode,
   normalizeUniqueKey,
@@ -144,7 +144,7 @@ async function insertValue(
         }
       : { ref_object: null, ref_record_id: null };
   const params: LixRuntimeValue[] = [
-    ulid(),
+    await generateUuid(lix),
     args.object_slug,
     args.record_id,
     args.attribute_slug,
@@ -271,7 +271,7 @@ async function importRow(
     if (existing) {
       companyId = existing;
     } else {
-      companyId = ulid();
+      companyId = await generateUuid(lix);
       await insertRecord(lix, "companies", companyId);
       await addMultiValue(lix, {
         object_slug: "companies",
@@ -310,7 +310,7 @@ async function importRow(
     if (existing) {
       personId = existing;
     } else {
-      personId = ulid();
+      personId = await generateUuid(lix);
       await insertRecord(lix, "people", personId);
       await addMultiValue(lix, {
         object_slug: "people",
@@ -373,7 +373,7 @@ async function importRow(
   // deal (optional)
   const dealName = pick(row, "deal_name", "deal");
   if (dealName) {
-    const dealId = ulid();
+    const dealId = await generateUuid(lix);
     await insertRecord(lix, "deals", dealId);
     await setSingleValue(lix, {
       object_slug: "deals",
@@ -464,7 +464,7 @@ async function importRow(
 export function registerImport(program: Command): void {
   const importCmd = program
     .command("import")
-    .description("import data into the workspace");
+    .description("import data into the .acrm file");
 
   importCmd
     .command("csv <path>")
@@ -494,7 +494,7 @@ export function registerImport(program: Command): void {
         }
       } catch (e) {
         if (e instanceof AcrmError) fail(e.message, e.code);
-        else fail(e instanceof Error ? e.message : String(e), "ERR_IMPORT");
+        else fail(e instanceof Error ? e.message : String(e), ERR.IMPORT);
         process.exit(1);
       }
     });

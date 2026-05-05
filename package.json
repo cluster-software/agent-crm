@@ -15,7 +15,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@lix-js/sdk": "0.6.0-preview.1",
+    "@lix-js/sdk": "0.6.0-preview.2",
     "better-sqlite3": "^12.9.0",
     "commander": "^12.1.0"
   },

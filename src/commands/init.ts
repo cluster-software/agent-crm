@@ -4,8 +4,8 @@ import { openWorkspace } from "../workspace/open.js";
 import { registerAllSchemas } from "../workspace/schemas/index.js";
 import { exec } from "../db/execute.js";
 import { fail, ok, setJsonMode } from "../output/json.js";
-import { ulid } from "../lib/ids.js";
-import { AcrmError } from "../lib/errors.js";
+import { generateUuid } from "../lib/ids.js";
+import { AcrmError, ERR } from "../lib/errors.js";
 
 type ObjectSeed = {
   object_slug: string;
@@ -101,24 +101,25 @@ async function seedAttributes(lix: Lix): Promise<void> {
 
 export function registerInit(program: Command): void {
   program
-    .command("init")
-    .description("create a new .acrm workspace in the current directory")
-    .action(async () => {
-      const root = program.opts() as { json?: boolean; workspace?: string };
+    .command("init <name>")
+    .description("create a new .acrm file in the current directory (e.g. `acrm init cluster.acrm`)")
+    .action(async (name: string) => {
+      const root = program.opts() as { json?: boolean };
       setJsonMode(root.json);
       try {
-        const lix = await openWorkspace({ workspace: root.workspace, create: true });
+        const lix = await openWorkspace({ workspace: name, create: true });
         try {
           await registerAllSchemas(lix);
           await seedObjects(lix);
           await seedAttributes(lix);
-          ok({ initialized: true, workspace_id: ulid() });
+          const workspaceId = await generateUuid(lix);
+          ok({ initialized: true, workspace_id: workspaceId });
         } finally {
           await lix.close();
         }
       } catch (e) {
         if (e instanceof AcrmError) fail(e.message, e.code);
-        else fail(e instanceof Error ? e.message : String(e), "ERR_INIT");
+        else fail(e instanceof Error ? e.message : String(e), ERR.INIT);
         process.exit(1);
       }
     });
