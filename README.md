@@ -29,13 +29,19 @@ The source of truth is a `.acrm` workspace. UIs, CLIs, scripts, and agents all o
 
 ## How Claude runs your GTM
 
-Skills are how Claude does the work. Bring your own, or use the ones we ship — `prep-call`, `post-call`, `follow-up`. Claude can write new ones in seconds.
+Skills are how Claude does the work. Bring your own, or use the ones we ship — `prep-call`, `post-call`, `follow-up`, `stale-opportunities`, `champion-left`, `new-hire-trigger`. Claude can write new ones in seconds.
 
 **[`prep-call`](.claude/skills/prep-call.md).** Before a meeting, Claude pulls the person's full history from your `.acrm`, fetches their LinkedIn profile (cached, 14-day TTL), and hands you a one-pager with discovery questions tied to what they've actually been talking about.
 
 **[`post-call`](.claude/skills/post-call.md).** After a meeting, Claude pulls the transcript from Granola, attaches it to the person, logs a call activity with the extracted problem + would-pay signal, updates the deal stage, and creates follow-up tasks — all on a branch you review before merging.
 
 **[`follow-up`](.claude/skills/follow-up.md).** Claude queries `.acrm` for leads with stale activity, reads the prior thread for each, and drafts the next message in your tone of voice. You review and send.
+
+**[`stale-opportunities`](.claude/skills/stale-opportunities.md).** Run nightly. Claude finds deals stuck in qualified/proposal for 60+ days, re-enriches the primary contact via Apollo, scans for new ICP-matched hires and news signals at the account, and writes back a status (`actionable` / `dead` / `needs_review`) with a one-line narrative so AEs can triage in seconds.
+
+**[`champion-left`](.claude/skills/champion-left.md).** Run biweekly. Claude scans open pipeline for primary contacts whose Apollo employment record changed in the last 14 days and DMs the assigned AE the affected deals, departure dates, and the champion's new employer — so you can pivot to a new contact before the deal goes cold.
+
+**[`new-hire-trigger`](.claude/skills/new-hire-trigger.md).** Run monthly. Claude searches Apollo for ICP-matched executives (VP Sales, CRO, Head of RevOps, etc.) hired in the last 30 days at your ABM accounts, flags the ones with open pipeline, and surfaces a re-engagement list — a new buyer often resets a stalled deal.
 
 Each skill is a markdown file in `.claude/skills/`. Here's what `post-call` looks like:
 
