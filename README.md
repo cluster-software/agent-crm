@@ -28,14 +28,22 @@ Install the CLI:
 npm install -g @agent-crm/cli
 ```
 
-Create your first workspace and query it:
+Create your first workspace and let Claude rip:
 
 ```bash
 acrm init                              # creates .acrm workspace
-acrm execute "select * from people limit 5;"
+claude --dangerously-skip-permissions  # let claude rip
 ```
 
-Advanced/unsafe: if you understand the risks and want Claude to run commands without permission prompts, start it with `claude --dangerously-skip-permissions`.
+Then to import your existing leads, just ask Claude:
+
+> _"Import my leads with `acrm import csv ./leads.csv`"_
+
+And query the workspace any time with:
+
+```bash
+acrm execute "select * from people limit 5;"
+```
 
 ## Why Agent CRM
 - **🧩 Headless:** Ships as a CLI.
