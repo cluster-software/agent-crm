@@ -32,17 +32,24 @@ Create your first `.acrm` file and let Claude rip:
 
 ```bash
 acrm init cluster.acrm                 # creates cluster.acrm file
-claude --dangerously-skip-permissions  # let claude rip
 ```
 
-Then to import your existing leads, just ask Claude:
+Then to import your existing leads:
 
-> _"Import my leads with `acrm import csv ./leads.csv`"_
+```bash
+acrm import csv ./leads.csv
+```
 
 And query the file any time with:
 
 ```bash
 acrm execute "select * from people limit 5;"
+```
+
+Let Claude rip on Agent CRM:
+
+```bash
+claude --dangerously-skip-permissions
 ```
 
 ## Why Agent CRM
