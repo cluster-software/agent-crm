@@ -100,8 +100,6 @@ Need something custom? Just ask:
 
 > _"Write me a skill that reads my call transcripts, updates deal stages, and posts a summary to Slack."_
 
-The [`csv-import`](.claude/skills/csv-import.md) skill reads your headers, maps them to `.acrm`'s schema (people, companies, deals), dedupes on email + domain, and lands the import on a branch you review before merging.
-
 ## Roadmap
 - [x] `.acrm` file format
 - [ ] CLI
