@@ -8,7 +8,7 @@ Claude is running your GTM. Your lead lists live in CSVs because existing CRMs w
 
 Agent CRM gives Claude a structured backend it can query, edit, diff, validate, and merge.
 
-The source of truth is a `.acrm` workspace. UIs, CLIs, scripts, and agents all operate on it.
+The source of truth is a portable `.acrm` file. UIs, CLIs, scripts, and agents all operate on it — and you can send it around like any other file.
 
 ```txt
                     ┌──────────────┐
@@ -28,10 +28,10 @@ Install the CLI:
 npm install -g @agent-crm/cli
 ```
 
-Create your first workspace and let Claude rip:
+Create your first `.acrm` file and let Claude rip:
 
 ```bash
-acrm init                              # creates .acrm workspace
+acrm init cluster.acrm                 # creates cluster.acrm file
 claude --dangerously-skip-permissions  # let claude rip
 ```
 
@@ -39,7 +39,7 @@ Then to import your existing leads, just ask Claude:
 
 > _"Import my leads with `acrm import csv ./leads.csv`"_
 
-And query the workspace any time with:
+And query the file any time with:
 
 ```bash
 acrm execute "select * from people limit 5;"
@@ -86,7 +86,7 @@ description: Pull a Granola transcript, attach it to the person in .acrm, and lo
 
 3. **Fetch the transcript** with `mcp__granola__get_meeting_transcript`.
 
-4. **Branch the workspace.**
+4. **Branch the file.**
    `acrm branch new sync/<YYYY-MM-DD>-<slug>`
 
 5. **Attach the transcript and log the call.** Update the deal stage if

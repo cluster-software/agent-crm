@@ -1,0 +1,122 @@
+export type AttributeType =
+  | "text"
+  | "personal-name"
+  | "email-address"
+  | "domain"
+  | "url"
+  | "number"
+  | "currency"
+  | "date"
+  | "timestamp"
+  | "select"
+  | "status"
+  | "record-reference";
+
+export type ValueJson = Record<string, unknown>;
+
+export function encode(type: AttributeType, input: unknown): ValueJson {
+  if (input === null || input === undefined) {
+    throw new Error(`cannot encode null/undefined for ${type}`);
+  }
+  switch (type) {
+    case "text":
+    case "url":
+      return { value: String(input).trim() };
+    case "personal-name": {
+      if (typeof input === "object") return input as ValueJson;
+      const full = String(input).trim();
+      const parts = full.split(/\s+/);
+      const first_name = parts[0] ?? "";
+      const last_name = parts.length > 1 ? parts.slice(1).join(" ") : "";
+      return { full_name: full, first_name, last_name };
+    }
+    case "email-address": {
+      const raw = String(input).trim();
+      const lower = raw.toLowerCase();
+      const at = lower.indexOf("@");
+      if (at < 0) throw new Error(`invalid email: ${raw}`);
+      const local = lower.slice(0, at);
+      const domain = lower.slice(at + 1);
+      return {
+        email_address: lower,
+        original_email_address: raw,
+        email_domain: domain,
+        email_root_domain: rootDomain(domain),
+        email_local_specifier: local,
+      };
+    }
+    case "domain": {
+      const d = normalizeDomain(String(input));
+      return { domain: d, root_domain: rootDomain(d) };
+    }
+    case "number":
+      return { value: Number(input) };
+    case "currency": {
+      if (typeof input === "object") return input as ValueJson;
+      return { currency_value: Number(input), currency_code: "USD" };
+    }
+    case "date":
+      return { date: String(input).trim() };
+    case "timestamp":
+      return { timestamp: String(input).trim() };
+    case "select":
+    case "status": {
+      if (typeof input === "object") return input as ValueJson;
+      return { title: String(input).trim() };
+    }
+    case "record-reference": {
+      const v = input as { target_object?: string; target_record_id?: string };
+      if (!v?.target_object || !v?.target_record_id) {
+        throw new Error("record-reference requires target_object + target_record_id");
+      }
+      return { target_object: v.target_object, target_record_id: v.target_record_id };
+    }
+  }
+}
+
+export function normalizeUniqueKey(
+  type: AttributeType,
+  value: ValueJson,
+): string | null {
+  switch (type) {
+    case "email-address":
+      return (value.email_address as string | undefined)?.toLowerCase() ?? null;
+    case "domain":
+      return (value.domain as string | undefined)?.toLowerCase() ?? null;
+    case "url":
+      return (value.value as string | undefined)?.toLowerCase() ?? null;
+    case "text":
+      return (value.value as string | undefined) ?? null;
+    default:
+      return null;
+  }
+}
+
+export function recordReferenceTarget(
+  value: ValueJson,
+): { object: string; record_id: string } | null {
+  const t = value.target_object as string | undefined;
+  const r = value.target_record_id as string | undefined;
+  if (!t || !r) return null;
+  return { object: t, record_id: r };
+}
+
+export function normalizeDomain(input: string): string {
+  let d = input.trim().toLowerCase();
+  d = d.replace(/^https?:\/\//, "");
+  d = d.replace(/^www\./, "");
+  d = d.split("/")[0]!;
+  return d;
+}
+
+export function rootDomain(domain: string): string {
+  const parts = domain.split(".");
+  if (parts.length <= 2) return domain;
+  return parts.slice(-2).join(".");
+}
+
+export function domainFromEmail(email: string): string | null {
+  const at = email.indexOf("@");
+  if (at < 0) return null;
+  return email.slice(at + 1).toLowerCase();
+}
