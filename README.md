@@ -20,6 +20,31 @@ The source of truth is a `.acrm` workspace. UIs, CLIs, scripts, and agents all o
 └────────────┘      └─────────────┘      └───────────────┘
 ```
 
+## Quickstart
+
+Install the CLI:
+
+```bash
+npm install -g @agent-crm/cli
+```
+
+Create your first workspace and let Claude rip:
+
+```bash
+acrm init                              # creates .acrm workspace
+claude --dangerously-skip-permissions  # let claude rip
+```
+
+Then to import your existing leads, just ask Claude:
+
+> _"Import my leads with `acrm import csv ./leads.csv`"_
+
+And query the workspace any time with:
+
+```bash
+acrm execute "select * from people limit 5;"
+```
+
 ## Why Agent CRM
 - **🧩 Headless:** Ships as a CLI.
 - **⚒️ Skills based:** Claude writes skills against the CLI (transcript ingestion, stale-deal sweeps, weekly reports) as `.md` files.
@@ -74,27 +99,6 @@ description: Pull a Granola transcript, attach it to the person in .acrm, and lo
 Need something custom? Just ask:
 
 > _"Write me a skill that reads my call transcripts, updates deal stages, and posts a summary to Slack."_
-
-## Quickstart
-
-Install the CLI:
-
-```bash
-npm install -g @agent-crm/cli
-```
-
-Create your first workspace and let Claude rip:
-
-```bash
-acrm init                              # creates .acrm workspace
-claude --dangerously-skip-permissions  # let claude rip
-```
-
-Then to import your existing leads, just ask Claude:
-
-> _"Import my leads from `./leads.csv`"_
-
-The [`csv-import`](.claude/skills/csv-import.md) skill reads your headers, maps them to `.acrm`'s schema (people, companies, deals), dedupes on email + domain, and lands the import on a branch you review before merging.
 
 ## Roadmap
 - [x] `.acrm` file format
