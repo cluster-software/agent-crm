@@ -2,9 +2,10 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { Command } from "commander";
 import type { Lix, LixRuntimeValue } from "@lix-js/sdk";
-import { openWorkspace } from "../workspace/open.js";
+import { findWorkspace, openWorkspace } from "../workspace/open.js";
 import { exec } from "../db/execute.js";
-import { fail, ok, setJsonMode } from "../output/json.js";
+import { fail, isJson, ok, setJsonMode } from "../output/json.js";
+import { startUiServer } from "./ui.js";
 import { generateUuid } from "../lib/ids.js";
 import { nowIso } from "../lib/time.js";
 import { AcrmError, ERR } from "../lib/errors.js";
@@ -464,38 +465,104 @@ async function importRow(
 export function registerImport(program: Command): void {
   const importCmd = program
     .command("import")
-    .description("import data into the .acrm file");
+    .description(
+      "import data into the .acrm file (creates people + companies; deals only when the CSV has deal columns)",
+    );
 
   importCmd
     .command("csv <path>")
-    .description("import a CSV file (asserts companies by domain, people by email)")
-    .action(async (csvPath: string) => {
-      const root = program.opts() as { json?: boolean; workspace?: string };
-      setJsonMode(root.json);
-      try {
-        const abs = path.resolve(csvPath);
-        const text = readFileSync(abs, "utf8");
-        const rows = parseCsv(text);
-        const source = `csv:${path.basename(abs)}`;
-        const lix = await openWorkspace({ workspace: root.workspace });
-        const stats: Stats = {
-          rows: rows.length,
-          companies_created: 0,
-          people_created: 0,
-          deals_created: 0,
-        };
+    .description(
+      "import a CSV. Creates one person per email and one company per domain. Creates a deal only when the CSV has a 'deal_name' or 'deal' column — leads alone do not become deals.",
+    )
+    .option("-p, --port <port>", "port for the UI server", "3737")
+    .option("--no-ui", "do not launch the UI after import")
+    .option("--no-open", "do not auto-open the browser when launching the UI")
+    .addHelpText(
+      "after",
+      `
+Recognized columns (header is trim+lowercase only — use snake_case, not "Company Name"):
+
+  Person     email | email_address | email_addresses
+             name | full_name | person_name   (or first_name + last_name)
+             job_title | title | role
+             linkedin_url | linkedin
+
+  Company    company | company_name | organization
+             domain | website | company_domain
+
+  Deal       deal_name | deal                 (presence triggers deal creation)
+             deal_stage | stage
+             deal_value | value
+             close_date | deal_close_date
+             next_step | deal_next_step
+
+Identity:
+  - companies are deduplicated by normalized domain (or domain-from-email)
+  - people are deduplicated by lowercased email
+  - rows without an email skip person creation
+  - rows without a domain or email skip company creation
+`,
+    )
+    .action(
+      async (
+        csvPath: string,
+        opts: { port: string; ui: boolean; open: boolean },
+      ) => {
+        const root = program.opts() as { json?: boolean; workspace?: string };
+        setJsonMode(root.json);
+        const port = Number(opts.port);
+        if (opts.ui && (!Number.isInteger(port) || port <= 0 || port > 65535)) {
+          fail(`invalid port: ${opts.port}`, ERR.IMPORT);
+          process.exit(1);
+        }
+        let lix: Awaited<ReturnType<typeof openWorkspace>> | null = null;
         try {
+          const abs = path.resolve(csvPath);
+          const text = readFileSync(abs, "utf8");
+          const rows = parseCsv(text);
+          const source = `csv:${path.basename(abs)}`;
+          lix = await openWorkspace({ workspace: root.workspace });
+          const stats: Stats = {
+            rows: rows.length,
+            companies_created: 0,
+            people_created: 0,
+            deals_created: 0,
+          };
           for (let i = 0; i < rows.length; i++) {
             await importRow(lix, rows[i]!, source, i + 1, stats);
           }
           ok(stats);
-        } finally {
+          if (opts.ui) {
+            const resolved = root.workspace
+              ? root.workspace.endsWith(".acrm")
+                ? root.workspace
+                : root.workspace + ".acrm"
+              : (findWorkspace() ?? "workspace.acrm");
+            const workspaceLabel = path.basename(resolved);
+            startUiServer(lix, workspaceLabel, { port, open: opts.open });
+            // server now owns the lix handle
+            return;
+          }
           await lix.close();
+          if (!isJson()) {
+            const bold = process.env.NO_COLOR ? "" : "\x1b[1m";
+            const reset = process.env.NO_COLOR ? "" : "\x1b[0m";
+            process.stdout.write(
+              `\nNext: ${bold}acrm ui${reset} to validate the import in your browser\n`,
+            );
+          }
+        } catch (e) {
+          if (lix) {
+            try {
+              await lix.close();
+            } catch {
+              // ignore
+            }
+          }
+          if (e instanceof AcrmError) fail(e.message, e.code, e.hint);
+          else fail(e instanceof Error ? e.message : String(e), ERR.IMPORT);
+          process.exit(1);
         }
-      } catch (e) {
-        if (e instanceof AcrmError) fail(e.message, e.code);
-        else fail(e instanceof Error ? e.message : String(e), ERR.IMPORT);
-        process.exit(1);
-      }
-    });
+      },
+    );
 }

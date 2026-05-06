@@ -1,5 +1,5 @@
 type Ok<T> = { ok: true; data: T };
-type Err = { ok: false; error: string; code?: string };
+type Err = { ok: false; error: string; code?: string; hint?: string };
 
 let forced: boolean | null = null;
 
@@ -26,11 +26,17 @@ export function ok<T>(data: T): void {
   }
 }
 
-export function fail(error: string, code?: string): void {
-  const payload: Err = { ok: false, error, ...(code ? { code } : {}) };
+export function fail(error: string, code?: string, hint?: string): void {
+  const payload: Err = {
+    ok: false,
+    error,
+    ...(code ? { code } : {}),
+    ...(hint ? { hint } : {}),
+  };
   if (isJson()) {
     process.stdout.write(JSON.stringify(payload) + "\n");
   } else {
     process.stderr.write(`error: ${error}${code ? ` (${code})` : ""}\n`);
+    if (hint) process.stderr.write(`hint: ${hint}\n`);
   }
 }

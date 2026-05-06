@@ -1,6 +1,6 @@
 import type { Lix, LixRuntimeValue } from "@lix-js/sdk";
 import { isLixError } from "@lix-js/sdk";
-import { AcrmError, ERR } from "../lib/errors.js";
+import { AcrmError } from "../lib/errors.js";
 
 export type Row = Record<string, unknown>;
 
@@ -15,9 +15,10 @@ export async function exec(
     return { rows, rowsAffected: result.rowsAffected };
   } catch (e) {
     if (isLixError(e)) {
-      const msg = (e as Error).message;
-      if (/conflict/i.test(msg)) throw new AcrmError(msg, ERR.MERGE_CONFLICT);
-      throw new AcrmError(msg, ERR.WRITE_REJECTED);
+      // Surface the engine's own code + hint instead of collapsing to a single
+      // ACRM_ERROR_*. The lix engine speaks Postgres-style errors:
+      // `message` says what's wrong, `hint` (when present) says how to fix it.
+      throw new AcrmError(e.message, e.code, e.hint, e.details);
     }
     throw e;
   }

@@ -5,3 +5,5 @@ dist/
 .acrm/
 *.lix
 test-acrm/
+feedback/
+scripts/

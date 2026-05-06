@@ -6,7 +6,7 @@
 
 Claude is running your GTM. Your lead lists live in CSVs because existing CRMs were built for humans, not agents. Their MCPs slow you down, bloat your context, and kill your usage limits.
 
-Agent CRM gives Claude a structured backend it can query, edit, diff, validate, and merge.
+Agent CRM gives Claude a structured backend it can query, edit, diff and validate.
 
 The source of truth is a portable `.acrm` file. UIs, CLIs, scripts, and agents all operate on it — and you can send it around like any other file.
 
@@ -106,9 +106,3 @@ Need something custom? Just ask:
 
 > _"Write me a skill that reads my call transcripts, updates deal stages, and posts a summary to Slack."_
 
-## Roadmap
-- [x] `.acrm` file format
-- [ ] CLI
-- [ ] Claude Code skills integration
-- [ ] Realtime collaboration (multiplayer mode)
-- [ ] Reference web UI (community)
