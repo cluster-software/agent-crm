@@ -4,11 +4,11 @@
 
 </div>
 
-Claude is running your GTM. Your lead lists live in CSVs because existing CRMs were built for humans, not agents. Their MCPs slow you down, bloat your context, and kill your usage limits.
+Claude is now running your GTM. Your lead lists live in CSVs because you want to move fast with claude code, but existing CRMs were built for humans, not agents. Their MCPs slow you down, bloat your context, and kill your usage limits.
 
-Agent CRM gives Claude a structured backend it can query, edit, diff and validate.
+Agent CRM gives your agent a structured backend it can query, edit, diff and validate, fast.
 
-The source of truth is a portable `.acrm` file. UIs, CLIs, scripts, and agents all operate on it — and you can send it around like any other file.
+The source of truth is a portable `.acrm` file. UIs, CLIs, scripts, and agents all operate on it and you can send it around like any other file.
 
 ```txt
                     ┌──────────────┐
@@ -28,7 +28,11 @@ Install the CLI:
 npm install -g @agent-crm/cli
 ```
 
-Create your first `.acrm` file and let Claude rip:
+Create your first `.acrm` file and let Claude rip on it:
+
+```bash
+claude --dangerously-skip-permissions
+```
 
 ```bash
 acrm init cluster.acrm                 # creates cluster.acrm file
@@ -44,12 +48,6 @@ And query the file any time with:
 
 ```bash
 acrm execute "select * from people limit 5;"
-```
-
-Let Claude rip on Agent CRM:
-
-```bash
-claude --dangerously-skip-permissions
 ```
 
 ## Why Agent CRM
