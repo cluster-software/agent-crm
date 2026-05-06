@@ -55,7 +55,7 @@ claude --dangerously-skip-permissions
 ## Why Agent CRM
 - **🧩 Headless:** Ships as a CLI.
 - **⚒️ Skills based:** Claude writes skills against the CLI (transcript ingestion, stale-deal sweeps, weekly reports) as `.md` files.
-- **🧱 Modeled:** uses [Attio's data model](./SCHEMA.md) out of the box. Typed, related, queryable with plain SQL. Fixed schema = predictable agent edits.
+- **🧱 Modeled:** uses Attio's data model out of the box. Typed, related, queryable with plain SQL. Fixed schema = predictable agent edits.
 - **🔀 Version controlled:** every change is a checkpoint on a branch. Diff, merge, revert, time-travel.
 
 
