@@ -37,7 +37,7 @@ claude --dangerously-skip-permissions
 Create an .acrm file
 
 ```bash
-acrm init cluster.acrm
+acrm init pipeline.acrm
 ```
 
 Then import your CSVs
@@ -59,7 +59,7 @@ acrm execute "select * from people limit 5;"
 - **🔀 Version controlled:** every change is a checkpoint on a branch. Diff, merge, revert, time-travel.
 
 
-## How Claude runs your GTM
+## Stateful skills for GTM
 
 Skills are how Claude does the work. Bring your own, or use the ones we ship — `prep-call`, `post-call`, `follow-up`, `stale-opportunities`, `champion-left`, `new-hire-trigger`. Claude can write new ones in seconds.
 
@@ -84,7 +84,7 @@ description: Pull a Granola transcript, resolve the person in .acrm, and log the
 
 ## Steps
 
-1. **Resolve the person** with a SQL lookup against `.acrm`:
+1. **Resolve the person** with a SQL lookup against `pipeline.acrm`:
    `acrm execute "SELECT DISTINCT record_id FROM acrm_value WHERE object_slug = 'people' AND attribute_slug = 'email_addresses' AND active_until IS NULL AND normalized_key = ?" '["<email>"]' --json`
 
 2. **Find the Granola meeting** via `mcp__granola__list_meetings`. Filter
