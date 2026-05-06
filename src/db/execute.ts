@@ -18,7 +18,14 @@ export async function exec(
       // Surface the engine's own code + hint instead of collapsing to a single
       // ACRM_ERROR_*. The lix engine speaks Postgres-style errors:
       // `message` says what's wrong, `hint` (when present) says how to fix it.
-      throw new AcrmError(e.message, e.code, e.hint, e.details);
+      let hint = e.hint;
+      if (e.code === "LIX_TABLE_NOT_FOUND") {
+        // Lix's hint points at information_schema, but users hitting this are
+        // typically reaching for `select * from people` — the data is EAV in
+        // acrm_record + acrm_value, keyed by object_slug.
+        hint = `Records are EAV: try \`acrm execute "SELECT object_slug, COUNT(*) FROM acrm_record GROUP BY object_slug"\` to see what's loaded, then query acrm_value for attribute values.`;
+      }
+      throw new AcrmError(e.message, e.code, hint, e.details);
     }
     throw e;
   }

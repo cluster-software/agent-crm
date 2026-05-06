@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { Command } from "commander";
 import type { Lix, LixRuntimeValue } from "@lix-js/sdk";
 import { openWorkspace } from "../workspace/open.js";
@@ -107,18 +108,25 @@ export function registerInit(program: Command): void {
       const root = program.opts() as { json?: boolean };
       setJsonMode(root.json);
       try {
+        const workspacePath = path.resolve(
+          name.endsWith(".acrm") ? name : name + ".acrm",
+        );
         const lix = await openWorkspace({ workspace: name, create: true });
         try {
           await registerAllSchemas(lix);
           await seedObjects(lix);
           await seedAttributes(lix);
           const workspaceId = await generateUuid(lix);
-          ok({ initialized: true, workspace_id: workspaceId });
+          ok({
+            initialized: true,
+            workspace_id: workspaceId,
+            workspace_path: workspacePath,
+          });
           if (!isJson()) {
             const bold = process.env.NO_COLOR ? "" : "\x1b[1m";
             const reset = process.env.NO_COLOR ? "" : "\x1b[0m";
             process.stdout.write(
-              `\nNext: ${bold}acrm import csv <path>${reset} to load your leads\n`,
+              `\nCreated ${workspacePath}\nNext: ${bold}acrm import csv <path>${reset} to load your leads\n`,
             );
           }
         } finally {

@@ -528,9 +528,18 @@ Identity:
             people_created: 0,
             deals_created: 0,
           };
+          const showProgress = !isJson() && process.stderr.isTTY;
+          let lastTick = Date.now();
           for (let i = 0; i < rows.length; i++) {
             await importRow(lix, rows[i]!, source, i + 1, stats);
+            if (showProgress && (Date.now() - lastTick > 500 || i === rows.length - 1)) {
+              process.stderr.write(
+                `\rimporting… ${i + 1} / ${rows.length} rows`,
+              );
+              lastTick = Date.now();
+            }
           }
+          if (showProgress) process.stderr.write("\n");
           ok(stats);
           if (opts.ui) {
             const resolved = root.workspace
