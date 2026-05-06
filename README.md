@@ -22,7 +22,7 @@ Agents work best on files. Agent CRM is a portable `.acrm` file your agent can q
 
 ## What's in a `.acrm` file?
 
-A `.acrm` file is a **SQLite database** with a change-history layer ([Lix](https://lix.dev)) on top. That means:
+A `.acrm` file is a **SQLite database** with a [change-history layer](https://lix.dev) on top. That means:
 
 - **No proprietary format.** Open it with any SQLite client (`sqlite3 pipeline.acrm`) and your data is right there in standard tables.
 - **Every write is a versioned checkpoint.** Like git for your CRM — branch to run an experiment, diff to see what changed, revert if Claude mangles a row.
