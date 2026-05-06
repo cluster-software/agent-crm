@@ -1,6 +1,6 @@
 {
   "name": "@agent-crm/cli",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Headless CRM for claude code — versioned, queryable, scriptable",
   "type": "module",
   "bin": {
