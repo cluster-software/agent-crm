@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/header.png" alt="agent-crm">
+<img src="https://cdn.shopify.com/s/files/1/0748/5902/0324/files/header_c7055774-5f0b-4794-85f1-15ac9a5d2a25.png?v=1778036454" alt="agent-crm">
 
 </div>
 

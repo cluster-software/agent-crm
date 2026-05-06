@@ -4,7 +4,7 @@
   "description": "Headless CRM for claude code — versioned, queryable, scriptable",
   "type": "module",
   "bin": {
-    "acrm": "./dist/bin/acrm.js"
+    "acrm": "dist/bin/acrm.js"
   },
   "files": [
     "dist"
