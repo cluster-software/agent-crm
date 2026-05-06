@@ -3,7 +3,7 @@ import type { Lix, LixRuntimeValue } from "@lix-js/sdk";
 import { openWorkspace } from "../workspace/open.js";
 import { registerAllSchemas } from "../workspace/schemas/index.js";
 import { exec } from "../db/execute.js";
-import { fail, ok, setJsonMode } from "../output/json.js";
+import { fail, isJson, ok, setJsonMode } from "../output/json.js";
 import { generateUuid } from "../lib/ids.js";
 import { AcrmError, ERR } from "../lib/errors.js";
 
@@ -114,11 +114,18 @@ export function registerInit(program: Command): void {
           await seedAttributes(lix);
           const workspaceId = await generateUuid(lix);
           ok({ initialized: true, workspace_id: workspaceId });
+          if (!isJson()) {
+            const bold = process.env.NO_COLOR ? "" : "\x1b[1m";
+            const reset = process.env.NO_COLOR ? "" : "\x1b[0m";
+            process.stdout.write(
+              `\nNext: ${bold}acrm import csv <path>${reset} to load your leads\n`,
+            );
+          }
         } finally {
           await lix.close();
         }
       } catch (e) {
-        if (e instanceof AcrmError) fail(e.message, e.code);
+        if (e instanceof AcrmError) fail(e.message, e.code, e.hint);
         else fail(e instanceof Error ? e.message : String(e), ERR.INIT);
         process.exit(1);
       }

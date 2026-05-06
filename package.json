@@ -1,7 +1,7 @@
 {
   "name": "@agent-crm/cli",
   "version": "0.0.1",
-  "description": "Headless CRM for AI agents — versioned, queryable, scriptable",
+  "description": "Headless CRM for claude code — versioned, queryable, scriptable",
   "type": "module",
   "bin": {
     "acrm": "./dist/bin/acrm.js"
