@@ -47,19 +47,19 @@ claude --dangerously-skip-permissions
 Create an .acrm file
 
 ```bash
-acrm init pipeline.acrm
+! acrm init pipeline.acrm
 ```
 
 Then import your CSVs
 
 ```bash
-acrm import csv ./leads.csv
+! acrm import csv ./leads.csv
 ```
 
-And query the file any time with:
+And query the file any time:
 
 ```bash
-acrm execute "select * from people limit 5;"
+! acrm execute "select object_slug, count(*) as n from acrm_record group by object_slug"
 ```
 
 ## Why Agent CRM
@@ -95,7 +95,7 @@ description: Pull a Granola transcript, resolve the person in .acrm, and log the
 ## Steps
 
 1. **Resolve the person** with a SQL lookup against `pipeline.acrm`:
-   `acrm execute "SELECT DISTINCT record_id FROM acrm_value WHERE object_slug = 'people' AND attribute_slug = 'email_addresses' AND active_until IS NULL AND normalized_key = ?" '["<email>"]' --json`
+   `acrm execute "SELECT DISTINCT record_id FROM acrm_value WHERE object_slug = 'people' AND attribute_slug = 'email_addresses' AND active_until IS NULL AND normalized_key = $1" '["<lowercased-email>"]' --json`
 
 2. **Find the Granola meeting** via `mcp__granola__list_meetings`. Filter
    to meetings where the person's name appears in the title or
