@@ -4,11 +4,11 @@
 
 </div>
 
-Claude is now running your GTM. Your lead lists live in CSVs because you want to move fast with claude code, but existing CRMs were built for humans, not agents. Their MCPs slow you down, bloat your context, and kill your usage limits.
+Claude is running your GTM and your leads live in CSVs. Spreadsheets fall apart around 30 deals in: you lose track of who said what, what's open, and what's next. CRMs solve that, but they were built for humans clicking through UIs, not agents writing SQL.
 
-Agent CRM gives your agent a structured backend it can query, edit, diff and validate, fast.
+Plug Claude into your CRM via MCP and the schema torches your context, every action is a network round-trip, and you blow through your usage limits. Salesforce and HubSpot are shipping their own CLIs, but they end at the deal record — the scrapes, enrichment runs, and half-cleaned lists that fed it live somewhere else. You can't replay how a deal moved through stages, see what your last scrape pulled in and what it didn't clean up, or pick up where last weekend's list-building session left off.
 
-The source of truth is a portable `.acrm` file. UIs, CLIs, scripts, and agents all operate on it and you can send it around like any other file.
+Agents work best on files. Agent CRM is a portable `.acrm` file your agent can query, edit, diff, and version — pipeline, scrapes, and enrichments, all in one place.
 
 ```txt
                     ┌──────────────┐
@@ -19,6 +19,16 @@ The source of truth is a portable `.acrm` file. UIs, CLIs, scripts, and agents a
 │ AI Agents  ├─────►│  .acrm      │◄─────┤ CLI / Scripts │
 └────────────┘      └─────────────┘      └───────────────┘
 ```
+
+## What's in a `.acrm` file?
+
+A `.acrm` file is a **SQLite database** with a change-history layer ([Lix](https://lix.dev)) on top. That means:
+
+- **No proprietary format.** Open it with any SQLite client (`sqlite3 pipeline.acrm`) and your data is right there in standard tables.
+- **Every write is a versioned checkpoint.** Like git for your CRM — branch to run an experiment, diff to see what changed, revert if Claude mangles a row.
+- **It's just a file.** Copy it, email it, commit it, sync it through Google Drive. No server, no account, no migration tool needed if you ever walk away.
+
+If you can read SQLite, you can read your CRM. That's the whole guarantee.
 
 ## Quickstart
 
