@@ -26,7 +26,7 @@ A `.acrm` file is a **SQLite database** with a change-history layer ([Lix](https
 
 - **No proprietary format.** Open it with any SQLite client (`sqlite3 pipeline.acrm`) and your data is right there in standard tables.
 - **Every write is a versioned checkpoint.** Like git for your CRM — branch to run an experiment, diff to see what changed, revert if Claude mangles a row.
-- **It's just a file.** Copy it, email it, commit it, sync it through Dropbox. No server, no account, no migration tool needed if you ever walk away.
+- **It's just a file.** Copy it, email it, commit it, sync it through Google Drive. No server, no account, no migration tool needed if you ever walk away.
 
 If you can read SQLite, you can read your CRM. That's the whole guarantee.
 
