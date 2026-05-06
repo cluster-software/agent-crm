@@ -34,11 +34,13 @@ Create your first `.acrm` file and let Claude rip on it:
 claude --dangerously-skip-permissions
 ```
 
+Create an .acrm file
+
 ```bash
-acrm init cluster.acrm                 # creates cluster.acrm file
+acrm init cluster.acrm
 ```
 
-Then to import your existing leads:
+Then import your CSVs
 
 ```bash
 acrm import csv ./leads.csv
