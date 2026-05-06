@@ -4,11 +4,13 @@
 
 </div>
 
-Claude is now running your GTM. Your lead lists live in CSVs because you want to move fast with claude code, but existing CRMs were built for humans, not agents. Their MCPs slow you down, bloat your context, and kill your usage limits.
+Claude is now running your GTM, and your lead lists live in CSVs. Not because you love CSVs — because every alternative gets in Claude's way. Spreadsheets fall apart the moment you try to track state across conversations: thirty deals in, you've lost the thread of who said what, what's open, and what's next. Existing CRMs were built for humans clicking through UIs, not agents writing SQL.
 
-Agent CRM gives your agent a structured backend it can query, edit, diff and validate, fast.
+The obvious alternative is plugging Claude into your existing CRM via MCP. That works for a demo. In practice the schema is huge, every action is a network round-trip, and your context window gets torched before Claude has done anything useful.
 
-The source of truth is a portable `.acrm` file. UIs, CLIs, scripts, and agents all operate on it and you can send it around like any other file.
+Salesforce and HubSpot are now shipping their own CLIs, but those won't fix the deeper problem: your data still lives on someone else's server. You can't branch it, diff it, fork a copy for an experiment, or hand a snapshot to a teammate. Agents work best on artifacts — files you can version, share, and reason about offline. That's what Agent CRM is.
+
+Agent CRM gives your agent a structured backend it can query, edit, diff and validate, fast. The source of truth is a portable `.acrm` file. UIs, CLIs, scripts, and agents all operate on it and you can send it around like any other file.
 
 ```txt
                     ┌──────────────┐
@@ -19,6 +21,16 @@ The source of truth is a portable `.acrm` file. UIs, CLIs, scripts, and agents a
 │ AI Agents  ├─────►│  .acrm      │◄─────┤ CLI / Scripts │
 └────────────┘      └─────────────┘      └───────────────┘
 ```
+
+## What's in a `.acrm` file?
+
+A `.acrm` file is a **SQLite database** with a change-history layer ([Lix](https://lix.dev)) on top. That means:
+
+- **No proprietary format.** Open it with any SQLite client (`sqlite3 pipeline.acrm`) and your data is right there in standard tables.
+- **Every write is a versioned checkpoint.** Like git for your CRM — branch to run an experiment, diff to see what changed, revert if Claude mangles a row.
+- **It's just a file.** Copy it, email it, commit it, sync it through Dropbox. No server, no account, no migration tool needed if you ever walk away.
+
+If you can read SQLite, you can read your CRM. That's the whole guarantee.
 
 ## Quickstart
 
