@@ -44,6 +44,7 @@ const ATTRIBUTES: AttributeSeed[] = [
   { object_slug: "people", attribute_slug: "email_addresses", title: "Email addresses", attribute_type: "email-address", is_multivalued: true, is_unique: true },
   { object_slug: "people", attribute_slug: "job_title", title: "Job title", attribute_type: "text", is_multivalued: false, is_unique: false },
   { object_slug: "people", attribute_slug: "linkedin_url", title: "LinkedIn", attribute_type: "url", is_multivalued: false, is_unique: false },
+  { object_slug: "people", attribute_slug: "twitter_url", title: "Twitter / X", attribute_type: "url", is_multivalued: false, is_unique: false },
   { object_slug: "people", attribute_slug: "company", title: "Company", attribute_type: "record-reference", is_multivalued: false, is_unique: false, config: { target_object: "companies", inverse: "team" } },
   { object_slug: "people", attribute_slug: "associated_deals", title: "Associated deals", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "deals", inverse: "associated_people" } },
 

@@ -120,3 +120,33 @@ export function domainFromEmail(email: string): string | null {
   if (at < 0) return null;
   return email.slice(at + 1).toLowerCase();
 }
+
+export function normalizeLinkedinUrl(input: string): string | null {
+  let s = input.trim();
+  if (!s) return null;
+  s = s.replace(/^https?:\/\//i, "");
+  s = s.replace(/^www\./i, "");
+  const q = s.search(/[?#]/);
+  if (q >= 0) s = s.slice(0, q);
+  s = s.replace(/\/+$/, "");
+  s = s.toLowerCase();
+  return s.length ? s : null;
+}
+
+export function normalizeTwitterUrl(input: string): string | null {
+  let s = input.trim();
+  if (!s) return null;
+  // bare handle: "@foo" or "foo" (no slashes) → x.com/foo
+  if (!s.includes("/")) {
+    const handle = s.replace(/^@/, "").trim();
+    return handle.length ? `x.com/${handle.toLowerCase()}` : null;
+  }
+  s = s.replace(/^https?:\/\//i, "");
+  s = s.replace(/^www\./i, "");
+  s = s.replace(/^twitter\.com\b/i, "x.com");
+  const q = s.search(/[?#]/);
+  if (q >= 0) s = s.slice(0, q);
+  s = s.replace(/\/+$/, "");
+  s = s.toLowerCase();
+  return s.length ? s : null;
+}
