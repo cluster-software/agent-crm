@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import type { Command } from "commander";
 import type { Lix, LixRuntimeValue } from "@lix-js/sdk";
 import { findWorkspace, openWorkspace } from "../workspace/open.js";
 import { exec } from "../db/execute.js";
 import { fail, isJson, ok, setJsonMode } from "../output/json.js";
-import { startUiServer } from "./ui.js";
 import { generateUuid } from "../lib/ids.js";
 import { nowIso } from "../lib/time.js";
 import { AcrmError, ERR } from "../lib/errors.js";
@@ -14,6 +14,8 @@ import {
   normalizeUniqueKey,
   normalizeDomain,
   domainFromEmail,
+  normalizeLinkedinUrl,
+  normalizeTwitterUrl,
   type AttributeType,
 } from "../domain/values.js";
 
@@ -73,7 +75,7 @@ function parseCsv(text: string): CsvRow[] {
     rows.push(cur);
   }
   if (!rows.length) return [];
-  const header = rows[0]!.map((h) => h.trim().toLowerCase());
+  const header = rows[0]!.map((h) => h.trim().toLowerCase().replace(/\s+/g, "_"));
   const out: CsvRow[] = [];
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r]!;
@@ -108,6 +110,22 @@ async function findRecordByUnique(
        AND normalized_key = $3 AND active_until IS NULL
      LIMIT 1`,
     [object_slug, attribute_slug, normalized_key],
+  );
+  return (r.rows[0]?.record_id as string | undefined) ?? null;
+}
+
+async function findCompanyByName(
+  lix: Lix,
+  name: string,
+): Promise<string | null> {
+  const r = await exec(
+    lix,
+    `SELECT record_id FROM acrm_value
+     WHERE object_slug = 'companies' AND attribute_slug = 'name'
+       AND active_until IS NULL
+       AND LOWER(normalized_key) = $1
+     LIMIT 1`,
+    [name.trim().toLowerCase()],
   );
   return (r.rows[0]?.record_id as string | undefined) ?? null;
 }
@@ -238,7 +256,40 @@ type Stats = {
   companies_created: number;
   people_created: number;
   deals_created: number;
+  warnings?: string[];
 };
+
+const EMAIL_HEADERS = ["email", "email_address", "email_addresses"] as const;
+const DOMAIN_HEADERS = ["domain", "website", "company_domain"] as const;
+const COMPANY_NAME_HEADERS = ["company", "company_name", "organization"] as const;
+const LINKEDIN_HEADERS = ["linkedin_url", "linkedin"] as const;
+const TWITTER_HEADERS = ["twitter_url", "twitter", "x_url", "x"] as const;
+
+function diagnoseEmptyImport(rows: CsvRow[]): string[] {
+  const warnings: string[] = [];
+  const headers = new Set(rows[0] ? Object.keys(rows[0]) : []);
+  const hasEmail = EMAIL_HEADERS.some((k) => headers.has(k));
+  const hasLinkedin = LINKEDIN_HEADERS.some((k) => headers.has(k));
+  const hasTwitter = TWITTER_HEADERS.some((k) => headers.has(k));
+  const hasDomain = DOMAIN_HEADERS.some((k) => headers.has(k));
+  const hasCompanyName = COMPANY_NAME_HEADERS.some((k) => headers.has(k));
+  if (!hasEmail && !hasLinkedin && !hasTwitter) {
+    warnings.push(
+      `no person identifier column found (looked for email: ${EMAIL_HEADERS.join(", ")}, linkedin: ${LINKEDIN_HEADERS.join(", ")}, or twitter: ${TWITTER_HEADERS.join(", ")}) — people not created`,
+    );
+  }
+  if (!hasDomain && !hasEmail && !hasCompanyName) {
+    warnings.push(
+      `no company identifier column found (looked for domain: ${DOMAIN_HEADERS.join(", ")}, or name: ${COMPANY_NAME_HEADERS.join(", ")}) — companies not created`,
+    );
+  }
+  if (warnings.length === 0) {
+    warnings.push(
+      `0 records created from ${rows.length} rows — recognized columns were present but had no usable values`,
+    );
+  }
+  return warnings;
+}
 
 async function importRow(
   lix: Lix,
@@ -255,11 +306,13 @@ async function importRow(
     .join(" ")
     .trim();
   const fullName =
-    pick(row, "name", "full_name", "person_name") ?? (composed.length ? composed : null);
+    pick(row, "name", "full_name", "person_name", "who", "contact", "contact_name") ??
+    (composed.length ? composed : null);
   const companyName = pick(row, "company", "company_name", "organization");
   const domainRaw = pick(row, "domain", "website", "company_domain");
   const jobTitle = pick(row, "job_title", "title", "role");
   const linkedin = pick(row, "linkedin_url", "linkedin");
+  const twitter = pick(row, "twitter_url", "twitter", "x_url", "x");
 
   // company
   let companyId: string | null = null;
@@ -296,32 +349,93 @@ async function importRow(
       }
       stats.companies_created++;
     }
-  }
-
-  // person
-  let personId: string | null = null;
-  if (email) {
-    const normalized = email.trim().toLowerCase();
-    const existing = await findRecordByUnique(
-      lix,
-      "people",
-      "email_addresses",
-      normalized,
-    );
+  } else if (companyName) {
+    // no domain on this row — dedupe by case-insensitive name
+    const existing = await findCompanyByName(lix, companyName);
     if (existing) {
-      personId = existing;
+      companyId = existing;
     } else {
-      personId = await generateUuid(lix);
-      await insertRecord(lix, "people", personId);
-      await addMultiValue(lix, {
-        object_slug: "people",
-        record_id: personId,
-        attribute_slug: "email_addresses",
-        attribute_type: "email-address",
-        value: email,
+      companyId = await generateUuid(lix);
+      await insertRecord(lix, "companies", companyId);
+      await setSingleValue(lix, {
+        object_slug: "companies",
+        record_id: companyId,
+        attribute_slug: "name",
+        attribute_type: "text",
+        value: companyName,
         source,
         provenance,
       });
+      stats.companies_created++;
+    }
+  }
+
+  // person — identified by email, then LinkedIn URL, then Twitter/X URL
+  let personId: string | null = null;
+  const linkedinKey = linkedin ? normalizeLinkedinUrl(linkedin) : null;
+  const twitterKey = twitter ? normalizeTwitterUrl(twitter) : null;
+  if (email || linkedinKey || twitterKey) {
+    if (email) {
+      const normalized = email.trim().toLowerCase();
+      personId = await findRecordByUnique(
+        lix,
+        "people",
+        "email_addresses",
+        normalized,
+      );
+    }
+    if (!personId && linkedinKey) {
+      personId = await findRecordByUnique(
+        lix,
+        "people",
+        "linkedin_url",
+        linkedinKey,
+      );
+    }
+    if (!personId && twitterKey) {
+      personId = await findRecordByUnique(
+        lix,
+        "people",
+        "twitter_url",
+        twitterKey,
+      );
+    }
+    if (!personId) {
+      personId = await generateUuid(lix);
+      await insertRecord(lix, "people", personId);
+      if (email) {
+        await addMultiValue(lix, {
+          object_slug: "people",
+          record_id: personId,
+          attribute_slug: "email_addresses",
+          attribute_type: "email-address",
+          value: email,
+          source,
+          provenance,
+        });
+      }
+      if (linkedinKey) {
+        await setSingleValue(lix, {
+          object_slug: "people",
+          record_id: personId,
+          attribute_slug: "linkedin_url",
+          attribute_type: "url",
+          value: linkedinKey,
+          source,
+          provenance,
+        });
+      }
+      if (twitterKey) {
+        await setSingleValue(lix, {
+          object_slug: "people",
+          record_id: personId,
+          attribute_slug: "twitter_url",
+          attribute_type: "url",
+          value: twitterKey,
+          source,
+          provenance,
+        });
+      }
       if (fullName) {
         await setSingleValue(lix, {
           object_slug: "people",
@@ -340,17 +454,6 @@ async function importRow(
           attribute_slug: "job_title",
           attribute_type: "text",
           value: jobTitle,
-          source,
-          provenance,
-        });
-      }
-      if (linkedin) {
-        await setSingleValue(lix, {
-          object_slug: "people",
-          record_id: personId,
-          attribute_slug: "linkedin_url",
-          attribute_type: "url",
-          value: linkedin,
           source,
           provenance,
         });
@@ -472,7 +575,7 @@ export function registerImport(program: Command): void {
   importCmd
     .command("csv <path>")
     .description(
-      "import a CSV. Creates one person per email and one company per domain. Creates a deal only when the CSV has a 'deal_name' or 'deal' column — leads alone do not become deals.",
+      "import a CSV. Creates one person per email, LinkedIn URL, or Twitter/X URL, and one company per domain. Creates a deal only when the CSV has a 'deal_name' or 'deal' column — leads alone do not become deals.",
     )
     .option("-p, --port <port>", "port for the UI server", "3737")
     .option("--no-ui", "do not launch the UI after import")
@@ -483,9 +586,11 @@ export function registerImport(program: Command): void {
 Recognized columns (header is trim+lowercase only — use snake_case, not "Company Name"):
 
   Person     email | email_address | email_addresses
-             name | full_name | person_name   (or first_name + last_name)
+             name | full_name | person_name | who | contact | contact_name
+                 (or first_name + last_name)
              job_title | title | role
              linkedin_url | linkedin
+             twitter_url | twitter | x_url | x
 
   Company    company | company_name | organization
              domain | website | company_domain
@@ -497,10 +602,15 @@ Recognized columns (header is trim+lowercase only — use snake_case, not "Compa
              next_step | deal_next_step
 
 Identity:
-  - companies are deduplicated by normalized domain (or domain-from-email)
-  - people are deduplicated by lowercased email
-  - rows without an email skip person creation
-  - rows without a domain or email skip company creation
+  - companies are deduplicated by normalized domain (or domain-from-email).
+    When a row has a company name but no domain/email, the company is
+    deduplicated by case-insensitive name instead.
+  - people are deduplicated in priority order: lowercased email, then canonical
+    LinkedIn URL, then canonical Twitter/X URL. URLs are normalized by stripping
+    protocol/www/query/fragment/trailing-slash; twitter.com is unified to x.com;
+    bare handles ("@foo") are accepted for twitter and become "x.com/foo"
+  - rows with none of email/linkedin/twitter skip person creation
+  - rows without a domain, email, or company name skip company creation
 `,
     )
     .action(
@@ -540,25 +650,65 @@ Identity:
             }
           }
           if (showProgress) process.stderr.write("\n");
-          ok(stats);
+          if (
+            rows.length > 0 &&
+            stats.companies_created === 0 &&
+            stats.people_created === 0 &&
+            stats.deals_created === 0
+          ) {
+            stats.warnings = diagnoseEmptyImport(rows);
+            if (!isJson()) {
+              for (const w of stats.warnings) {
+                process.stderr.write(`warning: ${w}\n`);
+              }
+            }
+          }
+          // close the parent's lix handle before spawning the UI child so the
+          // SQLite file isn't held open by two processes.
+          await lix.close();
+          lix = null;
+          let ui: { pid: number; url: string; stop: string } | null = null;
           if (opts.ui) {
             const resolved = root.workspace
               ? root.workspace.endsWith(".acrm")
                 ? root.workspace
                 : root.workspace + ".acrm"
               : (findWorkspace() ?? "workspace.acrm");
-            const workspaceLabel = path.basename(resolved);
-            startUiServer(lix, workspaceLabel, { port, open: opts.open });
-            // server now owns the lix handle
-            return;
+            const absWorkspace = path.resolve(resolved);
+            const url = `http://localhost:${port}`;
+            const args = [
+              ...process.execArgv,
+              process.argv[1]!,
+              "-w",
+              absWorkspace,
+              "ui",
+              "-p",
+              String(port),
+            ];
+            if (!opts.open) args.push("--no-open");
+            const child = spawn(process.execPath, args, {
+              detached: true,
+              stdio: "ignore",
+            });
+            child.unref();
+            if (typeof child.pid === "number") {
+              ui = { pid: child.pid, url, stop: `kill ${child.pid}` };
+            }
           }
-          await lix.close();
+          ok(ui ? { ...stats, ui } : stats);
           if (!isJson()) {
             const bold = process.env.NO_COLOR ? "" : "\x1b[1m";
             const reset = process.env.NO_COLOR ? "" : "\x1b[0m";
-            process.stdout.write(
-              `\nNext: ${bold}acrm ui${reset} to validate the import in your browser\n`,
-            );
+            if (ui) {
+              process.stdout.write(
+                `\nUI server started in background (pid ${ui.pid}) — ${bold}${ui.url}${reset}\n`,
+              );
+              process.stdout.write(`  to stop: ${bold}${ui.stop}${reset}\n`);
+            } else {
+              process.stdout.write(
+                `\nNext: ${bold}acrm ui${reset} to validate the import in your browser\n`,
+              );
+            }
           }
         } catch (e) {
           if (lix) {

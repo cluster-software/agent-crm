@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createRequire } from "node:module";
 import { Command } from "commander";
 import { registerInit } from "../commands/init.js";
 import { registerExecute } from "../commands/execute.js";
@@ -7,14 +8,18 @@ import { registerUi } from "../commands/ui.js";
 import { fail } from "../output/json.js";
 import { ERR } from "../lib/errors.js";
 
+const pkg = createRequire(import.meta.url)("../../package.json") as {
+  version: string;
+};
+
 const program = new Command();
 
 program
   .name("acrm")
   .description(
-    "Headless CRM for Claude Code. Stores people (keyed by email), companies (keyed by domain), and deals in a portable .acrm file.",
+    "Headless CRM for Claude Code. Stores people (keyed by email, LinkedIn URL, or Twitter/X URL), companies (keyed by domain), and deals in a portable .acrm file.",
   )
-  .version("0.0.1")
+  .version(pkg.version)
   .option("-w, --workspace <path>", "path to .acrm file (default: walk up from cwd)")
   .option("--json", "force JSON output (default when stdout is not a TTY)")
   .addHelpText(
