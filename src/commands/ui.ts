@@ -287,7 +287,7 @@ a:hover { text-decoration: underline; }
 
 const ICON_PEOPLE = `<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="6" r="2.5"/><path d="M3 13c0-2.5 2.2-4 5-4s5 1.5 5 4"/></svg>`;
 const ICON_COMPANIES = `<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="10" height="10" rx="1"/><path d="M6 6h1M9 6h1M6 9h1M9 9h1"/></svg>`;
-const ICON_DEALS = `<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 2l5 4-5 8-5-8z"/></svg>`;
+const ICON_DEALS = `<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6"/><path d="M8 4.5v7M10 6.25c0-.83-.9-1.5-2-1.5s-2 .67-2 1.5.9 1.25 2 1.5 2 .67 2 1.5-.9 1.5-2 1.5-2-.67-2-1.5"/></svg>`;
 
 function renderShell(opts: {
   workspace: string;
