@@ -1,8 +1,9 @@
 import type { Lix } from "@lix-js/sdk";
-import { execScalar } from "../db/execute.js";
+import { uuidv7 } from "./uuidv7.js";
 
-export async function generateUuid(lix: Lix): Promise<string> {
-  const id = await execScalar<string>(lix, "SELECT lix_uuid_v7() AS id");
-  if (!id) throw new Error("lix_uuid_v7() returned null");
-  return id;
+// Kept as async (with an unused Lix parameter) so existing call sites don't
+// change. Generating UUIDv7 in-process saves one SQL round-trip per record/value
+// — the dominant cost during bulk imports.
+export async function generateUuid(_lix: Lix): Promise<string> {
+  return uuidv7();
 }
