@@ -97,12 +97,30 @@ function pick(row: CsvRow, ...keys: string[]): string | null {
   return null;
 }
 
+// (object_slug, attribute_slug, normalized_key) → record_id.
+// CSVs typically have far fewer unique companies than rows (Luis's 2.7k-row
+// beauty list had ~310 unique domains), so caching collapses ~2,700 SELECTs
+// into ~310. Only safe within a single import where we are also the writer.
+type LookupCache = Map<string, string>;
+function cacheKey(object_slug: string, attribute_slug: string, normalized_key: string) {
+  return `${object_slug}\x00${attribute_slug}\x00${normalized_key}`;
+}
+
 async function findRecordByUnique(
   lix: Lix,
+  cache: LookupCache,
   object_slug: string,
   attribute_slug: string,
   normalized_key: string,
 ): Promise<string | null> {
+  // In-memory cache is authoritative for records inserted in this session
+  // (every new record_id is cached when we generate its UUID). A cache miss
+  // here means the record either exists in committed state or doesn't exist
+  // at all — either way, the buffered inserts don't matter for the answer,
+  // so no flush is required.
+  const ck = cacheKey(object_slug, attribute_slug, normalized_key);
+  const hit = cache.get(ck);
+  if (hit) return hit;
   const r = await exec(
     lix,
     `SELECT record_id FROM acrm_value
@@ -111,13 +129,20 @@ async function findRecordByUnique(
      LIMIT 1`,
     [object_slug, attribute_slug, normalized_key],
   );
-  return (r.rows[0]?.record_id as string | undefined) ?? null;
+  const id = (r.rows[0]?.record_id as string | undefined) ?? null;
+  if (id) cache.set(ck, id);
+  return id;
 }
 
 async function findCompanyByName(
   lix: Lix,
+  cache: LookupCache,
   name: string,
 ): Promise<string | null> {
+  const key = name.trim().toLowerCase();
+  const ck = cacheKey("companies", "name__ci", key);
+  const hit = cache.get(ck);
+  if (hit) return hit;
   const r = await exec(
     lix,
     `SELECT record_id FROM acrm_value
@@ -125,25 +150,149 @@ async function findCompanyByName(
        AND active_until IS NULL
        AND LOWER(normalized_key) = $1
      LIMIT 1`,
-    [name.trim().toLowerCase()],
+    [key],
   );
-  return (r.rows[0]?.record_id as string | undefined) ?? null;
+  const id = (r.rows[0]?.record_id as string | undefined) ?? null;
+  if (id) cache.set(ck, id);
+  return id;
+}
+
+// Each `lix.execute()` becomes its own Lix commit (with snapshot, change-set,
+// version-ref bookkeeping). On a 376-row CSV that meant ~3,800 commits and a
+// ~100MB file. DataFusion accepts multi-row `VALUES (...), (...), ...` and the
+// whole statement collapses into a single commit — that's what this batcher
+// exploits. We buffer record + value INSERTs in JS and flush them as one
+// statement per table, either every FLUSH_EVERY_ROWS rows or before any
+// operation (UPDATE / direct SELECT against committed state) that depends on
+// the buffered rows being visible.
+// Adaptive flush cadence: small CSVs flush once at the end (one Lix commit
+// total, smallest file, fastest), large CSVs flush every N rows to bound
+// memory + give the progress bar continuous motion. Threshold picked so the
+// pending buffer stays well under ~100 MB resident.
+const LARGE_CSV_THRESHOLD = 2000;
+const LARGE_CSV_FLUSH_EVERY_ROWS = 50;
+// Cap per-statement size as defense against DataFusion statement-length
+// limits. 5,000 values × 12 placeholders = 60,000 params per statement;
+// tested fine, leaves headroom.
+const MAX_BATCH_VALUES = 5000;
+
+type PendingRecord = { object_slug: string; record_id: string };
+type PendingValue = {
+  id: string;
+  object_slug: string;
+  record_id: string;
+  attribute_slug: string;
+  value_json: string;
+  attribute_type: AttributeType;
+  active_from: string;
+  normalized_key: string | null;
+  ref_object: string | null;
+  ref_record_id: string | null;
+  source: string;
+  provenance_json: string;
+};
+
+class WriteBatcher {
+  private records: PendingRecord[] = [];
+  private values: PendingValue[] = [];
+  // Dedupe within a session: (record_id|attribute|normalized) for values we've
+  // already enqueued. Prevents the same (person, email) being queued twice
+  // when the same row references already-queued data.
+  private enqueuedMulti = new Set<string>();
+
+  constructor(private lix: Lix) {}
+
+  enqueueRecord(r: PendingRecord) {
+    this.records.push(r);
+  }
+
+  /**
+   * Enqueue a value. Returns false if a value with this normalized_key already
+   * exists for this record in the pending buffer (caller can skip).
+   */
+  enqueueValue(v: PendingValue): boolean {
+    if (v.normalized_key) {
+      const k = `${v.record_id}\x00${v.attribute_slug}\x00${v.normalized_key}`;
+      if (this.enqueuedMulti.has(k)) return false;
+      this.enqueuedMulti.add(k);
+    }
+    this.values.push(v);
+    return true;
+  }
+
+  get size(): number {
+    return this.records.length + this.values.length;
+  }
+
+  async flush(): Promise<void> {
+    if (this.records.length) await this.flushRecords();
+    if (this.values.length) await this.flushValues();
+    this.enqueuedMulti.clear();
+  }
+
+  private async flushRecords(): Promise<void> {
+    for (let i = 0; i < this.records.length; i += MAX_BATCH_VALUES) {
+      const chunk = this.records.slice(i, i + MAX_BATCH_VALUES);
+      const placeholders = chunk
+        .map((_, j) => `($${j * 2 + 1}, $${j * 2 + 2})`)
+        .join(", ");
+      const params: LixRuntimeValue[] = chunk.flatMap((r) => [r.object_slug, r.record_id]);
+      await exec(
+        this.lix,
+        `INSERT INTO acrm_record (object_slug, record_id) VALUES ${placeholders}`,
+        params,
+      );
+    }
+    this.records = [];
+  }
+
+  private async flushValues(): Promise<void> {
+    const COLS = 12;
+    for (let i = 0; i < this.values.length; i += MAX_BATCH_VALUES) {
+      const chunk = this.values.slice(i, i + MAX_BATCH_VALUES);
+      const placeholders = chunk
+        .map((_, j) => {
+          const base = j * COLS;
+          return `(${Array.from({ length: COLS }, (_, k) => `$${base + k + 1}`).join(", ")})`;
+        })
+        .join(", ");
+      const params: LixRuntimeValue[] = chunk.flatMap((v) => [
+        v.id,
+        v.object_slug,
+        v.record_id,
+        v.attribute_slug,
+        v.value_json,
+        v.attribute_type,
+        v.active_from,
+        v.normalized_key,
+        v.ref_object,
+        v.ref_record_id,
+        v.source,
+        v.provenance_json,
+      ]);
+      await exec(
+        this.lix,
+        `INSERT INTO acrm_value
+          (id, object_slug, record_id, attribute_slug, value_json, attribute_type,
+           active_from, normalized_key, ref_object, ref_record_id, source, provenance_json)
+         VALUES ${placeholders}`,
+        params,
+      );
+    }
+    this.values = [];
+  }
 }
 
 async function insertRecord(
-  lix: Lix,
+  batcher: WriteBatcher,
   object_slug: string,
   record_id: string,
 ): Promise<void> {
-  await exec(
-    lix,
-    "INSERT INTO acrm_record (object_slug, record_id) VALUES ($1, $2)",
-    [object_slug, record_id],
-  );
+  batcher.enqueueRecord({ object_slug, record_id });
 }
 
-async function insertValue(
-  lix: Lix,
+function buildValueRow(
+  id: string,
   args: {
     object_slug: string;
     record_id: string;
@@ -153,7 +302,7 @@ async function insertValue(
     source: string;
     provenance: Record<string, unknown>;
   },
-): Promise<void> {
+): PendingValue {
   const normalized = normalizeUniqueKey(args.attribute_type, args.value_json);
   const ref =
     args.attribute_type === "record-reference"
@@ -162,28 +311,20 @@ async function insertValue(
           ref_record_id: (args.value_json.target_record_id as string) ?? null,
         }
       : { ref_object: null, ref_record_id: null };
-  const params: LixRuntimeValue[] = [
-    await generateUuid(lix),
-    args.object_slug,
-    args.record_id,
-    args.attribute_slug,
-    JSON.stringify(args.value_json),
-    args.attribute_type,
-    nowIso(),
-    normalized,
-    ref.ref_object,
-    ref.ref_record_id,
-    args.source,
-    JSON.stringify(args.provenance),
-  ];
-  await exec(
-    lix,
-    `INSERT INTO acrm_value
-      (id, object_slug, record_id, attribute_slug, value_json, attribute_type,
-       active_from, normalized_key, ref_object, ref_record_id, source, provenance_json)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-    params,
-  );
+  return {
+    id,
+    object_slug: args.object_slug,
+    record_id: args.record_id,
+    attribute_slug: args.attribute_slug,
+    value_json: JSON.stringify(args.value_json),
+    attribute_type: args.attribute_type,
+    active_from: nowIso(),
+    normalized_key: normalized,
+    ref_object: ref.ref_object,
+    ref_record_id: ref.ref_record_id,
+    source: args.source,
+    provenance_json: JSON.stringify(args.provenance),
+  };
 }
 
 async function getAttribute(
@@ -203,6 +344,7 @@ async function getAttribute(
 
 async function setSingleValue(
   lix: Lix,
+  batcher: WriteBatcher,
   args: {
     object_slug: string;
     record_id: string;
@@ -211,21 +353,32 @@ async function setSingleValue(
     value: unknown;
     source: string;
     provenance: Record<string, unknown>;
+    // When true, the record was created in this import and cannot have
+    // pre-existing active values — skip the closing UPDATE round-trip and
+    // enqueue the INSERT into the batch.
+    isFresh?: boolean;
   },
 ): Promise<void> {
   const value_json = encode(args.attribute_type, args.value);
-  // close any active values
-  await exec(
-    lix,
-    `UPDATE acrm_value SET active_until = $1
-     WHERE object_slug = $2 AND record_id = $3 AND attribute_slug = $4 AND active_until IS NULL`,
-    [nowIso(), args.object_slug, args.record_id, args.attribute_slug],
-  );
-  await insertValue(lix, { ...args, value_json });
+  if (!args.isFresh) {
+    // The record may have pre-existing values that need to be closed before
+    // we insert the replacement. Flush pending INSERTs first so the UPDATE
+    // sees a consistent view, then run UPDATE + INSERT immediately.
+    await batcher.flush();
+    await exec(
+      lix,
+      `UPDATE acrm_value SET active_until = $1
+       WHERE object_slug = $2 AND record_id = $3 AND attribute_slug = $4 AND active_until IS NULL`,
+      [nowIso(), args.object_slug, args.record_id, args.attribute_slug],
+    );
+  }
+  const id = await generateUuid(lix);
+  batcher.enqueueValue(buildValueRow(id, { ...args, value_json }));
 }
 
 async function addMultiValue(
   lix: Lix,
+  batcher: WriteBatcher,
   args: {
     object_slug: string;
     record_id: string;
@@ -234,11 +387,18 @@ async function addMultiValue(
     value: unknown;
     source: string;
     provenance: Record<string, unknown>;
+    // When true, the record was created in this import — skip the dedupe
+    // SELECT (it cannot have pre-existing values).
+    isFresh?: boolean;
   },
 ): Promise<void> {
   const value_json = encode(args.attribute_type, args.value);
   const normalized = normalizeUniqueKey(args.attribute_type, value_json);
-  if (normalized) {
+  if (!args.isFresh && normalized) {
+    // Existing record — flush so the SELECT sees in-flight inserts (the same
+    // (record, attr, value) might have been added earlier in this session and
+    // still be in the buffer), then dedupe against committed state.
+    await batcher.flush();
     const exists = await exec(
       lix,
       `SELECT 1 FROM acrm_value
@@ -248,7 +408,8 @@ async function addMultiValue(
     );
     if (exists.rows.length) return;
   }
-  await insertValue(lix, { ...args, value_json });
+  const id = await generateUuid(lix);
+  batcher.enqueueValue(buildValueRow(id, { ...args, value_json }));
 }
 
 type Stats = {
@@ -256,36 +417,145 @@ type Stats = {
   companies_created: number;
   people_created: number;
   deals_created: number;
+  people_skipped_no_identifier: number;
   warnings?: string[];
 };
 
-const EMAIL_HEADERS = ["email", "email_address", "email_addresses"] as const;
 const DOMAIN_HEADERS = ["domain", "website", "company_domain"] as const;
 const COMPANY_NAME_HEADERS = ["company", "company_name", "organization"] as const;
-const LINKEDIN_HEADERS = ["linkedin_url", "linkedin"] as const;
-const TWITTER_HEADERS = ["twitter_url", "twitter", "x_url", "x"] as const;
 
-function diagnoseEmptyImport(rows: CsvRow[]): string[] {
+// Email column matcher. Accepts:
+//   email, email_address, email_addresses
+//   work_email, work_email_1, work_email_2, ...
+//   personal_email, personal_email_1, ...
+//   primary_email[_N], email_N, other_emails
+// other_emails (and the *_addresses plural) may be comma/semicolon-separated.
+const EMAIL_HEADER_RE = /^(?:(?:work|personal|primary|business|other)_)?email(?:_address)?(?:es)?(?:_\d+)?$/;
+const EMAIL_SPLIT_RE = /[,;]\s*/;
+
+// Linkedin column matcher (header-based). We also probe values for
+// linkedin.com when the header didn't match — covers `profile_url` etc.
+const LINKEDIN_HEADER_RE = /^(?:linkedin(?:_url|_profile)?|li_url)$/;
+const TWITTER_HEADER_RE = /^(?:twitter(?:_url)?|x(?:_url)?)$/;
+
+function collectEmails(row: CsvRow): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const k of Object.keys(row)) {
+    if (!EMAIL_HEADER_RE.test(k)) continue;
+    const raw = row[k];
+    if (!raw) continue;
+    for (const piece of raw.split(EMAIL_SPLIT_RE)) {
+      const e = piece.trim();
+      if (!e || e.indexOf("@") < 0) continue;
+      const lower = e.toLowerCase();
+      if (seen.has(lower)) continue;
+      seen.add(lower);
+      out.push(e);
+    }
+  }
+  return out;
+}
+
+function findLinkedin(row: CsvRow): string | null {
+  for (const k of Object.keys(row)) {
+    if (LINKEDIN_HEADER_RE.test(k) && row[k]) return row[k]!;
+  }
+  // value-based fallback: any column whose value looks like a linkedin URL.
+  // Handles arbitrary header names like `profile_url`, `li`, `social_link`.
+  for (const k of Object.keys(row)) {
+    const v = row[k];
+    if (v && /(?:^|[/.@])linkedin\.com\//i.test(v)) return v;
+  }
+  return null;
+}
+
+function findTwitter(row: CsvRow): string | null {
+  for (const k of Object.keys(row)) {
+    if (TWITTER_HEADER_RE.test(k) && row[k]) return row[k]!;
+  }
+  for (const k of Object.keys(row)) {
+    const v = row[k];
+    if (v && /(?:^|[/.@])(?:twitter\.com|x\.com)\//i.test(v)) return v;
+  }
+  return null;
+}
+
+type DetectedColumns = {
+  email_headers: string[];
+  linkedin_headers: string[];
+  twitter_headers: string[];
+  domain_headers: string[];
+  company_name_headers: string[];
+  linkedin_by_value: boolean;
+  twitter_by_value: boolean;
+};
+
+function detectColumns(rows: CsvRow[]): DetectedColumns {
+  const headers = rows[0] ? Object.keys(rows[0]) : [];
+  const email_headers = headers.filter((h) => EMAIL_HEADER_RE.test(h));
+  const linkedin_headers = headers.filter((h) => LINKEDIN_HEADER_RE.test(h));
+  const twitter_headers = headers.filter((h) => TWITTER_HEADER_RE.test(h));
+  const domain_headers = headers.filter((h) => (DOMAIN_HEADERS as readonly string[]).includes(h));
+  const company_name_headers = headers.filter((h) => (COMPANY_NAME_HEADERS as readonly string[]).includes(h));
+  // Sniff first ~50 rows for value-based fallbacks
+  const sample = rows.slice(0, 50);
+  const linkedin_by_value =
+    linkedin_headers.length === 0 &&
+    sample.some((r) => Object.values(r).some((v) => v && /(?:^|[/.@])linkedin\.com\//i.test(v)));
+  const twitter_by_value =
+    twitter_headers.length === 0 &&
+    sample.some((r) => Object.values(r).some((v) => v && /(?:^|[/.@])(?:twitter\.com|x\.com)\//i.test(v)));
+  return {
+    email_headers,
+    linkedin_headers,
+    twitter_headers,
+    domain_headers,
+    company_name_headers,
+    linkedin_by_value,
+    twitter_by_value,
+  };
+}
+
+function diagnoseEmptyImport(
+  rows: CsvRow[],
+  detected: DetectedColumns,
+  stats: Stats,
+): string[] {
   const warnings: string[] = [];
-  const headers = new Set(rows[0] ? Object.keys(rows[0]) : []);
-  const hasEmail = EMAIL_HEADERS.some((k) => headers.has(k));
-  const hasLinkedin = LINKEDIN_HEADERS.some((k) => headers.has(k));
-  const hasTwitter = TWITTER_HEADERS.some((k) => headers.has(k));
-  const hasDomain = DOMAIN_HEADERS.some((k) => headers.has(k));
-  const hasCompanyName = COMPANY_NAME_HEADERS.some((k) => headers.has(k));
-  if (!hasEmail && !hasLinkedin && !hasTwitter) {
+  const hasPersonHeader =
+    detected.email_headers.length > 0 ||
+    detected.linkedin_headers.length > 0 ||
+    detected.twitter_headers.length > 0 ||
+    detected.linkedin_by_value ||
+    detected.twitter_by_value;
+  const hasCompanyHeader =
+    detected.domain_headers.length > 0 ||
+    detected.email_headers.length > 0 ||
+    detected.company_name_headers.length > 0;
+  if (!hasPersonHeader) {
     warnings.push(
-      `no person identifier column found (looked for email: ${EMAIL_HEADERS.join(", ")}, linkedin: ${LINKEDIN_HEADERS.join(", ")}, or twitter: ${TWITTER_HEADERS.join(", ")}) — people not created`,
+      `no person-identifier column found — people not created. Accepted: email | email_address | work_email[_N] | personal_email[_N] | primary_email[_N] | other_emails | linkedin_url | linkedin | twitter_url | x_url (or any column whose values are linkedin.com / x.com URLs).`,
+    );
+  } else if (stats.people_created === 0 && stats.people_skipped_no_identifier === rows.length) {
+    warnings.push(
+      `person-identifier columns were present (${[
+        ...detected.email_headers,
+        ...detected.linkedin_headers,
+        ...detected.twitter_headers,
+        ...(detected.linkedin_by_value ? ["<linkedin-by-value>"] : []),
+        ...(detected.twitter_by_value ? ["<twitter-by-value>"] : []),
+      ].join(", ")}) but every row had empty values for them — people not created.`,
     );
   }
-  if (!hasDomain && !hasEmail && !hasCompanyName) {
+  if (!hasCompanyHeader) {
     warnings.push(
-      `no company identifier column found (looked for domain: ${DOMAIN_HEADERS.join(", ")}, or name: ${COMPANY_NAME_HEADERS.join(", ")}) — companies not created`,
+      `no company-identifier column found — companies not created. Accepted: ${DOMAIN_HEADERS.join(" | ")} | ${COMPANY_NAME_HEADERS.join(" | ")}.`,
     );
   }
-  if (warnings.length === 0) {
+  if (warnings.length === 0 && stats.companies_created + stats.people_created + stats.deals_created === 0) {
     warnings.push(
-      `0 records created from ${rows.length} rows — recognized columns were present but had no usable values`,
+      `0 records created from ${rows.length} rows — recognized columns were present but yielded no usable values`,
     );
   }
   return warnings;
@@ -293,6 +563,8 @@ function diagnoseEmptyImport(rows: CsvRow[]): string[] {
 
 async function importRow(
   lix: Lix,
+  batcher: WriteBatcher,
+  cache: LookupCache,
   row: CsvRow,
   source: string,
   rowIndex: number,
@@ -300,7 +572,8 @@ async function importRow(
 ): Promise<void> {
   const provenance = { row: rowIndex };
 
-  const email = pick(row, "email", "email_address", "email_addresses");
+  const emails = collectEmails(row);
+  const primaryEmail = emails[0] ?? null;
   const composed = [pick(row, "first_name"), pick(row, "last_name")]
     .filter(Boolean)
     .join(" ")
@@ -311,23 +584,23 @@ async function importRow(
   const companyName = pick(row, "company", "company_name", "organization");
   const domainRaw = pick(row, "domain", "website", "company_domain");
   const jobTitle = pick(row, "job_title", "title", "role");
-  const linkedin = pick(row, "linkedin_url", "linkedin");
-  const twitter = pick(row, "twitter_url", "twitter", "x_url", "x");
+  const linkedin = findLinkedin(row);
+  const twitter = findTwitter(row);
 
   // company
   let companyId: string | null = null;
   let companyDomain: string | null = null;
   if (domainRaw) companyDomain = normalizeDomain(domainRaw);
-  else if (email) companyDomain = domainFromEmail(email);
+  else if (primaryEmail) companyDomain = domainFromEmail(primaryEmail);
 
   if (companyDomain) {
-    const existing = await findRecordByUnique(lix, "companies", "domains", companyDomain);
+    const existing = await findRecordByUnique(lix, cache, "companies", "domains", companyDomain);
     if (existing) {
       companyId = existing;
     } else {
       companyId = await generateUuid(lix);
-      await insertRecord(lix, "companies", companyId);
-      await addMultiValue(lix, {
+      await insertRecord(batcher, "companies", companyId);
+      await addMultiValue(lix, batcher, {
         object_slug: "companies",
         record_id: companyId,
         attribute_slug: "domains",
@@ -335,9 +608,11 @@ async function importRow(
         value: companyDomain,
         source,
         provenance,
+        isFresh: true,
       });
+      cache.set(cacheKey("companies", "domains", companyDomain), companyId);
       if (companyName) {
-        await setSingleValue(lix, {
+        await setSingleValue(lix, batcher, {
           object_slug: "companies",
           record_id: companyId,
           attribute_slug: "name",
@@ -345,19 +620,20 @@ async function importRow(
           value: companyName,
           source,
           provenance,
+          isFresh: true,
         });
       }
       stats.companies_created++;
     }
   } else if (companyName) {
     // no domain on this row — dedupe by case-insensitive name
-    const existing = await findCompanyByName(lix, companyName);
+    const existing = await findCompanyByName(lix, cache, companyName);
     if (existing) {
       companyId = existing;
     } else {
       companyId = await generateUuid(lix);
-      await insertRecord(lix, "companies", companyId);
-      await setSingleValue(lix, {
+      await insertRecord(batcher, "companies", companyId);
+      await setSingleValue(lix, batcher, {
         object_slug: "companies",
         record_id: companyId,
         attribute_slug: "name",
@@ -365,7 +641,9 @@ async function importRow(
         value: companyName,
         source,
         provenance,
+        isFresh: true,
       });
+      cache.set(cacheKey("companies", "name__ci", companyName.trim().toLowerCase()), companyId);
       stats.companies_created++;
     }
   }
@@ -374,48 +652,38 @@ async function importRow(
   let personId: string | null = null;
   const linkedinKey = linkedin ? normalizeLinkedinUrl(linkedin) : null;
   const twitterKey = twitter ? normalizeTwitterUrl(twitter) : null;
-  if (email || linkedinKey || twitterKey) {
-    if (email) {
-      const normalized = email.trim().toLowerCase();
-      personId = await findRecordByUnique(
-        lix,
-        "people",
-        "email_addresses",
-        normalized,
-      );
+  if (emails.length || linkedinKey || twitterKey) {
+    for (const e of emails) {
+      const normalized = e.trim().toLowerCase();
+      personId = await findRecordByUnique(lix, cache, "people", "email_addresses", normalized);
+      if (personId) break;
     }
     if (!personId && linkedinKey) {
-      personId = await findRecordByUnique(
-        lix,
-        "people",
-        "linkedin_url",
-        linkedinKey,
-      );
+      personId = await findRecordByUnique(lix, cache, "people", "linkedin_url", linkedinKey);
     }
     if (!personId && twitterKey) {
-      personId = await findRecordByUnique(
-        lix,
-        "people",
-        "twitter_url",
-        twitterKey,
-      );
+      personId = await findRecordByUnique(lix, cache, "people", "twitter_url", twitterKey);
     }
+    let personIsFresh = false;
     if (!personId) {
+      personIsFresh = true;
       personId = await generateUuid(lix);
-      await insertRecord(lix, "people", personId);
-      if (email) {
-        await addMultiValue(lix, {
+      await insertRecord(batcher, "people", personId);
+      for (const e of emails) {
+        await addMultiValue(lix, batcher, {
           object_slug: "people",
           record_id: personId,
           attribute_slug: "email_addresses",
           attribute_type: "email-address",
-          value: email,
+          value: e,
           source,
           provenance,
+          isFresh: true,
         });
+        cache.set(cacheKey("people", "email_addresses", e.trim().toLowerCase()), personId);
       }
       if (linkedinKey) {
-        await setSingleValue(lix, {
+        await setSingleValue(lix, batcher, {
           object_slug: "people",
           record_id: personId,
           attribute_slug: "linkedin_url",
@@ -423,10 +691,12 @@ async function importRow(
           value: linkedinKey,
           source,
           provenance,
+          isFresh: true,
         });
+        cache.set(cacheKey("people", "linkedin_url", linkedinKey), personId);
       }
       if (twitterKey) {
-        await setSingleValue(lix, {
+        await setSingleValue(lix, batcher, {
           object_slug: "people",
           record_id: personId,
           attribute_slug: "twitter_url",
@@ -434,10 +704,12 @@ async function importRow(
           value: twitterKey,
           source,
           provenance,
+          isFresh: true,
         });
+        cache.set(cacheKey("people", "twitter_url", twitterKey), personId);
       }
       if (fullName) {
-        await setSingleValue(lix, {
+        await setSingleValue(lix, batcher, {
           object_slug: "people",
           record_id: personId,
           attribute_slug: "name",
@@ -445,10 +717,11 @@ async function importRow(
           value: fullName,
           source,
           provenance,
+          isFresh: true,
         });
       }
       if (jobTitle) {
-        await setSingleValue(lix, {
+        await setSingleValue(lix, batcher, {
           object_slug: "people",
           record_id: personId,
           attribute_slug: "job_title",
@@ -456,13 +729,14 @@ async function importRow(
           value: jobTitle,
           source,
           provenance,
+          isFresh: true,
         });
       }
       stats.people_created++;
     }
 
     if (companyId) {
-      await setSingleValue(lix, {
+      await setSingleValue(lix, batcher, {
         object_slug: "people",
         record_id: personId,
         attribute_slug: "company",
@@ -470,16 +744,19 @@ async function importRow(
         value: { target_object: "companies", target_record_id: companyId },
         source,
         provenance,
+        isFresh: personIsFresh,
       });
     }
+  } else {
+    stats.people_skipped_no_identifier++;
   }
 
   // deal (optional)
   const dealName = pick(row, "deal_name", "deal");
   if (dealName) {
     const dealId = await generateUuid(lix);
-    await insertRecord(lix, "deals", dealId);
-    await setSingleValue(lix, {
+    await insertRecord(batcher, "deals", dealId);
+    await setSingleValue(lix, batcher, {
       object_slug: "deals",
       record_id: dealId,
       attribute_slug: "name",
@@ -487,12 +764,13 @@ async function importRow(
       value: dealName,
       source,
       provenance,
+      isFresh: true,
     });
     const stage = pick(row, "deal_stage", "stage");
     if (stage) {
       const attr = await getAttribute(lix, "deals", "stage");
       if (attr) {
-        await setSingleValue(lix, {
+        await setSingleValue(lix, batcher, {
           object_slug: "deals",
           record_id: dealId,
           attribute_slug: "stage",
@@ -500,12 +778,13 @@ async function importRow(
           value: stage,
           source,
           provenance,
+          isFresh: true,
         });
       }
     }
     const dealValue = pick(row, "deal_value", "value");
     if (dealValue) {
-      await setSingleValue(lix, {
+      await setSingleValue(lix, batcher, {
         object_slug: "deals",
         record_id: dealId,
         attribute_slug: "value",
@@ -513,11 +792,12 @@ async function importRow(
         value: dealValue,
         source,
         provenance,
+        isFresh: true,
       });
     }
     const closeDate = pick(row, "close_date", "deal_close_date");
     if (closeDate) {
-      await setSingleValue(lix, {
+      await setSingleValue(lix, batcher, {
         object_slug: "deals",
         record_id: dealId,
         attribute_slug: "close_date",
@@ -525,11 +805,12 @@ async function importRow(
         value: closeDate,
         source,
         provenance,
+        isFresh: true,
       });
     }
     const nextStep = pick(row, "next_step", "deal_next_step");
     if (nextStep) {
-      await setSingleValue(lix, {
+      await setSingleValue(lix, batcher, {
         object_slug: "deals",
         record_id: dealId,
         attribute_slug: "next_step",
@@ -537,10 +818,11 @@ async function importRow(
         value: nextStep,
         source,
         provenance,
+        isFresh: true,
       });
     }
     if (companyId) {
-      await setSingleValue(lix, {
+      await setSingleValue(lix, batcher, {
         object_slug: "deals",
         record_id: dealId,
         attribute_slug: "associated_company",
@@ -548,10 +830,11 @@ async function importRow(
         value: { target_object: "companies", target_record_id: companyId },
         source,
         provenance,
+        isFresh: true,
       });
     }
     if (personId) {
-      await addMultiValue(lix, {
+      await addMultiValue(lix, batcher, {
         object_slug: "deals",
         record_id: dealId,
         attribute_slug: "associated_people",
@@ -559,6 +842,7 @@ async function importRow(
         value: { target_object: "people", target_record_id: personId },
         source,
         provenance,
+        isFresh: true,
       });
     }
     stats.deals_created++;
@@ -586,11 +870,15 @@ export function registerImport(program: Command): void {
 Recognized columns (header is trim+lowercase only — use snake_case, not "Company Name"):
 
   Person     email | email_address | email_addresses
+             work_email[_N] | personal_email[_N] | primary_email[_N]
+             other_emails  (comma/semicolon-separated)
              name | full_name | person_name | who | contact | contact_name
                  (or first_name + last_name)
              job_title | title | role
-             linkedin_url | linkedin
+             linkedin_url | linkedin | linkedin_profile | li_url
+                 (or any column whose values are linkedin.com URLs)
              twitter_url | twitter | x_url | x
+                 (or any column whose values are x.com / twitter.com URLs)
 
   Company    company | company_name | organization
              domain | website | company_domain
@@ -631,34 +919,75 @@ Identity:
           const text = readFileSync(abs, "utf8");
           const rows = parseCsv(text);
           const source = `csv:${path.basename(abs)}`;
+          const detected = detectColumns(rows);
+          const showProgress = !isJson() && process.stderr.isTTY;
+          if (showProgress) {
+            const personHints = [
+              ...detected.email_headers,
+              ...detected.linkedin_headers,
+              ...detected.twitter_headers,
+              ...(detected.linkedin_by_value ? ["<linkedin-by-value>"] : []),
+              ...(detected.twitter_by_value ? ["<twitter-by-value>"] : []),
+            ];
+            const companyHints = [...detected.domain_headers, ...detected.company_name_headers];
+            process.stderr.write(
+              `parsed ${rows.length} rows from ${path.basename(abs)}\n`,
+            );
+            process.stderr.write(
+              `  person identifiers: ${personHints.length ? personHints.join(", ") : "(none — people will be skipped)"}\n`,
+            );
+            process.stderr.write(
+              `  company identifiers: ${companyHints.length ? companyHints.join(", ") : "(none — companies will be skipped)"}\n`,
+            );
+          }
           lix = await openWorkspace({ workspace: root.workspace });
           const stats: Stats = {
             rows: rows.length,
             companies_created: 0,
             people_created: 0,
             deals_created: 0,
+            people_skipped_no_identifier: 0,
           };
-          const showProgress = !isJson() && process.stderr.isTTY;
-          let lastTick = Date.now();
+          const cache: LookupCache = new Map();
+          const batcher = new WriteBatcher(lix);
+          // Small CSVs accumulate everything and flush once at the end (one
+          // Lix commit, smallest file, fastest). Large CSVs flush every N
+          // rows to bound memory + keep the progress bar advancing.
+          const flushEvery =
+            rows.length > LARGE_CSV_THRESHOLD
+              ? LARGE_CSV_FLUSH_EVERY_ROWS
+              : Number.POSITIVE_INFINITY;
+          let lastTick = 0;
           for (let i = 0; i < rows.length; i++) {
-            await importRow(lix, rows[i]!, source, i + 1, stats);
-            if (showProgress && (Date.now() - lastTick > 500 || i === rows.length - 1)) {
+            await importRow(lix, batcher, cache, rows[i]!, source, i + 1, stats);
+            if ((i + 1) % flushEvery === 0) {
+              await batcher.flush();
+            }
+            // First row prints immediately so the user sees something within
+            // ~100ms; after that we throttle to ~3 updates/sec.
+            const now = Date.now();
+            if (showProgress && (lastTick === 0 || now - lastTick > 300 || i === rows.length - 1)) {
               process.stderr.write(
-                `\rimporting… ${i + 1} / ${rows.length} rows`,
+                `\rimporting… ${i + 1} / ${rows.length} rows  (people: ${stats.people_created}, companies: ${stats.companies_created}, deals: ${stats.deals_created})`,
               );
-              lastTick = Date.now();
+              lastTick = now;
             }
           }
-          if (showProgress) process.stderr.write("\n");
-          if (
-            rows.length > 0 &&
-            stats.companies_created === 0 &&
-            stats.people_created === 0 &&
-            stats.deals_created === 0
-          ) {
-            stats.warnings = diagnoseEmptyImport(rows);
+          // Final flush. When we deferred everything to the end (one-commit
+          // mode), the buffer is large and this can take several seconds —
+          // print a status line so the user doesn't see a silent stall.
+          if (showProgress) {
+            process.stderr.write("\n");
+            if (batcher.size > 100) {
+              process.stderr.write(`finalizing ${batcher.size.toLocaleString()} records…\n`);
+            }
+          }
+          await batcher.flush();
+          const warnings = diagnoseEmptyImport(rows, detected, stats);
+          if (warnings.length) {
+            stats.warnings = warnings;
             if (!isJson()) {
-              for (const w of stats.warnings) {
+              for (const w of warnings) {
                 process.stderr.write(`warning: ${w}\n`);
               }
             }
