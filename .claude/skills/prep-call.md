@@ -6,7 +6,7 @@ Argument: `$ARGUMENTS` can be one of:
 - a person's name, email, or LinkedIn URL
 - a name + optional context blob (DM thread, email reply, webinar chat)
 
-The CLI exposes three commands — `init`, `import csv`, and `execute`. All reads and writes against `.acrm` go through `acrm execute "<sql>"`, which returns `{ rows, rows_affected }` as JSON when `--json` is set (or stdout is non-TTY).
+The CLI exposes `init`, `import csv`, `import linkedin`, and `execute`. All reads and writes against `.acrm` go through `acrm execute "<sql>"`, which returns `{ rows, rows_affected }` as JSON when `--json` is set (or stdout is non-TTY). To create a person from scratch from a LinkedIn URL, use `acrm import linkedin <url>` — it scrapes the profile (cached 14 days) and upserts the person + company records, no manual SQL needed.
 
 ## Steps
 
@@ -23,7 +23,7 @@ The CLI exposes three commands — `init`, `import csv`, and `execute`. All read
 
    - 1 match → proceed. Note the `record_id`.
    - 2+ matches → for each `record_id`, fetch `name` / `company` / `last_calendar_interaction` and show a numbered list. Ask which one. Stop.
-   - 0 matches → tell the user the person isn't in `.acrm`. Ask: "Want me to create them? I'll need name, email, company, and role." Wait for confirmation, then insert. Use `acrm execute` to insert one row into `acrm_record` and one row per attribute into `acrm_value`. Generate a uuid client-side for `record_id` and for each value `id`. Set `active_from = now`, `active_until = NULL`, `source = 'prep-call'`, `provenance_json = '{}'`.
+   - 0 matches → if the input was (or contains) a LinkedIn URL, run `acrm import linkedin <url> --json` to create the person + company in one shot, then re-resolve. If no LinkedIn URL was provided, ask the user for one. Only fall back to manual paste if the user can't provide a URL or the profile is private (Apify returns empty). The CLI handles uuids, timestamps, and provenance — do not write SQL inserts directly.
 
 2. **Pull their full context.** All current values for the person:
    ```sh
@@ -38,11 +38,7 @@ The CLI exposes three commands — `init`, `import csv`, and `execute`. All read
 
    Build a "What I know" recap: name, role, company, associated deals + stage, company description, any notes captured in custom attributes.
 
-3. **Fetch the LinkedIn profile.** If the person has a `linkedin_url` value, run:
-   ```sh
-   python3 scripts/linkedin_fetch.py <linkedin-url>
-   ```
-   Caches the JSON at `.cache/linkedin/<public-id>.json` (14-day TTL). Pass `--refresh` to force a re-fetch. If the script fails (missing `APIFY_API_TOKEN`, private profile, network), fall back to asking the user to paste the About + role + recent posts.
+3. **Fetch the LinkedIn profile.** If the person has a `linkedin_url` value, the cached JSON is already at `.cache/linkedin/<public-id>.json` (written by `acrm import linkedin` on first ingest, 14-day TTL). To force a refresh, run `acrm import linkedin <url> --refresh` again. If no cache exists and the person has a LinkedIn URL, run `acrm import linkedin <url>` first. If Apify fails (private profile, network), fall back to asking the user to paste the About + role + recent posts.
 
    Extract: headline, current position, About, last 2–3 roles with dates, recent posts/activity. Ignore skills/endorsements unless specifically relevant.
 
