@@ -5,8 +5,32 @@ import { nowIso } from "../lib/time.js";
 import {
   encode,
   normalizeUniqueKey,
+  type AttributeConfig,
   type AttributeType,
 } from "../domain/values.js";
+
+async function loadAttributeConfig(
+  lix: Lix,
+  object_slug: string,
+  attribute_slug: string,
+): Promise<AttributeConfig | undefined> {
+  const r = await exec(
+    lix,
+    "SELECT config_json FROM acrm_attribute WHERE object_slug = $1 AND attribute_slug = $2",
+    [object_slug, attribute_slug],
+  );
+  const raw = r.rows[0]?.config_json as string | null | undefined;
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw) as AttributeConfig;
+  } catch {
+    return undefined;
+  }
+}
+
+function needsConfig(type: AttributeType): boolean {
+  return type === "status" || type === "select";
+}
 
 export async function findRecordByUnique(
   lix: Lix,
@@ -109,7 +133,10 @@ export async function setSingleValue(
     provenance: Record<string, unknown>;
   },
 ): Promise<void> {
-  const value_json = encode(args.attribute_type, args.value);
+  const config = needsConfig(args.attribute_type)
+    ? await loadAttributeConfig(lix, args.object_slug, args.attribute_slug)
+    : undefined;
+  const value_json = encode(args.attribute_type, args.value, config);
   await exec(
     lix,
     `UPDATE acrm_value SET active_until = $1
@@ -131,7 +158,10 @@ export async function addMultiValue(
     provenance: Record<string, unknown>;
   },
 ): Promise<void> {
-  const value_json = encode(args.attribute_type, args.value);
+  const config = needsConfig(args.attribute_type)
+    ? await loadAttributeConfig(lix, args.object_slug, args.attribute_slug)
+    : undefined;
+  const value_json = encode(args.attribute_type, args.value, config);
   const normalized = normalizeUniqueKey(args.attribute_type, value_json);
   if (normalized) {
     const exists = await exec(

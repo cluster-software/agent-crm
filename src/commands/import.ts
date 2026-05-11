@@ -18,6 +18,7 @@ import {
   domainFromEmail,
   normalizeLinkedinUrl,
   normalizeTwitterUrl,
+  type AttributeConfig,
   type AttributeType,
 } from "../domain/values.js";
 
@@ -346,15 +347,24 @@ async function getAttribute(
   lix: Lix,
   object_slug: string,
   attribute_slug: string,
-): Promise<{ attribute_type: AttributeType } | null> {
+): Promise<{ attribute_type: AttributeType; config?: AttributeConfig } | null> {
   const r = await exec(
     lix,
-    "SELECT attribute_type FROM acrm_attribute WHERE object_slug = $1 AND attribute_slug = $2",
+    "SELECT attribute_type, config_json FROM acrm_attribute WHERE object_slug = $1 AND attribute_slug = $2",
     [object_slug, attribute_slug],
   );
   const row = r.rows[0];
   if (!row) return null;
-  return { attribute_type: row.attribute_type as AttributeType };
+  let config: AttributeConfig | undefined;
+  const raw = row.config_json as string | null | undefined;
+  if (raw) {
+    try {
+      config = JSON.parse(raw) as AttributeConfig;
+    } catch {
+      config = undefined;
+    }
+  }
+  return { attribute_type: row.attribute_type as AttributeType, config };
 }
 
 async function setSingleValue(
@@ -368,13 +378,14 @@ async function setSingleValue(
     value: unknown;
     source: string;
     provenance: Record<string, unknown>;
+    attribute_config?: AttributeConfig;
     // When true, the record was created in this import and cannot have
     // pre-existing active values — skip the closing UPDATE round-trip and
     // enqueue the INSERT into the batch.
     isFresh?: boolean;
   },
 ): Promise<void> {
-  const value_json = encode(args.attribute_type, args.value);
+  const value_json = encode(args.attribute_type, args.value, args.attribute_config);
   if (!args.isFresh) {
     // The record may have pre-existing values that need to be closed before
     // we insert the replacement. Flush pending INSERTs first so the UPDATE
@@ -402,12 +413,13 @@ async function addMultiValue(
     value: unknown;
     source: string;
     provenance: Record<string, unknown>;
+    attribute_config?: AttributeConfig;
     // When true, the record was created in this import — skip the dedupe
     // SELECT (it cannot have pre-existing values).
     isFresh?: boolean;
   },
 ): Promise<void> {
-  const value_json = encode(args.attribute_type, args.value);
+  const value_json = encode(args.attribute_type, args.value, args.attribute_config);
   const normalized = normalizeUniqueKey(args.attribute_type, value_json);
   if (!args.isFresh && normalized) {
     // Existing record — flush so the SELECT sees in-flight inserts (the same
@@ -800,6 +812,7 @@ async function importRow(
           record_id: dealId,
           attribute_slug: "stage",
           attribute_type: attr.attribute_type,
+          attribute_config: attr.config,
           value: stage,
           source,
           provenance,

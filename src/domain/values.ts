@@ -14,7 +14,34 @@ export type AttributeType =
 
 export type ValueJson = Record<string, unknown>;
 
-export function encode(type: AttributeType, input: unknown): ValueJson {
+export type StatusOption = { id: string; title: string };
+
+export type AttributeConfig = {
+  options?: StatusOption[];
+  // Other config keys (target_object, inverse, currency_code, ...) are
+  // intentionally not typed here — they're consumed elsewhere.
+  [key: string]: unknown;
+};
+
+export function resolveStatusOption(
+  raw: string,
+  options: StatusOption[] | undefined,
+): StatusOption | null {
+  if (!options || options.length === 0) return null;
+  const needle = raw.trim().toLowerCase();
+  for (const o of options) {
+    if (o.id.toLowerCase() === needle || o.title.toLowerCase() === needle) {
+      return { id: o.id, title: o.title };
+    }
+  }
+  return null;
+}
+
+export function encode(
+  type: AttributeType,
+  input: unknown,
+  config?: AttributeConfig,
+): ValueJson {
   if (input === null || input === undefined) {
     throw new Error(`cannot encode null/undefined for ${type}`);
   }
@@ -61,8 +88,11 @@ export function encode(type: AttributeType, input: unknown): ValueJson {
       return { timestamp: String(input).trim() };
     case "select":
     case "status": {
-      if (typeof input === "object") return input as ValueJson;
-      return { title: String(input).trim() };
+      if (typeof input === "object" && input !== null) return input as ValueJson;
+      const raw = String(input).trim();
+      const match = resolveStatusOption(raw, config?.options);
+      if (match) return { id: match.id, title: match.title };
+      return { title: raw };
     }
     case "record-reference": {
       const v = input as { target_object?: string; target_record_id?: string };
@@ -149,4 +179,53 @@ export function normalizeTwitterUrl(input: string): string | null {
   s = s.replace(/\/+$/, "");
   s = s.toLowerCase();
   return s.length ? s : null;
+}
+
+export type PostPlatform = "linkedin" | "x";
+
+export function sniffPostPlatform(input: string): PostPlatform | null {
+  const s = input.trim().toLowerCase();
+  if (!s) return null;
+  if (/(?:^|\/\/|\.)linkedin\.com\b/.test(s)) return "linkedin";
+  if (/(?:^|\/\/|\.)(?:x\.com|twitter\.com)\b/.test(s)) return "x";
+  return null;
+}
+
+export function normalizeLinkedinPostUrl(input: string): string | null {
+  let s = input.trim();
+  if (!s) return null;
+  s = s.replace(/^https?:\/\//i, "");
+  s = s.replace(/^www\./i, "");
+  const q = s.search(/[?#]/);
+  if (q >= 0) s = s.slice(0, q);
+  s = s.replace(/\/+$/, "");
+  s = s.toLowerCase();
+  return s.length ? s : null;
+}
+
+export function normalizeXPostUrl(input: string): string | null {
+  let s = input.trim();
+  if (!s) return null;
+  s = s.replace(/^https?:\/\//i, "");
+  s = s.replace(/^www\./i, "");
+  s = s.replace(/^twitter\.com\b/i, "x.com");
+  const q = s.search(/[?#]/);
+  if (q >= 0) s = s.slice(0, q);
+  s = s.replace(/\/+$/, "");
+  s = s.toLowerCase();
+  return s.length ? s : null;
+}
+
+export function normalizePostUrl(input: string): {
+  platform: PostPlatform;
+  url: string;
+} | null {
+  const platform = sniffPostPlatform(input);
+  if (!platform) return null;
+  const url =
+    platform === "linkedin"
+      ? normalizeLinkedinPostUrl(input)
+      : normalizeXPostUrl(input);
+  if (!url) return null;
+  return { platform, url };
 }
