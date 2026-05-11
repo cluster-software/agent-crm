@@ -1,5 +1,41 @@
 # @agent-crm/cli
 
+## 0.1.0
+
+### Minor Changes
+
+- 47c2733: Single-profile imports, post imports, and CSV reliability fixes since 0.0.7:
+
+  **Import a person from a LinkedIn or X profile URL**
+
+  - `acrm import linkedin <url-or-slug>` fetches a LinkedIn profile via Apify and upserts the person (deduped by `linkedin_url`) plus their current employer as a company.
+  - `acrm import x <handle-or-url>` fetches an X/Twitter profile and upserts the person (deduped by `twitter_url`, normalized to `x.com/<handle>`). When the bio contains role/company info that's missing from the person record, returns a `needs_enrichment` payload that the new `enrich-x-bio` skill consumes to fill in `job_title` and `company`.
+  - Apify responses are cached under `.cache/{linkedin,x}/` with a 14-day TTL. `--refresh` bypasses, `--no-cache` skips writing.
+  - Requires `APIFY_API_TOKEN` in a `.env` next to the workspace (or in shell env).
+
+  **Import a LinkedIn or X post by URL**
+
+  - `acrm import post <url>` auto-detects the platform and imports the post's author as a person, then stores the post itself as a first-class record. Use when a user shares a post link they want to track (e.g. "import this tweet", "save this LinkedIn post").
+  - Adds a new top-level `posts` object alongside companies / people / deals, with attributes: `url` (unique, normalized), `platform` (`linkedin` | `x`), `author` (record-reference → people), `posted_at`, `content`. Inverse on people: `associated_posts` (multivalued).
+  - Idempotent: re-running the same URL keeps one post record and one author, and skips re-linking. Cached Apify responses make repeat runs free.
+  - Actor selection: `apimaestro/linkedin-post-detail` for LinkedIn (single-post-by-URL with author profile URL in the response), `apidojo/twitter-scraper-lite` for X (`startUrls` with single-tweet support, same vendor as the existing X profile actor).
+  - New `.claude/skills/import-post.md` skill so agents pick up the command from natural phrasings and bare post URLs in chat.
+
+  **`status` / `select` attributes now store `{id, title}`**
+
+  - Previously passing a bare string (e.g. `"lead"` for `deal.stage`) stored `{"title":"lead"}`, dropping the id and using the lowercase id as the display title. The `encode()` function now resolves a string input against the attribute's `options` config (case-insensitive match on `id` or `title`) and stores the canonical `{id, title}` pair. This applies to both `acrm import csv` (deal stage) and the new `acrm import post` (platform).
+  - Falls back to the old `{title: raw}` behavior when an attribute has no `options` config or the input doesn't match any option, so freeform statuses still work.
+
+  **CSV import reliability + UI polish**
+
+  - Multiple fixes to `acrm import csv` to handle real-world CSVs more reliably (header normalization, person/company dedup edge cases, batched writes, monotonic UUIDv7 generation to keep insert order stable when rows land within the same millisecond).
+  - Deals icon tweak in the local UI.
+
+  **Internal**
+
+  - Reusable `importLinkedinProfile()` / `importXProfile()` helpers extracted from the CLI wrappers so the new post-import flow can chain into them without re-opening the workspace. Existing CLI behavior for `acrm import linkedin` / `acrm import x` is unchanged.
+  - Removed unused skills: `champion-left`, `csv-import`, `new-hire-trigger`, `stale-opportunities`.
+
 ## 0.0.7
 
 ### Patch Changes
