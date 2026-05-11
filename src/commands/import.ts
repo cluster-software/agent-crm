@@ -1,5 +1,7 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, openSync, unlinkSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { createServer, request as httpRequest } from "node:http";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Command } from "commander";
 import type { Lix, LixRuntimeValue } from "@lix-js/sdk";
@@ -95,6 +97,19 @@ function pick(row: CsvRow, ...keys: string[]): string | null {
     if (v && v.length) return v;
   }
   return null;
+}
+
+// Reject placeholder values masquerading as domains: "--", "n/a", "unknown",
+// "tbd", random text without a dot, etc. A real domain has at least one dot
+// with valid label chars on both sides and a 2+-char TLD. Without this, every
+// row with a placeholder gets merged into a single bogus "company".
+const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+function looksLikeDomain(d: string): boolean {
+  if (!d || d.length < 4 || d.length > 253) return false;
+  if (!DOMAIN_RE.test(d)) return false;
+  // Reject TLDs shorter than 2 chars (rules out e.g. "a.b").
+  const tld = d.slice(d.lastIndexOf(".") + 1);
+  return tld.length >= 2;
 }
 
 // (object_slug, attribute_slug, normalized_key) → record_id.
@@ -590,8 +605,18 @@ async function importRow(
   // company
   let companyId: string | null = null;
   let companyDomain: string | null = null;
-  if (domainRaw) companyDomain = normalizeDomain(domainRaw);
-  else if (primaryEmail) companyDomain = domainFromEmail(primaryEmail);
+  if (domainRaw) {
+    const norm = normalizeDomain(domainRaw);
+    if (looksLikeDomain(norm)) companyDomain = norm;
+    // Otherwise it's a placeholder like "--", "n/a", "unknown" — fall through
+    // and try the email or company-name path. The first time we saw this bug,
+    // 18 rows in a CSV had `company_domain = "--"`; all 18 got merged into one
+    // company because "--" passed as a dedup key.
+  }
+  if (!companyDomain && primaryEmail) {
+    const fromEmail = domainFromEmail(primaryEmail);
+    if (fromEmail && looksLikeDomain(fromEmail)) companyDomain = fromEmail;
+  }
 
   if (companyDomain) {
     const existing = await findRecordByUnique(lix, cache, "companies", "domains", companyDomain);
@@ -849,6 +874,54 @@ async function importRow(
   }
 }
 
+// Test whether a TCP port is free on 127.0.0.1 by attempting to bind a
+// throwaway server. Returns true if bind succeeded (and we then released it).
+async function isPortFree(port: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const probe = createServer();
+    probe.once("error", () => resolve(false));
+    probe.once("listening", () => {
+      probe.close(() => resolve(true));
+    });
+    probe.listen(port, "127.0.0.1");
+  });
+}
+
+// Find the first free port starting at `start`, searching up to `range` ports.
+// Returns null if every candidate is busy.
+async function findOpenPort(start: number, range: number): Promise<number | null> {
+  for (let p = start; p < start + range; p++) {
+    if (await isPortFree(p)) return p;
+  }
+  return null;
+}
+
+// Poll http://127.0.0.1:port/ until it responds or we hit the deadline.
+// Returns true if the server became reachable within `timeoutMs`.
+async function waitForUiReady(port: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const ok = await new Promise<boolean>((resolve) => {
+      const req = httpRequest(
+        { host: "127.0.0.1", port, path: "/", method: "GET", timeout: 500 },
+        (res) => {
+          res.resume();
+          resolve(true);
+        },
+      );
+      req.on("error", () => resolve(false));
+      req.on("timeout", () => {
+        req.destroy();
+        resolve(false);
+      });
+      req.end();
+    });
+    if (ok) return true;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+}
+
 export function registerImport(program: Command): void {
   const importCmd = program
     .command("import")
@@ -920,7 +993,23 @@ Identity:
           const rows = parseCsv(text);
           const source = `csv:${path.basename(abs)}`;
           const detected = detectColumns(rows);
-          const showProgress = !isJson() && process.stderr.isTTY;
+          // Progress always goes to stderr; the final structured result goes
+          // to stdout. Gating progress on `process.stderr.isTTY` hid all
+          // output when acrm was invoked from Claude Code / CI / piped
+          // shells, where stderr is captured but is not a TTY. Format adapts
+          // instead: \r-overwrite when stderr is a real terminal, newline
+          // lines (throttled) when it's a pipe.
+          const stderrTty = process.stderr.isTTY === true;
+          const showProgress = true;
+          const progressThrottleMs = stderrTty ? 300 : 1500;
+          const writeProgress = (line: string, final: boolean) => {
+            if (stderrTty) {
+              process.stderr.write(`\r${line}`);
+              if (final) process.stderr.write("\n");
+            } else {
+              process.stderr.write(`${line}\n`);
+            }
+          };
           if (showProgress) {
             const personHints = [
               ...detected.email_headers,
@@ -939,6 +1028,7 @@ Identity:
             process.stderr.write(
               `  company identifiers: ${companyHints.length ? companyHints.join(", ") : "(none — companies will be skipped)"}\n`,
             );
+            process.stderr.write(`opening workspace…\n`);
           }
           lix = await openWorkspace({ workspace: root.workspace });
           const stats: Stats = {
@@ -964,11 +1054,13 @@ Identity:
               await batcher.flush();
             }
             // First row prints immediately so the user sees something within
-            // ~100ms; after that we throttle to ~3 updates/sec.
+            // ~100ms; after that we throttle.
             const now = Date.now();
-            if (showProgress && (lastTick === 0 || now - lastTick > 300 || i === rows.length - 1)) {
-              process.stderr.write(
-                `\rimporting… ${i + 1} / ${rows.length} rows  (people: ${stats.people_created}, companies: ${stats.companies_created}, deals: ${stats.deals_created})`,
+            const isLast = i === rows.length - 1;
+            if (showProgress && (lastTick === 0 || now - lastTick > progressThrottleMs || isLast)) {
+              writeProgress(
+                `importing… ${i + 1} / ${rows.length} rows  (people: ${stats.people_created}, companies: ${stats.companies_created}, deals: ${stats.deals_created})`,
+                isLast,
               );
               lastTick = now;
             }
@@ -976,13 +1068,19 @@ Identity:
           // Final flush. When we deferred everything to the end (one-commit
           // mode), the buffer is large and this can take several seconds —
           // print a status line so the user doesn't see a silent stall.
-          if (showProgress) {
-            process.stderr.write("\n");
-            if (batcher.size > 100) {
-              process.stderr.write(`finalizing ${batcher.size.toLocaleString()} records…\n`);
-            }
+          const pendingAtFlush = batcher.size;
+          if (showProgress && pendingAtFlush > 100) {
+            process.stderr.write(
+              `finalizing ${pendingAtFlush.toLocaleString()} records (this can take a few seconds)…\n`,
+            );
           }
+          const flushStart = Date.now();
           await batcher.flush();
+          if (showProgress && pendingAtFlush > 100) {
+            process.stderr.write(
+              `  done in ${((Date.now() - flushStart) / 1000).toFixed(1)}s\n`,
+            );
+          }
           const warnings = diagnoseEmptyImport(rows, detected, stats);
           if (warnings.length) {
             stats.warnings = warnings;
@@ -997,6 +1095,7 @@ Identity:
           await lix.close();
           lix = null;
           let ui: { pid: number; url: string; stop: string } | null = null;
+          let uiError: string | null = null;
           if (opts.ui) {
             const resolved = root.workspace
               ? root.workspace.endsWith(".acrm")
@@ -1004,27 +1103,85 @@ Identity:
                 : root.workspace + ".acrm"
               : (findWorkspace() ?? "workspace.acrm");
             const absWorkspace = path.resolve(resolved);
-            const url = `http://localhost:${port}`;
-            const args = [
-              ...process.execArgv,
-              process.argv[1]!,
-              "-w",
-              absWorkspace,
-              "ui",
-              "-p",
-              String(port),
-            ];
-            if (!opts.open) args.push("--no-open");
-            const child = spawn(process.execPath, args, {
-              detached: true,
-              stdio: "ignore",
-            });
-            child.unref();
-            if (typeof child.pid === "number") {
-              ui = { pid: child.pid, url, stop: `kill ${child.pid}` };
+
+            // If the requested port is busy, walk up a small range so a
+            // forgotten earlier UI doesn't silently swallow this one.
+            let effectivePort = port;
+            if (!(await isPortFree(port))) {
+              const fallback = await findOpenPort(port + 1, 20);
+              if (fallback === null) {
+                uiError = `port ${port} and ${port + 1}..${port + 20} are all busy — UI not started. Stop the existing server (e.g. lsof -nP -iTCP:${port} -sTCP:LISTEN) or rerun with -p <port>.`;
+              } else {
+                if (showProgress) {
+                  process.stderr.write(
+                    `UI: port ${port} busy, starting on ${fallback} instead\n`,
+                  );
+                }
+                effectivePort = fallback;
+              }
+            }
+
+            if (uiError === null) {
+              const url = `http://localhost:${effectivePort}`;
+              // Capture child stderr to a temp file so we can surface real
+              // errors if the server crashes during startup (the old code
+              // used stdio: "ignore" and silently lost everything).
+              const errLogPath = path.join(
+                tmpdir(),
+                `acrm-ui-${process.pid}-${effectivePort}.err.log`,
+              );
+              const errFd = openSync(errLogPath, "w");
+              const args = [
+                ...process.execArgv,
+                process.argv[1]!,
+                "-w",
+                absWorkspace,
+                "ui",
+                "-p",
+                String(effectivePort),
+              ];
+              if (!opts.open) args.push("--no-open");
+              const child = spawn(process.execPath, args, {
+                detached: true,
+                stdio: ["ignore", "ignore", errFd],
+              });
+              child.unref();
+              if (showProgress) {
+                process.stderr.write(`UI: starting at ${url} …\n`);
+              }
+              const ready = await waitForUiReady(effectivePort, 5000);
+              if (ready) {
+                ui = {
+                  pid: child.pid ?? -1,
+                  url,
+                  stop: `kill ${child.pid ?? "<pid-unknown>"}`,
+                };
+                // Server is up — we don't need the stderr log; clean up.
+                try {
+                  unlinkSync(errLogPath);
+                } catch {
+                  /* ignore */
+                }
+              } else {
+                let detail = "";
+                try {
+                  const log = readFileSync(errLogPath, "utf8").trim();
+                  if (log) detail = `\n  child stderr: ${log.split("\n").slice(-5).join(" / ")}`;
+                } catch {
+                  /* ignore */
+                }
+                uiError = `UI didn't respond on ${url} within 5s — child likely crashed.${detail}\n  full log: ${errLogPath}`;
+              }
+            }
+
+            if (uiError && showProgress) {
+              process.stderr.write(`warning: ${uiError}\n`);
             }
           }
-          ok(ui ? { ...stats, ui } : stats);
+          const payload: Record<string, unknown> = { ...stats };
+          if (ui) payload.ui = ui;
+          if (uiError) payload.ui_error = uiError;
+          ok(payload);
           if (!isJson()) {
             const bold = process.env.NO_COLOR ? "" : "\x1b[1m";
             const reset = process.env.NO_COLOR ? "" : "\x1b[0m";
