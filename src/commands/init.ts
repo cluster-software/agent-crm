@@ -28,6 +28,7 @@ const OBJECTS: ObjectSeed[] = [
   { object_slug: "people", singular_name: "Person", plural_name: "People" },
   { object_slug: "companies", singular_name: "Company", plural_name: "Companies" },
   { object_slug: "deals", singular_name: "Deal", plural_name: "Deals" },
+  { object_slug: "posts", singular_name: "Post", plural_name: "Posts" },
 ];
 
 const ATTRIBUTES: AttributeSeed[] = [
@@ -47,6 +48,7 @@ const ATTRIBUTES: AttributeSeed[] = [
   { object_slug: "people", attribute_slug: "twitter_url", title: "Twitter / X", attribute_type: "url", is_multivalued: false, is_unique: false },
   { object_slug: "people", attribute_slug: "company", title: "Company", attribute_type: "record-reference", is_multivalued: false, is_unique: false, config: { target_object: "companies", inverse: "team" } },
   { object_slug: "people", attribute_slug: "associated_deals", title: "Associated deals", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "deals", inverse: "associated_people" } },
+  { object_slug: "people", attribute_slug: "associated_posts", title: "Associated posts", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "posts", inverse: "author" } },
 
   // deals
   { object_slug: "deals", attribute_slug: "name", title: "Name", attribute_type: "text", is_multivalued: false, is_unique: false },
@@ -56,6 +58,13 @@ const ATTRIBUTES: AttributeSeed[] = [
   { object_slug: "deals", attribute_slug: "associated_people", title: "Associated people", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "people", inverse: "associated_deals" } },
   { object_slug: "deals", attribute_slug: "close_date", title: "Close date", attribute_type: "date", is_multivalued: false, is_unique: false },
   { object_slug: "deals", attribute_slug: "next_step", title: "Next step", attribute_type: "text", is_multivalued: false, is_unique: false },
+
+  // posts
+  { object_slug: "posts", attribute_slug: "url", title: "URL", attribute_type: "url", is_multivalued: false, is_unique: true },
+  { object_slug: "posts", attribute_slug: "platform", title: "Platform", attribute_type: "status", is_multivalued: false, is_unique: false, config: { options: [{ id: "linkedin", title: "LinkedIn" }, { id: "x", title: "X" }] } },
+  { object_slug: "posts", attribute_slug: "author", title: "Author", attribute_type: "record-reference", is_multivalued: false, is_unique: false, config: { target_object: "people", inverse: "associated_posts" } },
+  { object_slug: "posts", attribute_slug: "posted_at", title: "Posted at", attribute_type: "date", is_multivalued: false, is_unique: false },
+  { object_slug: "posts", attribute_slug: "content", title: "Content", attribute_type: "text", is_multivalued: false, is_unique: false },
 ];
 
 async function seedObjects(lix: Lix): Promise<void> {
