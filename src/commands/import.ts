@@ -922,12 +922,20 @@ async function waitForUiReady(port: number, timeoutMs: number): Promise<boolean>
   return false;
 }
 
-export function registerImport(program: Command): void {
-  const importCmd = program
+// Exposed so other import subcommands (e.g. `import linkedin`, `import x`)
+// can attach themselves to the same `import` parent without redefining it.
+export function getOrCreateImportCommand(program: Command): Command {
+  const existing = program.commands.find((c) => c.name() === "import");
+  if (existing) return existing;
+  return program
     .command("import")
     .description(
       "import data into the .acrm file (creates people + companies; deals only when the CSV has deal columns)",
     );
+}
+
+export function registerImport(program: Command): void {
+  const importCmd = getOrCreateImportCommand(program);
 
   importCmd
     .command("csv <path>")

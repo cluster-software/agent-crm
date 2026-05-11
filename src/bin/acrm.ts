@@ -3,7 +3,9 @@ import { createRequire } from "node:module";
 import { Command } from "commander";
 import { registerInit } from "../commands/init.js";
 import { registerExecute } from "../commands/execute.js";
-import { registerImport } from "../commands/import.js";
+import { registerImport, getOrCreateImportCommand } from "../commands/import.js";
+import { attachLinkedinSubcommand } from "../commands/import-linkedin.js";
+import { attachXSubcommand } from "../commands/import-x.js";
 import { registerUi } from "../commands/ui.js";
 import { fail } from "../output/json.js";
 import { ERR } from "../lib/errors.js";
@@ -53,6 +55,8 @@ Introspection (run via \`acrm execute "<sql>"\`):
 
 registerInit(program);
 registerImport(program);
+attachLinkedinSubcommand(getOrCreateImportCommand(program));
+attachXSubcommand(getOrCreateImportCommand(program));
 registerExecute(program);
 registerUi(program);
 
