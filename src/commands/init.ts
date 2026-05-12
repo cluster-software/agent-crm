@@ -29,6 +29,7 @@ const OBJECTS: ObjectSeed[] = [
   { object_slug: "companies", singular_name: "Company", plural_name: "Companies" },
   { object_slug: "deals", singular_name: "Deal", plural_name: "Deals" },
   { object_slug: "posts", singular_name: "Post", plural_name: "Posts" },
+  { object_slug: "transcripts", singular_name: "Transcript", plural_name: "Transcripts" },
 ];
 
 const ATTRIBUTES: AttributeSeed[] = [
@@ -49,6 +50,7 @@ const ATTRIBUTES: AttributeSeed[] = [
   { object_slug: "people", attribute_slug: "company", title: "Company", attribute_type: "record-reference", is_multivalued: false, is_unique: false, config: { target_object: "companies", inverse: "team" } },
   { object_slug: "people", attribute_slug: "associated_deals", title: "Associated deals", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "deals", inverse: "associated_people" } },
   { object_slug: "people", attribute_slug: "associated_posts", title: "Associated posts", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "posts", inverse: "author" } },
+  { object_slug: "people", attribute_slug: "associated_transcripts", title: "Associated transcripts", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "transcripts", inverse: "participants" } },
 
   // deals
   { object_slug: "deals", attribute_slug: "name", title: "Name", attribute_type: "text", is_multivalued: false, is_unique: false },
@@ -65,6 +67,17 @@ const ATTRIBUTES: AttributeSeed[] = [
   { object_slug: "posts", attribute_slug: "author", title: "Author", attribute_type: "record-reference", is_multivalued: false, is_unique: false, config: { target_object: "people", inverse: "associated_posts" } },
   { object_slug: "posts", attribute_slug: "posted_at", title: "Posted at", attribute_type: "date", is_multivalued: false, is_unique: false },
   { object_slug: "posts", attribute_slug: "content", title: "Content", attribute_type: "text", is_multivalued: false, is_unique: false },
+
+  // transcripts
+  { object_slug: "transcripts", attribute_slug: "title", title: "Title", attribute_type: "text", is_multivalued: false, is_unique: false },
+  { object_slug: "transcripts", attribute_slug: "started_at", title: "Started at", attribute_type: "timestamp", is_multivalued: false, is_unique: false },
+  { object_slug: "transcripts", attribute_slug: "ended_at", title: "Ended at", attribute_type: "timestamp", is_multivalued: false, is_unique: false },
+  { object_slug: "transcripts", attribute_slug: "duration_seconds", title: "Duration (seconds)", attribute_type: "number", is_multivalued: false, is_unique: false },
+  { object_slug: "transcripts", attribute_slug: "source", title: "Source", attribute_type: "status", is_multivalued: false, is_unique: false, config: { options: [{ id: "granola", title: "Granola" }, { id: "zoom", title: "Zoom" }, { id: "meet", title: "Google Meet" }, { id: "teams", title: "Microsoft Teams" }, { id: "manual", title: "Manual" }, { id: "other", title: "Other" }] } },
+  { object_slug: "transcripts", attribute_slug: "source_id", title: "Source ID", attribute_type: "text", is_multivalued: false, is_unique: true },
+  { object_slug: "transcripts", attribute_slug: "summary", title: "Summary", attribute_type: "text", is_multivalued: false, is_unique: false },
+  { object_slug: "transcripts", attribute_slug: "content", title: "Content", attribute_type: "text", is_multivalued: false, is_unique: false },
+  { object_slug: "transcripts", attribute_slug: "participants", title: "Participants", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "people", inverse: "associated_transcripts" } },
 ];
 
 async function seedObjects(lix: Lix): Promise<void> {
@@ -136,7 +149,7 @@ export function registerInit(program: Command): void {
             const bold = process.env.NO_COLOR ? "" : "\x1b[1m";
             const reset = process.env.NO_COLOR ? "" : "\x1b[0m";
             process.stdout.write(
-              `\nCreated ${workspacePath}\nNext: ${bold}acrm import csv <path>${reset} to load your leads\n`,
+              `\nCreated ${workspacePath}\nNext steps:\n  ${bold}acrm import csv <path>${reset}     load your leads\n  ${bold}/setup-transcripts${reset}         connect a transcript provider to enable /post-call (optional)\n`,
             );
           }
         } finally {

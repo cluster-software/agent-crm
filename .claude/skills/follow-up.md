@@ -1,6 +1,6 @@
 ---
 name: follow-up
-description: Find leads that need a reply, read the prior thread, and draft a follow-up message in the user's tone of voice. The CLI has only `init`, `import csv`, and `execute` — all reads go through `acrm execute "<sql>"`.
+description: Find leads that need a reply, read the prior thread (including any transcripts from past calls), and draft a follow-up message in the user's tone of voice. Reads from `.acrm` via `acrm execute "<sql>"`; transcripts are pulled via `people.associated_transcripts`.
 ---
 
 # follow-up
@@ -37,7 +37,15 @@ Use when the user says "who do I need to follow up with?", "draft my follow-ups"
    acrm execute "SELECT attribute_slug, value_json, source, active_from FROM acrm_value WHERE object_slug = 'people' AND record_id = ? ORDER BY active_from DESC LIMIT 10" '["<person-record-id>"]' --json
    ```
 
-   Read the most recent `last_call`, `notes`, or other text-typed attributes that capture the prior thread.
+   Then pull recent transcripts linked to that person via `people.associated_transcripts` and read the `summary` / `content` fields for prior-call context:
+
+   ```sh
+   acrm execute "SELECT ref_record_id FROM acrm_value WHERE object_slug = 'people' AND record_id = ? AND attribute_slug = 'associated_transcripts' AND active_until IS NULL ORDER BY active_from DESC LIMIT 3" '["<person-record-id>"]' --json
+
+   acrm execute "SELECT attribute_slug, value_json FROM acrm_value WHERE object_slug = 'transcripts' AND record_id = ? AND attribute_slug IN ('summary','title','started_at') AND active_until IS NULL" '["<transcript-record-id>"]' --json
+   ```
+
+   Also read other text-typed attributes on the person (`notes`, etc.) that capture prior thread.
 
 3. **Calibrate tone.** Read 5 of the user's recent sent messages to match voice, length, and signoff. Don't invent a tone — mirror what's there. If the user has no reachable sent-mail context, ask them to paste a few examples.
 
