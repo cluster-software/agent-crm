@@ -64,9 +64,7 @@ in place without duplicating participant links.
 4. **Write a short prose summary** for the `summary` field. 3–6 lines of
    free-form text covering what the meeting was about and anything worth
    remembering. No fixed schema — `transcripts.summary` is an opaque text
-   blob; the data model has no `problem`/`would_pay`/`questions_asked`
-   fields and pretending it does forces nonsense onto meetings that aren't
-   customer-discovery calls.
+   blob.
 
    Prefer the adapter's own summary if it returned one (e.g. Granola
    already produces a serviceable summary); otherwise generate from the
