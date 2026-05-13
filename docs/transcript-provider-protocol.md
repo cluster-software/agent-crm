@@ -17,22 +17,42 @@ follow the contract below.
 
 ## Adapter contract
 
-Every adapter document must expose four sections so `/setup-transcripts` and
-`/post-call` can read it and behave correctly without hardcoding vendor names
-into the skills:
+Every adapter document must expose the sections below so `/setup-transcripts`
+and `/post-call` can read it and behave correctly without hardcoding vendor
+names into the skills:
 
-1. **`## Detect`** — How to check if this provider is connected and usable
-   right now. One of:
-   - Probe an MCP tool (e.g. `mcp__<name>__list_meetings` returns without
-     auth error).
-   - Read an env var from the workspace `.env` (e.g. `OTTER_API_KEY`).
-   - Check for a known file/directory.
-   - "Always available" (manual / file-based adapters).
+1. **`## Detect`** — How to check this provider's state right now. Must
+   return one of three states (not just connected/not-connected):
+   - `connected` — usable immediately.
+   - `unauthenticated` — wiring is in place but credentials are missing or
+     expired. Run `Connect` to fix.
+   - `not_installed` — the wiring itself is missing (MCP server not
+     registered with the harness, required CLI not on `$PATH`, env var
+     completely absent, etc.). Run `Install` to fix.
 
-2. **`## Connect`** — Step-by-step instructions to authenticate or configure
-   the provider. May be a no-op for manual adapters.
+   Probe shapes:
+   - MCP tool (e.g. `mcp__<name>__list_meetings`): tool symbol absent →
+     `not_installed`; auth error → `unauthenticated`; success → `connected`.
+   - Env var (e.g. `OTTER_API_KEY`): missing → `not_installed`;
+     present but rejected by the provider → `unauthenticated`;
+     present and accepted → `connected`.
+   - Known file/directory: same shape.
+   - "Always available" (manual / file-based adapters): always `connected`;
+     no `Install` or `Connect` needed.
 
-3. **`## Fetch`** — Given a meeting selector (date range, person, or
+2. **`## Install`** — Step-by-step instructions to put the wiring in place
+   when state is `not_installed`. Typically a user-initiated shell command
+   (e.g. `claude mcp add ...`, setting an env var) plus any required session
+   restart. Skills must **not** silently fall back to a different adapter when
+   this state is observed — they should surface the exact command and stop.
+   Omit this section only for adapters that can never be `not_installed`
+   (e.g. manual / file-based).
+
+3. **`## Connect`** — Step-by-step instructions to authenticate or configure
+   the provider when state is `unauthenticated`. May be a no-op for manual
+   adapters.
+
+4. **`## Fetch`** — Given a meeting selector (date range, person, or
    pasted ID/URL), return:
    - `source_id` (string, unique per meeting in that provider)
    - `title`, `started_at`, `ended_at`, `duration_seconds` (optional)
@@ -40,7 +60,7 @@ into the skills:
    - `participants[]` (array of `{ email }` objects — emails are how the
      CLI resolves them to existing `people` records)
 
-4. **`## Canonical source slug`** — The string to use as `source` in the
+5. **`## Canonical source slug`** — The string to use as `source` in the
    canonical JSON. Must be one of the values allowed by the `transcripts.source`
    status attribute in `src/commands/init.ts` (`granola`, `zoom`, `meet`,
    `teams`, `manual`, `other`). Extend the status options in `init.ts` when

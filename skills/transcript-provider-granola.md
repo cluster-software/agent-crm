@@ -14,9 +14,36 @@ Granola exposes meetings + transcripts through an MCP server at
 
 ## Detect
 
-Call `mcp__granola__list_meetings` with `time_range: last_week`.
-- Returns a result (with or without rows) → connected.
-- Returns an authentication error → not connected. Run **Connect** below, then retry.
+Try to call `mcp__granola__list_meetings` with `time_range: last_week`.
+
+- **Tool not available in the session** (the tool symbol itself doesn't exist —
+  in Claude Code that means the MCP server isn't registered with the harness):
+  state is `not_installed`. Run **Install** below, then **Connect**, then retry Detect.
+- **Tool returns an authentication error**: state is `unauthenticated`. Run
+  **Connect**, then retry Detect.
+- **Tool returns a result** (with or without rows): state is `connected`.
+
+Callers (`/post-call`, `/setup-transcripts`) should treat `not_installed` as a
+*recoverable* state, not as "Granola unavailable" — the recovery path is below.
+
+## Install
+
+Granola requires the MCP server to be registered with Claude Code before the
+OAuth dance can happen. This is a one-time, ~10 second step.
+
+1. Tell the user, plainly:
+   ```
+   Granola's MCP server isn't registered with Claude Code yet. To add it, run
+   this in your shell:
+
+       claude mcp add --transport http granola https://mcp.granola.ai/mcp
+
+   Then restart Claude Code (the new tools only appear after a fresh session)
+   and re-run /post-call (or /setup-transcripts). I can't do this step for you
+   because the MCP registration lives outside the skill sandbox.
+   ```
+2. Stop the current flow. Do **not** silently fall back to manual unless the
+   user explicitly says "use manual for this call."
 
 ## Connect
 

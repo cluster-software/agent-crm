@@ -19,25 +19,35 @@ this skill required.
 1. **List providers and their current status.** Enumerate the available
    adapter skills — every installed skill whose name starts with
    `transcript-provider-`. For each one, invoke it and run its **Detect**
-   section to find out whether it's already connected.
+   section to find out which of the three states it's in: `connected`,
+   `unauthenticated`, or `not_installed`.
 
-   Render a numbered menu, with a status badge:
+   Render a numbered menu, with the state in the badge so each provider's
+   next action is obvious:
    ```
    Transcript providers
 
-     1. Granola        [connected]
-     2. Manual / file  [always available]
-     3. Add new...     (drop a new transcript-provider-<name> SKILL.md into ~/.claude/skills/)
+     1. Granola        [not installed — run `claude mcp add` first]
+     2. Granola        [installed, needs OAuth]
+     3. Granola        [connected]
+     4. Manual / file  [always available]
+     5. Add new...     (drop a new transcript-provider-<name> SKILL.md into ~/.claude/skills/)
    ```
 
-   If only one adapter is fully native (e.g. Granola) and others are manual,
-   call that out.
+   (Only one row per provider in practice — the example shows all three
+   states for clarity.) If only one adapter is fully native (e.g. Granola)
+   and others are manual, call that out.
 
 2. **Ask the user which provider(s) they want to set up.** Accept a number,
    a name, "all", or "skip". They can pick more than one.
 
-3. **For each selected provider, run its `Connect` section verbatim.**
-   - Granola: OAuth dance (URL → wait → complete → verify).
+3. **For each selected provider, run its `Install` section (if state is
+   `not_installed`), then its `Connect` section (if state is
+   `unauthenticated`), then re-run `Detect` to verify.**
+   - Granola, `not_installed`: print the `claude mcp add` command, ask the
+     user to run it and restart Claude Code, then stop — re-running
+     `/setup-transcripts` after the restart picks up from `unauthenticated`.
+   - Granola, `unauthenticated`: OAuth dance (URL → wait → complete → verify).
    - Manual / file: no-op — just tell the user what to expect when they run
      `/post-call` (they'll paste or file-import).
    - Future native providers: whatever their adapter says.
