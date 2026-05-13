@@ -6,4 +6,4 @@ dist/
 *.lix
 test-acrm/
 feedback/
-scripts/
+/scripts/

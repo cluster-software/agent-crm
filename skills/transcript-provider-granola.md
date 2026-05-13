@@ -1,3 +1,8 @@
+---
+name: transcript-provider-granola
+description: Transcript provider adapter for Granola (MCP server, OAuth). Implements the Detect / Connect / Fetch / Map-to-canonical protocol composed by /post-call and /setup-transcripts. Use to probe Granola connectivity (`mcp__granola__list_meetings`), run the OAuth dance (`mcp__granola__authenticate` → `mcp__granola__complete_authentication`), find the right meeting for a person, fetch its transcript, and translate Granola's data shape into canonical transcript JSON for `acrm import transcript`.
+---
+
 # Granola adapter
 
 Granola exposes meetings + transcripts through an MCP server at

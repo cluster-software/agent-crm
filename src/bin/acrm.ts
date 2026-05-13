@@ -9,6 +9,7 @@ import { attachXSubcommand } from "../commands/import-x.js";
 import { attachPostSubcommand } from "../commands/import-post.js";
 import { attachTranscriptSubcommand } from "../commands/import-transcript.js";
 import { registerUi } from "../commands/ui.js";
+import { registerSkills } from "../commands/skills.js";
 import { fail } from "../output/json.js";
 import { ERR } from "../lib/errors.js";
 
@@ -69,6 +70,7 @@ attachPostSubcommand(getOrCreateImportCommand(program));
 attachTranscriptSubcommand(getOrCreateImportCommand(program));
 registerExecute(program);
 registerUi(program);
+registerSkills(program);
 
 program.parseAsync(process.argv).catch((err) => {
   fail(err instanceof Error ? err.message : String(err), ERR.UNHANDLED);
