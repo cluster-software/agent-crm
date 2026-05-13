@@ -57,8 +57,11 @@ names into the skills:
    - `source_id` (string, unique per meeting in that provider)
    - `title`, `started_at`, `ended_at`, `duration_seconds` (optional)
    - `content` (raw transcript text)
-   - `participants[]` (array of `{ email }` objects — emails are how the
-     CLI resolves them to existing `people` records)
+   - `participants[]` — array of objects, each carrying at least one of
+     `email`, `linkedin_url`, `twitter_url`. The CLI resolves participants
+     to existing `people` records using priority email → linkedin → twitter,
+     and backfills missing identifiers on the matched record. Pass
+     whichever identifiers the source actually has — don't synthesize.
 
 5. **`## Canonical source slug`** — The string to use as `source` in the
    canonical JSON. Must be one of the values allowed by the `transcripts.source`
@@ -78,8 +81,19 @@ names into the skills:
   "duration_seconds": 1800,
   "summary":    "...",
   "content":    "<raw transcript>",
-  "participants": [{ "email": "..." }]
+  "participants": [
+    { "email": "alice@acme.com" },
+    { "linkedin_url": "linkedin.com/in/bob-jones" },
+    { "email": "carol@acme.com", "linkedin_url": "linkedin.com/in/carol" }
+  ]
 }
 ```
+
+Each participant must carry at least one of `email` / `linkedin_url` /
+`twitter_url`. The CLI returns `participants.unresolved[]` for any whose
+identifiers don't match an existing person, with a `tried` array listing
+which attributes were probed and a `reason` of either `person_not_found`
+(at least one identifier was probed) or `no_identifier_provided` (every
+identifier normalized to empty).
 
 This is what `/post-call` builds and pipes to `acrm import transcript`.

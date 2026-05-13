@@ -97,15 +97,19 @@ in place without duplicating participant links.
      "summary": "<short prose summary, or empty string>",
      "content": "<raw transcript>",
      "participants": [
-       { "email": "<person-email>" }
+       { "email": "<person-email>" },
+       { "linkedin_url": "<linkedin-url>" },
+       { "twitter_url": "<twitter-url>" }
      ]
    }
    EOF
    ```
 
    - Use `acrmd` (dev alias) or `acrm` depending on environment.
-   - Include all attendee emails the adapter returned in `participants`.
-     Unknown emails come back in `unresolved` — that's expected.
+   - Each participant must carry at least one of `email`, `linkedin_url`,
+     `twitter_url`. Pass every identifier the adapter returned — extras get
+     backfilled onto the matched `people` record. Unknown participants come
+     back in `unresolved` with `tried[]` and `reason` — that's expected.
    - **Heredoc must use `'EOF'` (quoted)** so the shell doesn't interpolate
      `$` characters inside the transcript.
    - If the transcript is very large, write to a temp file and use `--file`:

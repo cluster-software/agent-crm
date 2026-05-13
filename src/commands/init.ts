@@ -80,7 +80,7 @@ const ATTRIBUTES: AttributeSeed[] = [
   { object_slug: "transcripts", attribute_slug: "participants", title: "Participants", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "people", inverse: "associated_transcripts" } },
 ];
 
-async function seedObjects(lix: Lix): Promise<void> {
+export async function seedObjects(lix: Lix): Promise<void> {
   for (const o of OBJECTS) {
     const have = await exec(
       lix,
@@ -96,7 +96,7 @@ async function seedObjects(lix: Lix): Promise<void> {
   }
 }
 
-async function seedAttributes(lix: Lix): Promise<void> {
+export async function seedAttributes(lix: Lix): Promise<void> {
   for (const a of ATTRIBUTES) {
     const have = await exec(
       lix,

@@ -40,8 +40,10 @@ There is no API to call — the user supplies the transcript. Two paths:
       `source_id` and prevents duplicate imports).
    3. Meeting title (optional).
    4. Meeting start time, ISO 8601 (optional).
-   5. The participant emails (so participants can be linked to existing
-      `people` records).
+   5. Participant identifiers — email, LinkedIn URL, or Twitter/X URL.
+      Any one is enough per attendee; whichever the user has on hand for
+      that person. The CLI matches by email → linkedin → twitter and
+      backfills missing identifiers on the matched record.
 
 **B. File on disk.** Ask the user for a path to a JSON file already in the
 canonical shape, then run:
@@ -61,7 +63,11 @@ For path A, build the JSON inline:
   "started_at": "<ISO 8601 from user, or omit>",
   "content":    "<pasted transcript>",
   "summary":    "<filled in by caller, e.g. /post-call>",
-  "participants": [{ "email": "<email>" }, ...]
+  "participants": [
+    { "email": "<email>" },
+    { "linkedin_url": "linkedin.com/in/<handle>" },
+    { "twitter_url": "x.com/<handle>" }
+  ]
 }
 ```
 
