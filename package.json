@@ -8,7 +8,9 @@
   },
   "files": [
     "dist",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "skills",
+    "postinstall.cjs"
   ],
   "scripts": {
     "build": "tsc",
@@ -16,6 +18,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "prepublishOnly": "npm run build",
+    "postinstall": "node ./postinstall.cjs",
     "changeset": "changeset",
     "version": "changeset version",
     "release": "changeset publish"

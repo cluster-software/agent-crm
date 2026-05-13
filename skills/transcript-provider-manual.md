@@ -1,3 +1,8 @@
+---
+name: transcript-provider-manual
+description: Always-available fallback transcript provider adapter for any source without a native integration (Otter, Fireflies, Fathom, Read.ai, Circleback, Zoom export, audio you transcribed yourself, etc.). The user pastes the transcript in chat or supplies a JSON file; this adapter builds canonical transcript JSON to hand off to `acrm import transcript`. Invoke from /post-call when no native provider is connected, or from /setup-transcripts to describe the manual path.
+---
+
 # Manual / file adapter
 
 For any provider that doesn't have a native integration yet (Otter, Fireflies,

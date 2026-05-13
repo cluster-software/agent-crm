@@ -1,5 +1,5 @@
 ---
-description: After a meeting, pull its transcript from whichever provider you have connected (Granola, manual paste/file, or any other adapter in .claude/transcript-providers/) and import it into the .acrm workspace as a `transcripts` record linked to the attendees. Provider-agnostic.
+description: After a meeting, pull its transcript from whichever provider you have connected (Granola, manual paste/file, or any other `transcript-provider-*` skill installed alongside this one) and import it into the .acrm workspace as a `transcripts` record linked to the attendees. Provider-agnostic.
 ---
 
 Argument: `$ARGUMENTS` is a person identifier — name, email, or `record_id`.
@@ -26,16 +26,16 @@ in place without duplicating participant links.
    - 1 match → proceed. Capture `record_id`, name, and email.
    - 2+ matches → numbered list (name, company), ask which one. Stop.
 
-2. **Pick a transcript provider.** Read every file in
-   `.claude/transcript-providers/` except `README.md`. For each adapter, run
-   its **Detect** section.
+2. **Pick a transcript provider.** Enumerate the available adapter skills —
+   every installed skill whose name starts with `transcript-provider-`.
+   For each one, invoke it and run its **Detect** section.
 
    - 1 native adapter connected → use it without asking.
    - 2+ native adapters connected → show a numbered list, ask the user which
      one for this meeting.
-   - 0 native adapters connected → fall back to the manual adapter
-     (`.claude/transcript-providers/manual.md`). If the user clearly wanted
-     a native one, suggest `/setup-transcripts` for next time.
+   - 0 native adapters connected → fall back to `transcript-provider-manual`,
+     which is always available. If the user clearly wanted a native one,
+     suggest `/setup-transcripts` for next time.
 
 3. **Fetch the transcript via the chosen adapter.** Follow that adapter's
    **Fetch** section verbatim — it tells you which MCP tools to call (or which

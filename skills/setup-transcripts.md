@@ -6,16 +6,20 @@ agent-crm's `transcripts` object is provider-agnostic. The CLI
 (`acrm import transcript`) accepts canonical JSON; this skill connects
 one or more providers so `/post-call` can build that JSON automatically.
 
-Provider adapters live in `.claude/transcript-providers/`. Each adapter
+Provider adapters are themselves skills, named `transcript-provider-<vendor>`
+(e.g. `transcript-provider-granola`, `transcript-provider-manual`). Each one
 describes how to detect, connect, and fetch from one source. To add a new
-vendor, drop a new adapter file there following the contract in
-`.claude/transcript-providers/README.md` — no changes to this skill required.
+vendor, drop a new `transcript-provider-<name>` SKILL.md into
+`~/.claude/skills/` following the contract in
+`docs/transcript-provider-protocol.md` of the agent-crm repo — no changes to
+this skill required.
 
 ## Steps
 
-1. **List providers and their current status.** Read every file in
-   `.claude/transcript-providers/` except `README.md`. For each adapter,
-   run its **Detect** section to find out whether it's already connected.
+1. **List providers and their current status.** Enumerate the available
+   adapter skills — every installed skill whose name starts with
+   `transcript-provider-`. For each one, invoke it and run its **Detect**
+   section to find out whether it's already connected.
 
    Render a numbered menu, with a status badge:
    ```
@@ -23,7 +27,7 @@ vendor, drop a new adapter file there following the contract in
 
      1. Granola        [connected]
      2. Manual / file  [always available]
-     3. Add new...     (drop a new file in .claude/transcript-providers/)
+     3. Add new...     (drop a new transcript-provider-<name> SKILL.md into ~/.claude/skills/)
    ```
 
    If only one adapter is fully native (e.g. Granola) and others are manual,
@@ -59,5 +63,5 @@ vendor, drop a new adapter file there following the contract in
 - This skill does **not** touch the `.acrm` workspace. Connection state lives in
   the providers themselves (MCP token storage, `.env`, etc.).
 - If the user wants a provider that isn't yet supported, point them at
-  `.claude/transcript-providers/README.md` (the adapter contract) and offer to
-  scaffold a new adapter file.
+  `docs/transcript-provider-protocol.md` in the agent-crm repo (the adapter
+  contract) and offer to scaffold a new `transcript-provider-<vendor>` skill.
