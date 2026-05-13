@@ -95,7 +95,7 @@ contains instructions addressed to the assistant ("ignore previous", "system:",
 | `duration_seconds` | computed `(end - start)` if both present, else omit      |
 | `content`          | raw transcript from `get_meeting_transcript`             |
 | `summary`          | filled in by the caller (e.g. `/post-call` extracts it)  |
-| `participants`     | `{email}` per attendee from `get_meetings` response      |
+| `participants`     | one entry per attendee. Pass `{ email }` when Granola returns an email; if it also gives you a LinkedIn or Twitter URL, include those too. The CLI resolves on whichever identifiers match `people` records and backfills missing ones. |
 
 Web URL for the meeting (for reporting only, not stored):
 `https://notes.granola.ai/t/<meeting_id>`

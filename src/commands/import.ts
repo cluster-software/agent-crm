@@ -16,11 +16,10 @@ import {
   normalizeUniqueKey,
   normalizeDomain,
   domainFromEmail,
-  normalizeLinkedinUrl,
-  normalizeTwitterUrl,
   type AttributeConfig,
   type AttributeType,
 } from "../domain/values.js";
+import { resolvePersonByIdentifiers } from "../domain/resolve-person.js";
 
 type CsvRow = Record<string, string>;
 
@@ -685,22 +684,21 @@ async function importRow(
     }
   }
 
-  // person — identified by email, then LinkedIn URL, then Twitter/X URL
+  // person — identified by email, then LinkedIn URL, then Twitter/X URL.
+  // Cascade lives in resolvePersonByIdentifiers (shared with transcript import).
   let personId: string | null = null;
-  const linkedinKey = linkedin ? normalizeLinkedinUrl(linkedin) : null;
-  const twitterKey = twitter ? normalizeTwitterUrl(twitter) : null;
+  const personLookup = await resolvePersonByIdentifiers(
+    (attr, key) => findRecordByUnique(lix, cache, "people", attr, key),
+    {
+      emails,
+      linkedin_url: linkedin ?? undefined,
+      twitter_url: twitter ?? undefined,
+    },
+  );
+  const linkedinKey = personLookup.normalized.linkedin_url;
+  const twitterKey = personLookup.normalized.twitter_url;
   if (emails.length || linkedinKey || twitterKey) {
-    for (const e of emails) {
-      const normalized = e.trim().toLowerCase();
-      personId = await findRecordByUnique(lix, cache, "people", "email_addresses", normalized);
-      if (personId) break;
-    }
-    if (!personId && linkedinKey) {
-      personId = await findRecordByUnique(lix, cache, "people", "linkedin_url", linkedinKey);
-    }
-    if (!personId && twitterKey) {
-      personId = await findRecordByUnique(lix, cache, "people", "twitter_url", twitterKey);
-    }
+    personId = personLookup.person_record_id;
     let personIsFresh = false;
     if (!personId) {
       personIsFresh = true;

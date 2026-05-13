@@ -13,10 +13,20 @@ import {
   insertRecord,
   setSingleValue,
 } from "../db/upsert.js";
+import {
+  normalizeIdentifiers,
+  resolvePersonByIdentifiers,
+  type IdentifierAttribute,
+  type NormalizedIdentifiers,
+} from "../domain/resolve-person.js";
 
-type Participant = { email: string };
+export type ParticipantInput = {
+  email?: string;
+  linkedin_url?: string;
+  twitter_url?: string;
+};
 
-type TranscriptPayload = {
+export type TranscriptPayload = {
   source: string;
   source_id: string;
   title?: string;
@@ -25,7 +35,38 @@ type TranscriptPayload = {
   duration_seconds?: number;
   summary?: string;
   content?: string;
-  participants: Participant[];
+  participants: ParticipantInput[];
+};
+
+export type ResolvedParticipant = {
+  person_record_id: string;
+  matched_by: IdentifierAttribute;
+  matched_key: string;
+  identifiers: ParticipantIdentifiersOut;
+  backfilled: IdentifierAttribute[];
+};
+
+export type UnresolvedParticipant = {
+  identifiers: ParticipantIdentifiersOut;
+  reason: "person_not_found" | "no_identifier_provided";
+  tried: IdentifierAttribute[];
+};
+
+type ParticipantIdentifiersOut = {
+  email?: string;
+  linkedin_url?: string;
+  twitter_url?: string;
+};
+
+export type TranscriptImportResult = {
+  transcript_record_id: string;
+  created: boolean;
+  source: string;
+  source_id: string;
+  participants: {
+    resolved: ResolvedParticipant[];
+    unresolved: UnresolvedParticipant[];
+  };
 };
 
 type Opts = {
@@ -36,7 +77,7 @@ export function attachTranscriptSubcommand(parent: Command): void {
   parent
     .command("transcript")
     .description(
-      "Import a meeting transcript from canonical JSON (stdin or --file). Use after a call to log Granola/Zoom/Meet transcripts into the workspace. Upserts a `transcripts` record (deduped by `source_id`), resolves each participant by email against `people.email_addresses`, and links them via `transcripts.participants` + `people.associated_transcripts`. Participant emails not found in `.acrm` are reported in `unresolved`.",
+      "Import a meeting transcript from canonical JSON (stdin or --file). Use after a call to log Granola/Zoom/Meet transcripts into the workspace. Upserts a `transcripts` record (deduped by `source_id`), resolves each participant by any of email / LinkedIn URL / Twitter URL (in that priority), and links them via `transcripts.participants` + `people.associated_transcripts`. Participants whose identifiers don't match an existing person are reported in `unresolved`.",
     )
     .option("--file <path>", "read JSON from file instead of stdin")
     .addHelpText(
@@ -52,8 +93,17 @@ Input shape (JSON):
     "duration_seconds": 1800,
     "summary": "...",
     "content":  "<raw transcript>",
-    "participants": [{ "email": "alice@acme.com" }, ...]   (required, non-empty)
+    "participants": [
+      { "email": "alice@acme.com" },
+      { "linkedin_url": "linkedin.com/in/bob-jones" },
+      { "email": "carol@acme.com", "linkedin_url": "linkedin.com/in/carol" }
+    ]                                       (required, non-empty)
   }
+
+Each participant must carry at least one of email / linkedin_url / twitter_url.
+Resolution priority: email_addresses → linkedin_url → twitter_url. If a person
+is matched by LinkedIn/Twitter and the payload also carried an email (or other
+identifier) the record doesn't have yet, the missing identifier is backfilled.
 
 Examples:
   cat transcript.json | acrm import transcript
@@ -85,7 +135,7 @@ source_id, scalar fields are updated in place, and participant links dedupe.
 async function runImportTranscript(opts: {
   workspace?: string;
   file?: string;
-}) {
+}): Promise<TranscriptImportResult> {
   const raw = opts.file
     ? await readFile(path.resolve(opts.file), "utf8")
     : await readStdin();
@@ -113,36 +163,148 @@ async function runImportTranscript(opts: {
 
   const lix = await openWorkspace({ workspace: workspaceFile });
   try {
-    const resolved: { email: string; person_record_id: string }[] = [];
-    const unresolved: { email: string; reason: string }[] = [];
-    for (const p of payload.participants) {
-      const normalized = p.email.trim().toLowerCase();
-      const personId = await findRecordByUnique(
-        lix,
-        "people",
-        "email_addresses",
-        normalized,
-      );
-      if (personId) resolved.push({ email: normalized, person_record_id: personId });
-      else unresolved.push({ email: normalized, reason: "person_not_found" });
-    }
-
-    const { transcriptId, created } = await upsertTranscript(lix, payload);
-
-    for (const r of resolved) {
-      await linkParticipant(lix, transcriptId, r.person_record_id, payload.source);
-    }
-
-    return {
-      transcript_record_id: transcriptId,
-      created,
-      source: payload.source,
-      source_id: payload.source_id,
-      participants: { resolved, unresolved },
-    };
+    return await importTranscript(lix, payload);
   } finally {
     await lix.close();
   }
+}
+
+// Exposed for tests and for programmatic callers that already hold a Lix.
+export async function importTranscript(
+  lix: Lix,
+  payload: TranscriptPayload,
+): Promise<TranscriptImportResult> {
+  const resolved: ResolvedParticipant[] = [];
+  const unresolved: UnresolvedParticipant[] = [];
+
+  for (const p of payload.participants) {
+    const result = await resolvePersonByIdentifiers(
+      (attr, key) => findRecordByUnique(lix, "people", attr, key),
+      { email: p.email, linkedin_url: p.linkedin_url, twitter_url: p.twitter_url },
+    );
+
+    const identifiersOut = normalizedToOut(result.normalized);
+
+    if (result.person_record_id && result.matched_by && result.matched_key) {
+      const backfilled = await backfillIdentifiers(
+        lix,
+        result.person_record_id,
+        result.normalized,
+        result.matched_by,
+        payload.source,
+      );
+      resolved.push({
+        person_record_id: result.person_record_id,
+        matched_by: result.matched_by,
+        matched_key: result.matched_key,
+        identifiers: identifiersOut,
+        backfilled,
+      });
+    } else {
+      unresolved.push({
+        identifiers: identifiersOut,
+        reason:
+          result.tried.length === 0
+            ? "no_identifier_provided"
+            : "person_not_found",
+        tried: result.tried,
+      });
+    }
+  }
+
+  const { transcriptId, created } = await upsertTranscript(lix, payload);
+
+  for (const r of resolved) {
+    await linkParticipant(lix, transcriptId, r.person_record_id, payload.source);
+  }
+
+  return {
+    transcript_record_id: transcriptId,
+    created,
+    source: payload.source,
+    source_id: payload.source_id,
+    participants: { resolved, unresolved },
+  };
+}
+
+function normalizedToOut(
+  n: NormalizedIdentifiers,
+): ParticipantIdentifiersOut {
+  const out: ParticipantIdentifiersOut = {};
+  if (n.emails[0]) out.email = n.emails[0];
+  if (n.linkedin_url) out.linkedin_url = n.linkedin_url;
+  if (n.twitter_url) out.twitter_url = n.twitter_url;
+  return out;
+}
+
+// When a transcript carries identifiers that the matched person doesn't yet
+// have on file, fill them in. This closes the loop on the original bug: a
+// person matched by LinkedIn whose email the meeting provider supplied gets
+// that email added to their record. Single-value attributes (linkedin_url,
+// twitter_url) are only set when currently empty — we never clobber a value
+// the user has curated.
+async function backfillIdentifiers(
+  lix: Lix,
+  personId: string,
+  normalized: NormalizedIdentifiers,
+  matchedBy: IdentifierAttribute,
+  importSource: string,
+): Promise<IdentifierAttribute[]> {
+  const backfilled: IdentifierAttribute[] = [];
+  const source = `transcript-import:${importSource}`;
+  const provenance = {
+    backfilled_at: new Date().toISOString(),
+    matched_by: matchedBy,
+  };
+
+  for (const email of normalized.emails) {
+    const existing = await exec(
+      lix,
+      `SELECT 1 FROM acrm_value
+       WHERE object_slug = 'people' AND record_id = $1
+         AND attribute_slug = 'email_addresses'
+         AND normalized_key = $2
+         AND active_until IS NULL LIMIT 1`,
+      [personId, email],
+    );
+    if (existing.rows.length) continue;
+    await addMultiValue(lix, {
+      object_slug: "people",
+      record_id: personId,
+      attribute_slug: "email_addresses",
+      attribute_type: "email-address",
+      value: email,
+      source,
+      provenance,
+    });
+    backfilled.push("email_addresses");
+  }
+
+  for (const attr of ["linkedin_url", "twitter_url"] as const) {
+    const key = normalized[attr];
+    if (!key) continue;
+    const existing = await exec(
+      lix,
+      `SELECT 1 FROM acrm_value
+       WHERE object_slug = 'people' AND record_id = $1
+         AND attribute_slug = $2
+         AND active_until IS NULL LIMIT 1`,
+      [personId, attr],
+    );
+    if (existing.rows.length) continue;
+    await setSingleValue(lix, {
+      object_slug: "people",
+      record_id: personId,
+      attribute_slug: attr,
+      attribute_type: "url",
+      value: key,
+      source,
+      provenance,
+    });
+    backfilled.push(attr);
+  }
+
+  return backfilled;
 }
 
 function parsePayload(raw: string): TranscriptPayload {
@@ -172,20 +334,55 @@ function parsePayload(raw: string): TranscriptPayload {
       ERR.INVALID_INPUT,
     );
   }
-  const participants: Participant[] = [];
+  const participants: ParticipantInput[] = [];
   for (const item of participantsRaw) {
-    if (!item || typeof item !== "object")
+    if (!item || typeof item !== "object") {
       throw new AcrmError(
-        "each participant must be an object with `email`",
+        "each participant must be an object with at least one of `email`, `linkedin_url`, `twitter_url`",
         ERR.INVALID_INPUT,
       );
-    const email = (item as Record<string, unknown>).email;
-    if (typeof email !== "string" || !email.includes("@"))
+    }
+    const rec = item as Record<string, unknown>;
+    const out: ParticipantInput = {};
+
+    if (rec.email !== undefined) {
+      if (typeof rec.email !== "string" || !rec.email.includes("@")) {
+        throw new AcrmError(
+          `invalid participant email: ${JSON.stringify(rec.email)}`,
+          ERR.INVALID_INPUT,
+        );
+      }
+      out.email = rec.email;
+    }
+    if (rec.linkedin_url !== undefined) {
+      if (typeof rec.linkedin_url !== "string" || !rec.linkedin_url.trim()) {
+        throw new AcrmError(
+          `invalid participant linkedin_url: ${JSON.stringify(rec.linkedin_url)}`,
+          ERR.INVALID_INPUT,
+        );
+      }
+      out.linkedin_url = rec.linkedin_url;
+    }
+    if (rec.twitter_url !== undefined) {
+      if (typeof rec.twitter_url !== "string" || !rec.twitter_url.trim()) {
+        throw new AcrmError(
+          `invalid participant twitter_url: ${JSON.stringify(rec.twitter_url)}`,
+          ERR.INVALID_INPUT,
+        );
+      }
+      out.twitter_url = rec.twitter_url;
+    }
+
+    // After normalization, every identifier must produce at least one usable
+    // key — otherwise the participant entry would be pure noise.
+    const probe = normalizeIdentifiers(out);
+    if (!probe.emails.length && !probe.linkedin_url && !probe.twitter_url) {
       throw new AcrmError(
-        `invalid participant email: ${JSON.stringify(email)}`,
+        "each participant must carry at least one of `email`, `linkedin_url`, `twitter_url`",
         ERR.INVALID_INPUT,
       );
-    participants.push({ email });
+    }
+    participants.push(out);
   }
   return {
     source,
@@ -292,7 +489,6 @@ async function linkParticipant(
   const source = `transcript-import:${importSource}`;
   const provenance = { linked_at: new Date().toISOString() };
 
-  // transcripts.participants -> person (skip if already linked)
   const fwd = await exec(
     lix,
     `SELECT 1 FROM acrm_value
@@ -314,7 +510,6 @@ async function linkParticipant(
     });
   }
 
-  // people.associated_transcripts -> transcript (skip if already linked)
   const inv = await exec(
     lix,
     `SELECT 1 FROM acrm_value
@@ -345,3 +540,6 @@ async function readStdin(): Promise<string> {
   }
   return Buffer.concat(chunks).toString("utf8");
 }
+
+// Re-exported for tests that want to exercise parsing alone.
+export { parsePayload };
