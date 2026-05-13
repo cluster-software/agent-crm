@@ -8,9 +8,13 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+// postinstall.cjs lives at the package root (same dir as package.json),
+// so dist/ is a direct child — NOT one level up. An earlier draft had this
+// at scripts/postinstall.cjs where "../dist" was correct; relocating without
+// updating the path made the existsSync check below silently fail in
+// production, skipping the install entirely. Keep this path simple.
 const target = path.join(
   __dirname,
-  "..",
   "dist",
   "scripts",
   "install-skills.js",
