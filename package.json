@@ -13,13 +13,15 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/bin/acrm.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "prepublishOnly": "npm run build",
     "changeset": "changeset",
     "version": "changeset version",
     "release": "changeset publish"
   },
   "dependencies": {
-    "@lix-js/sdk": "0.6.0-preview.2",
+    "@lix-js/sdk": "0.6.0-preview.3",
     "better-sqlite3": "^12.9.0",
     "commander": "^12.1.0"
   },
@@ -28,7 +30,8 @@
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.6"
   },
   "engines": {
     "node": ">=20"

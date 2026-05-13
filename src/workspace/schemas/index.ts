@@ -9,7 +9,6 @@ type Property = { type: PropType; "x-lix-default"?: string };
 export type LixSchema = {
   $schema: string;
   "x-lix-key": string;
-  "x-lix-version": string;
   "x-lix-primary-key": string[];
   type: "object";
   required: string[];
@@ -22,7 +21,6 @@ const nullable = (t: string): Property => ({ type: [t, "null"] });
 export const SCHEMA_OBJECT: LixSchema = {
   $schema: draft,
   "x-lix-key": "acrm_object",
-  "x-lix-version": "1",
   "x-lix-primary-key": ["/object_slug"],
   type: "object",
   required: ["object_slug", "singular_name", "plural_name"],
@@ -38,7 +36,6 @@ export const SCHEMA_OBJECT: LixSchema = {
 export const SCHEMA_ATTRIBUTE: LixSchema = {
   $schema: draft,
   "x-lix-key": "acrm_attribute",
-  "x-lix-version": "1",
   "x-lix-primary-key": ["/object_slug", "/attribute_slug"],
   type: "object",
   required: [
@@ -65,7 +62,6 @@ export const SCHEMA_ATTRIBUTE: LixSchema = {
 export const SCHEMA_RECORD: LixSchema = {
   $schema: draft,
   "x-lix-key": "acrm_record",
-  "x-lix-version": "1",
   "x-lix-primary-key": ["/object_slug", "/record_id"],
   type: "object",
   required: ["object_slug", "record_id"],
@@ -80,7 +76,6 @@ export const SCHEMA_RECORD: LixSchema = {
 export const SCHEMA_VALUE: LixSchema = {
   $schema: draft,
   "x-lix-key": "acrm_value",
-  "x-lix-version": "1",
   "x-lix-primary-key": ["/id"],
   type: "object",
   required: [
@@ -128,13 +123,12 @@ export async function registerAllSchemas(lix: Lix): Promise<void> {
     const parsed =
       typeof v === "string" ? JSON.parse(v) : (v as Record<string, unknown>);
     const key = parsed?.["x-lix-key"];
-    const version = parsed?.["x-lix-version"];
-    if (typeof key === "string" && typeof version === "string") {
-      have.add(`${key}@${version}`);
+    if (typeof key === "string") {
+      have.add(key);
     }
   }
   for (const schema of ALL_SCHEMAS) {
-    const tag = `${schema["x-lix-key"]}@${schema["x-lix-version"]}`;
+    const tag = schema["x-lix-key"];
     if (have.has(tag)) continue;
     try {
       await exec(
