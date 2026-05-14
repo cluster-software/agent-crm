@@ -37,7 +37,7 @@ type AttributeMeta = {
   is_multivalued: boolean;
 };
 
-export type MergePlanItem =
+export type DedupePlanItem =
   | {
       kind: "move_multi";
       attribute_slug: string;
@@ -84,12 +84,12 @@ export type MergePlanItem =
       value_id: string;
     };
 
-export type MergePlan = {
+export type DedupePlan = {
   object_slug: string;
   keep_record_id: string;
   discard_record_id: string;
   prefer: Prefer;
-  items: MergePlanItem[];
+  items: DedupePlanItem[];
   conflicts: Array<{
     attribute_slug: string;
     keeper_value_json: unknown;
@@ -98,7 +98,7 @@ export type MergePlan = {
   }>;
 };
 
-export type MergeResult = MergePlan & {
+export type DedupeResult = DedupePlan & {
   applied: boolean;
   values_moved: number;
   values_dropped: number;
@@ -107,11 +107,22 @@ export type MergeResult = MergePlan & {
   discard_record_deleted: boolean;
 };
 
-export function registerMerge(program: Command): void {
-  program
-    .command("merge <object>")
+export function registerRecords(program: Command): void {
+  // Namespace `records` carves out room for future per-record operations
+  // (archive, restore, show, list) without crowding the top-level surface.
+  // `dedupe` is the verb agents and humans reach for when two rows describe
+  // the same entity — chosen over `merge` to keep clear of lix's branch /
+  // version merge terminology.
+  const records = program
+    .command("records")
     .description(
-      "merge two records of the same object: reassign attribute values + inbound references from `--discard` to `--keep`, then delete the discarded record. Use when two `people`/`companies`/etc. records describe the same entity (e.g. one created from a LinkedIn import and a duplicate created from a transcript email).",
+      "operations on records as a group (dedupe duplicates, etc.). Subcommands act on any object — `people`, `companies`, `deals`, `posts`, `transcripts`.",
+    );
+
+  records
+    .command("dedupe <object>")
+    .description(
+      "collapse two duplicate records of the same object into one: reassign attribute values + inbound references from `--discard` to `--keep`, then delete the discarded record. Use when two `people`/`companies`/etc. records describe the same entity (e.g. one created from a LinkedIn import and a duplicate created from a transcript email).",
     )
     .requiredOption("--keep <record_id>", "the record to keep (winner)")
     .requiredOption("--discard <record_id>", "the record to delete (loser)")
@@ -128,9 +139,10 @@ export function registerMerge(program: Command): void {
       "after",
       `
 Examples:
-  acrm merge people --keep <luis-1> --discard <luis-2>
-  acrm merge people --keep <luis-1> --discard <luis-2> --dry-run
-  acrm merge people --keep <luis-1> --discard <luis-2> --prefer discard
+  acrm records dedupe people --keep <luis-1> --discard <luis-2>
+  acrm records dedupe people --keep <luis-1> --discard <luis-2> --dry-run
+  acrm records dedupe people --keep <luis-1> --discard <luis-2> --prefer discard
+  acrm records dedupe companies --keep <co-1> --discard <co-2>
 
 What it does:
   1. Reassigns every \`acrm_value\` row from the discard to the keeper.
@@ -155,7 +167,7 @@ the operation is idempotent once the duplicate row has been redirected.
         const prefer = parsePrefer(opts.prefer);
         const lix = await openWorkspace({ workspace: root.workspace });
         try {
-          const result = await mergeRecords(lix, {
+          const result = await dedupeRecords(lix, {
             object_slug: object,
             keep_record_id: opts.keep,
             discard_record_id: opts.discard,
@@ -187,7 +199,7 @@ function parsePrefer(input: string | undefined): Prefer {
   );
 }
 
-export async function mergeRecords(
+export async function dedupeRecords(
   lix: Lix,
   args: {
     object_slug: string;
@@ -196,7 +208,7 @@ export async function mergeRecords(
     prefer: Prefer;
     dryRun: boolean;
   },
-): Promise<MergeResult> {
+): Promise<DedupeResult> {
   const { object_slug, keep_record_id, discard_record_id, prefer, dryRun } =
     args;
 
@@ -223,8 +235,8 @@ export async function mergeRecords(
     keep_record_id,
   );
 
-  const items: MergePlanItem[] = [];
-  const conflicts: MergeResult["conflicts"] = [];
+  const items: DedupePlanItem[] = [];
+  const conflicts: DedupeResult["conflicts"] = [];
 
   // Index keeper values by attribute for O(1) lookups during planning.
   const keeperByAttr = new Map<string, ValueRow[]>();
@@ -350,7 +362,7 @@ export async function mergeRecords(
     }
   }
 
-  const plan: MergePlan = {
+  const plan: DedupePlan = {
     object_slug,
     keep_record_id,
     discard_record_id,

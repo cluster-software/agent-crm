@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { Command } from "commander";
 import { registerInit } from "../commands/init.js";
 import { registerExecute } from "../commands/execute.js";
-import { registerMerge } from "../commands/merge.js";
+import { registerRecords } from "../commands/records.js";
 import { registerImport, getOrCreateImportCommand } from "../commands/import.js";
 import { attachLinkedinSubcommand } from "../commands/import-linkedin.js";
 import { attachXSubcommand } from "../commands/import-x.js";
@@ -55,7 +55,7 @@ Typical flow:
   acrm import transcript          import a meeting transcript — use \`--from <provider>\` for the fast path, or pipe JSON via stdin / \`--file\`
   acrm ui                         browse the workspace in a local UI
   acrm execute "SELECT ..."       run SQL against the workspace
-  acrm merge people --keep <id> --discard <id>   merge two duplicate records
+  acrm records dedupe people --keep <id> --discard <id>   collapse two duplicate records into one
 
 Provider auth (one-time, for \`acrm import transcript --from <provider>\`):
 ${PROVIDERS.filter((p) => p.oauth)
@@ -87,7 +87,7 @@ attachXSubcommand(getOrCreateImportCommand(program));
 attachPostSubcommand(getOrCreateImportCommand(program));
 attachTranscriptSubcommand(getOrCreateImportCommand(program));
 registerExecute(program);
-registerMerge(program);
+registerRecords(program);
 registerUi(program);
 registerSkills(program);
 registerAuth(program);
