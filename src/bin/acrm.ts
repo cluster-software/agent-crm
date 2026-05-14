@@ -10,6 +10,8 @@ import { attachPostSubcommand } from "../commands/import-post.js";
 import { attachTranscriptSubcommand } from "../commands/import-transcript.js";
 import { registerUi } from "../commands/ui.js";
 import { registerSkills } from "../commands/skills.js";
+import { registerAuth } from "../commands/auth.js";
+import { PROVIDERS } from "../integrations/providers.js";
 import { fail } from "../output/json.js";
 import { ERR } from "../lib/errors.js";
 
@@ -43,9 +45,17 @@ Typical flow:
   acrm import linkedin <url>      add one person from a LinkedIn profile (creates person + company)
   acrm import x <handle>          add one person from an X/Twitter profile
   acrm import post <url>          add a LinkedIn or X **post** by URL — upserts the author as a person and stores the post (use when a user shares a post link they want to track)
-  acrm import transcript          import a meeting transcript (JSON via stdin or --file) — links attendees by email
+  acrm import transcript          import a meeting transcript — use \`--from <provider>\` for the fast path, or pipe JSON via stdin / \`--file\`
   acrm ui                         browse the workspace in a local UI
   acrm execute "SELECT ..."       run SQL against the workspace
+
+Provider auth (one-time, for \`acrm import transcript --from <provider>\`):
+${PROVIDERS.filter((p) => p.oauth)
+  .map(
+    (p) =>
+      `  acrm auth ${p.name.padEnd(22)}cache ${p.label} OAuth token at ~/.config/acrm/${p.name}.json`,
+  )
+  .join("\n")}
 
 SQL engine: DataFusion (NOT SQLite/Postgres)
   - Use $1, $2 placeholders. The '?' placeholder is rejected.
@@ -71,6 +81,7 @@ attachTranscriptSubcommand(getOrCreateImportCommand(program));
 registerExecute(program);
 registerUi(program);
 registerSkills(program);
+registerAuth(program);
 
 program.parseAsync(process.argv).catch((err) => {
   fail(err instanceof Error ? err.message : String(err), ERR.UNHANDLED);

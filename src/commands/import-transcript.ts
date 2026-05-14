@@ -19,6 +19,7 @@ import {
   type IdentifierAttribute,
   type NormalizedIdentifiers,
 } from "../domain/resolve-person.js";
+import { getProvider, providerNames } from "../integrations/providers.js";
 
 export type ParticipantInput = {
   email?: string;
@@ -40,10 +41,11 @@ export type TranscriptPayload = {
 
 export type ResolvedParticipant = {
   person_record_id: string;
-  matched_by: IdentifierAttribute;
+  matched_by: IdentifierAttribute | "created";
   matched_key: string;
   identifiers: ParticipantIdentifiersOut;
   backfilled: IdentifierAttribute[];
+  created: boolean;
 };
 
 export type UnresolvedParticipant = {
@@ -71,49 +73,78 @@ export type TranscriptImportResult = {
 
 type Opts = {
   file?: string;
+  from?: string;
 };
 
 export function attachTranscriptSubcommand(parent: Command): void {
   parent
-    .command("transcript")
+    .command("transcript [meeting-id]")
     .description(
-      "Import a meeting transcript from canonical JSON (stdin or --file). Use after a call to log Granola/Zoom/Meet transcripts into the workspace. Upserts a `transcripts` record (deduped by `source_id`), resolves each participant by any of email / LinkedIn URL / Twitter URL (in that priority), and links them via `transcripts.participants` + `people.associated_transcripts`. Participants whose identifiers don't match an existing person are reported in `unresolved`.",
+      "Import a meeting transcript. Two forms: `--from <provider> <meeting-id>` is the fast path — the CLI fetches transcript + summary + participants directly from the provider. `--file <path>` (or stdin) is the manual path for sources without a native adapter. Either way, upserts a `transcripts` record (deduped by `source_id`), resolves each participant by email / LinkedIn URL / Twitter URL, and auto-creates `people` records for unknown participants that carry an identifier.",
     )
-    .option("--file <path>", "read JSON from file instead of stdin")
+    .option(
+      "--from <provider>",
+      `fetch directly from the provider — recommended fast path (supported: ${providerNames().join(", ")}). Requires a cached token; run \`acrm auth <provider>\` once first.`,
+    )
+    .option(
+      "--file <path>",
+      "read canonical JSON from file (manual path; use when no native --from adapter exists for the source)",
+    )
     .addHelpText(
       "after",
       `
-Input shape (JSON):
-  {
-    "source": "granola" | "zoom" | "meet" | "teams" | "manual" | "other",
-    "source_id": "<unique-string>",         (required)
-    "title": "Discovery — Acme",
-    "started_at": "2026-05-11T15:00:00Z",
-    "ended_at":   "2026-05-11T15:30:00Z",
-    "duration_seconds": 1800,
-    "summary": "...",
-    "content":  "<raw transcript>",
-    "participants": [
-      { "email": "alice@acme.com" },
-      { "linkedin_url": "linkedin.com/in/bob-jones" },
-      { "email": "carol@acme.com", "linkedin_url": "linkedin.com/in/carol" }
-    ]                                       (required, non-empty)
-  }
+Two forms:
 
-Each participant must carry at least one of email / linkedin_url / twitter_url.
-Resolution priority: email_addresses → linkedin_url → twitter_url. If a person
-is matched by LinkedIn/Twitter and the payload also carried an email (or other
-identifier) the record doesn't have yet, the missing identifier is backfilled.
+  acrm import transcript --from <provider> <meeting-id>     (recommended)
+      Fast path. The CLI fetches the transcript, summary, and participants
+      from the provider in one call. Sub-5s end-to-end.
+      Supported providers: ${providerNames().join(", ")}.
 
-Examples:
-  cat transcript.json | acrm import transcript
-  acrm import transcript --file ./transcript.json
+      One-time setup:
+          acrm auth ${providerNames()[0] ?? "<provider>"}                    # cache OAuth token at ~/.config/acrm/
 
-Re-running with the same source_id is safe — the transcript record is matched by
-source_id, scalar fields are updated in place, and participant links dedupe.
+      Then:
+          acrm import transcript --from ${providerNames()[0] ?? "<provider>"} <meeting-id>
+
+  acrm import transcript --file <path>     (or pipe JSON to stdin)
+      Manual path. Use for sources without a native CLI adapter (Otter,
+      Fathom, Fireflies, manual paste, etc.). You supply canonical JSON;
+      the CLI handles upsert, participant resolution, and dedup.
+
+      Examples:
+          cat transcript.json | acrm import transcript
+          acrm import transcript --file ./transcript.json
+
+      Input shape (JSON):
+        {
+          "source": "granola" | "zoom" | "meet" | "teams" | "manual" | "other",
+          "source_id": "<unique-string>",         (required)
+          "title": "Discovery — Acme",
+          "started_at": "2026-05-11T15:00:00Z",
+          "ended_at":   "2026-05-11T15:30:00Z",
+          "duration_seconds": 1800,
+          "summary": "...",
+          "content":  "<raw transcript>",
+          "participants": [
+            { "email": "alice@acme.com" },
+            { "linkedin_url": "linkedin.com/in/bob-jones" },
+            { "email": "carol@acme.com", "linkedin_url": "linkedin.com/in/carol" }
+          ]                                       (required, non-empty)
+        }
+
+      Each participant must carry at least one of email / linkedin_url /
+      twitter_url. Resolution priority: email_addresses → linkedin_url →
+      twitter_url. If a person is matched by LinkedIn/Twitter and the payload
+      also carried an email (or other identifier) the record doesn't have yet,
+      the missing identifier is backfilled.
+
+Re-running with the same source_id is safe — the transcript record is matched
+by source_id, scalar fields are updated in place, and participant links dedupe.
+Unknown participants that carry at least one identifier are auto-created in
+\`people\` and linked.
 `,
     )
-    .action(async (opts: Opts) => {
+    .action(async (meetingId: string | undefined, opts: Opts) => {
       const root = parent.parent?.opts() as
         | { workspace?: string; json?: boolean }
         | undefined;
@@ -122,6 +153,8 @@ source_id, scalar fields are updated in place, and participant links dedupe.
         const result = await runImportTranscript({
           workspace: root?.workspace,
           file: opts.file,
+          from: opts.from,
+          meetingId,
         });
         ok(result);
       } catch (e) {
@@ -135,17 +168,11 @@ source_id, scalar fields are updated in place, and participant links dedupe.
 async function runImportTranscript(opts: {
   workspace?: string;
   file?: string;
+  from?: string;
+  meetingId?: string;
 }): Promise<TranscriptImportResult> {
-  const raw = opts.file
-    ? await readFile(path.resolve(opts.file), "utf8")
-    : await readStdin();
-  if (!raw.trim()) {
-    throw new AcrmError(
-      "no input received (pipe JSON to stdin or pass --file)",
-      ERR.INVALID_INPUT,
-    );
-  }
-  const payload = parsePayload(raw);
+  const payload = await loadPayload(opts);
+  maybeNudgeFastPath(payload, opts);
 
   const workspaceFile = opts.workspace
     ? path.resolve(
@@ -167,6 +194,77 @@ async function runImportTranscript(opts: {
   } finally {
     await lix.close();
   }
+}
+
+// If the user fell through to --file/stdin for a source that actually has a
+// native CLI adapter, nudge them toward the fast path. This is the entire
+// fix for the ax-eval finding that agents converge on --file because the
+// JSON shape is the most-documented part of the help text. Writes to stderr
+// so JSON consumers on stdout aren't affected.
+function maybeNudgeFastPath(
+  payload: TranscriptPayload,
+  opts: { from?: string },
+): void {
+  if (opts.from) return;
+  const provider = getProvider(payload.source);
+  if (!provider) return;
+  process.stderr.write(
+    `hint: source="${payload.source}" has a native adapter — ` +
+      `\`acrm import transcript --from ${provider.name} ${payload.source_id}\` ` +
+      `skips the JSON roundtrip (run \`acrm auth ${provider.name}\` once first to cache the token)\n`,
+  );
+}
+
+// Resolves the canonical payload from whichever source the user asked for.
+// `--from <provider> <meeting-id>` dispatches to a provider adapter and
+// bypasses the stdin / file path entirely — that's the fast-path that keeps
+// transcript bytes off the LLM. `--file` and stdin remain the manual path.
+async function loadPayload(opts: {
+  file?: string;
+  from?: string;
+  meetingId?: string;
+}): Promise<TranscriptPayload> {
+  if (opts.from) {
+    if (opts.file) {
+      throw new AcrmError(
+        "use either --from <provider> or --file, not both",
+        ERR.INVALID_INPUT,
+      );
+    }
+    const meetingId = opts.meetingId?.trim();
+    if (!meetingId) {
+      throw new AcrmError(
+        "--from <provider> requires a meeting id positional argument",
+        ERR.INVALID_INPUT,
+      );
+    }
+    const adapter = getProvider(opts.from);
+    if (!adapter) {
+      throw new AcrmError(
+        `unknown --from provider: ${opts.from}. Supported: ${providerNames().join(", ")}`,
+        ERR.INVALID_INPUT,
+      );
+    }
+    return await adapter.fetchTranscript(meetingId);
+  }
+
+  if (opts.meetingId) {
+    throw new AcrmError(
+      "positional meeting id is only valid with --from <provider>",
+      ERR.INVALID_INPUT,
+    );
+  }
+
+  const raw = opts.file
+    ? await readFile(path.resolve(opts.file), "utf8")
+    : await readStdin();
+  if (!raw.trim()) {
+    throw new AcrmError(
+      "no input received (pipe JSON to stdin, pass --file, or use --from <provider> <meeting-id>)",
+      ERR.INVALID_INPUT,
+    );
+  }
+  return parsePayload(raw);
 }
 
 // Exposed for tests and for programmatic callers that already hold a Lix.
@@ -199,14 +297,33 @@ export async function importTranscript(
         matched_key: result.matched_key,
         identifiers: identifiersOut,
         backfilled,
+        created: false,
+      });
+    } else if (result.tried.length > 0) {
+      // Auto-create: participant carried at least one identifier but no
+      // person matched. Create the record now and link as resolved — keeps
+      // the transcript walkable from the new person record on day one.
+      const personId = await createPersonFromIdentifiers(
+        lix,
+        result.normalized,
+        payload.source,
+      );
+      resolved.push({
+        person_record_id: personId,
+        matched_by: "created",
+        matched_key: firstIdentifierKey(result.normalized),
+        identifiers: identifiersOut,
+        backfilled: [],
+        created: true,
       });
     } else {
+      // No identifier survived normalization. Parsing rejects this case, so
+      // we should never get here in practice — keep the branch so the type
+      // is exhaustive and future callers that bypass parsePayload still get
+      // a structured response.
       unresolved.push({
         identifiers: identifiersOut,
-        reason:
-          result.tried.length === 0
-            ? "no_identifier_provided"
-            : "person_not_found",
+        reason: "no_identifier_provided",
         tried: result.tried,
       });
     }
@@ -225,6 +342,60 @@ export async function importTranscript(
     source_id: payload.source_id,
     participants: { resolved, unresolved },
   };
+}
+
+async function createPersonFromIdentifiers(
+  lix: Lix,
+  normalized: NormalizedIdentifiers,
+  importSource: string,
+): Promise<string> {
+  const personId = await generateUuid(lix);
+  await insertRecord(lix, "people", personId);
+  const source = `transcript-import:${importSource}`;
+  const provenance = {
+    created_at: new Date().toISOString(),
+    via: "transcript-participant",
+  };
+  for (const email of normalized.emails) {
+    await addMultiValue(lix, {
+      object_slug: "people",
+      record_id: personId,
+      attribute_slug: "email_addresses",
+      attribute_type: "email-address",
+      value: email,
+      source,
+      provenance,
+    });
+  }
+  if (normalized.linkedin_url) {
+    await setSingleValue(lix, {
+      object_slug: "people",
+      record_id: personId,
+      attribute_slug: "linkedin_url",
+      attribute_type: "url",
+      value: normalized.linkedin_url,
+      source,
+      provenance,
+    });
+  }
+  if (normalized.twitter_url) {
+    await setSingleValue(lix, {
+      object_slug: "people",
+      record_id: personId,
+      attribute_slug: "twitter_url",
+      attribute_type: "url",
+      value: normalized.twitter_url,
+      source,
+      provenance,
+    });
+  }
+  return personId;
+}
+
+function firstIdentifierKey(n: NormalizedIdentifiers): string {
+  return (
+    n.emails[0] ?? n.linkedin_url ?? n.twitter_url ?? ""
+  );
 }
 
 function normalizedToOut(
