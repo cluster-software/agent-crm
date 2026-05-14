@@ -25,9 +25,14 @@ export type TranscriptProvider = {
   // Optional OAuth 2.0 + PKCE config. Providers without OAuth (API key,
   // webhook export, manual paste) leave this unset; the `acrm auth <name>`
   // subcommand is only registered when this is present.
+  //
+  // `clientId` is optional: if absent and the discovery doc advertises a
+  // `registration_endpoint`, the auth flow performs RFC 7591 Dynamic Client
+  // Registration to obtain one. Set it explicitly to use a pre-registered
+  // public client.
   oauth?: {
     discoveryUrl: string;
-    clientId: string;
+    clientId?: string;
     scope?: string;
   };
 };

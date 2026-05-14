@@ -11,6 +11,11 @@ export type CachedToken = {
   scope?: string;
   authorization_endpoint?: string;
   token_endpoint?: string;
+  // Populated when the auth flow obtained the client via RFC 7591 Dynamic
+  // Client Registration. Reused on refresh so we don't have to re-register.
+  client_id?: string;
+  client_secret?: string;
+  registration_endpoint?: string;
 };
 
 export function tokenCacheDir(): string {

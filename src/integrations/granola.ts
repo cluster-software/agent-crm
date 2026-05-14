@@ -27,7 +27,11 @@ export const granolaProvider: TranscriptProvider = {
   fetchTranscript: (meetingId) => fetchGranolaTranscript(meetingId),
   oauth: {
     discoveryUrl: GRANOLA_DISCOVERY_URL,
-    clientId: process.env.ACRM_GRANOLA_CLIENT_ID?.trim() || "acrm-cli",
+    // Granola's MCP server requires RFC 7591 Dynamic Client Registration —
+    // there is no static public `client_id`. Leaving this undefined makes
+    // `acrm auth granola` register a fresh client per auth. Set
+    // ACRM_GRANOLA_CLIENT_ID to override with a pre-registered client.
+    clientId: process.env.ACRM_GRANOLA_CLIENT_ID?.trim() || undefined,
     scope: process.env.ACRM_GRANOLA_SCOPE?.trim() || undefined,
   },
 };
