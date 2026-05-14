@@ -13,6 +13,8 @@ type Person = {
   name: string | null;
   job_title: string | null;
   linkedin_url: string | null;
+  twitter_url: string | null;
+  email: string | null;
   company_id: string | null;
 };
 
@@ -20,6 +22,23 @@ type Company = {
   id: string;
   name: string | null;
   description: string | null;
+};
+
+type Deal = {
+  id: string;
+  name: string | null;
+  stage: string | null;
+  value: { amount: number; currency: string } | null;
+  close_date: string | null;
+  next_step: string | null;
+  company_id: string | null;
+};
+
+type TranscriptItem = {
+  id: string;
+  title: string | null;
+  started_at: string | null;
+  other_participants: string[];
 };
 
 type Counts = { people: number; companies: number; deals: number };
@@ -32,6 +51,7 @@ async function loadPeople(lix: Lix): Promise<Person[]> {
        v_name.value_json AS name_json,
        v_role.value_json AS role_json,
        v_li.value_json AS li_json,
+       v_tw.value_json AS tw_json,
        v_ref.ref_record_id AS company_id
      FROM acrm_record p
      LEFT JOIN acrm_value v_name
@@ -46,25 +66,213 @@ async function loadPeople(lix: Lix): Promise<Person[]> {
        ON v_li.record_id = p.record_id
        AND v_li.attribute_slug = 'linkedin_url'
        AND v_li.active_until IS NULL
+     LEFT JOIN acrm_value v_tw
+       ON v_tw.record_id = p.record_id
+       AND v_tw.attribute_slug = 'twitter_url'
+       AND v_tw.active_until IS NULL
      LEFT JOIN acrm_value v_ref
        ON v_ref.record_id = p.record_id
        AND v_ref.attribute_slug = 'company'
        AND v_ref.active_until IS NULL
      WHERE p.object_slug = 'people'`,
   );
+
+  const emails = await exec(
+    lix,
+    `SELECT record_id, value_json
+     FROM acrm_value
+     WHERE object_slug = 'people'
+       AND attribute_slug = 'email_addresses'
+       AND active_until IS NULL`,
+  );
+  const emailByPerson = new Map<string, string>();
+  for (const row of emails.rows) {
+    const id = row.record_id as string;
+    if (emailByPerson.has(id)) continue;
+    const obj = parseJson(row.value_json);
+    const e =
+      (obj?.original_email_address as string | undefined) ??
+      (obj?.email_address as string | undefined);
+    if (e) emailByPerson.set(id, e);
+  }
+
   const out: Person[] = r.rows.map((row) => {
     const nameObj = parseJson(row.name_json);
     const roleObj = parseJson(row.role_json);
     const liObj = parseJson(row.li_json);
+    const twObj = parseJson(row.tw_json);
+    const id = row.id as string;
     return {
-      id: row.id as string,
+      id,
       name: (nameObj?.full_name as string | undefined) ?? null,
       job_title: (roleObj?.value as string | undefined) ?? null,
       linkedin_url: (liObj?.value as string | undefined) ?? null,
+      twitter_url: (twObj?.value as string | undefined) ?? null,
+      email: emailByPerson.get(id) ?? null,
       company_id: (row.company_id as string | null) ?? null,
     };
   });
   out.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+  return out;
+}
+
+async function loadDeals(lix: Lix): Promise<Deal[]> {
+  const r = await exec(
+    lix,
+    `SELECT
+       d.record_id AS id,
+       v_name.value_json AS name_json,
+       v_stage.value_json AS stage_json,
+       v_val.value_json AS val_json,
+       v_date.value_json AS date_json,
+       v_step.value_json AS step_json,
+       v_co.ref_record_id AS company_id
+     FROM acrm_record d
+     LEFT JOIN acrm_value v_name
+       ON v_name.record_id = d.record_id
+       AND v_name.attribute_slug = 'name'
+       AND v_name.active_until IS NULL
+     LEFT JOIN acrm_value v_stage
+       ON v_stage.record_id = d.record_id
+       AND v_stage.attribute_slug = 'stage'
+       AND v_stage.active_until IS NULL
+     LEFT JOIN acrm_value v_val
+       ON v_val.record_id = d.record_id
+       AND v_val.attribute_slug = 'value'
+       AND v_val.active_until IS NULL
+     LEFT JOIN acrm_value v_date
+       ON v_date.record_id = d.record_id
+       AND v_date.attribute_slug = 'close_date'
+       AND v_date.active_until IS NULL
+     LEFT JOIN acrm_value v_step
+       ON v_step.record_id = d.record_id
+       AND v_step.attribute_slug = 'next_step'
+       AND v_step.active_until IS NULL
+     LEFT JOIN acrm_value v_co
+       ON v_co.record_id = d.record_id
+       AND v_co.attribute_slug = 'associated_company'
+       AND v_co.active_until IS NULL
+     WHERE d.object_slug = 'deals'`,
+  );
+  const out: Deal[] = r.rows.map((row) => {
+    const nameObj = parseJson(row.name_json);
+    const stageObj = parseJson(row.stage_json);
+    const valObj = parseJson(row.val_json);
+    const dateObj = parseJson(row.date_json);
+    const stepObj = parseJson(row.step_json);
+    const amount = valObj?.currency_value;
+    const currency = valObj?.currency_code;
+    return {
+      id: row.id as string,
+      name: (nameObj?.value as string | undefined) ?? null,
+      stage:
+        (stageObj?.title as string | undefined) ??
+        (stageObj?.id as string | undefined) ??
+        null,
+      value:
+        typeof amount === "number"
+          ? { amount, currency: (currency as string | undefined) ?? "USD" }
+          : null,
+      close_date: (dateObj?.date as string | undefined) ?? null,
+      next_step: (stepObj?.value as string | undefined) ?? null,
+      company_id: (row.company_id as string | null) ?? null,
+    };
+  });
+  out.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+  return out;
+}
+
+async function loadTranscriptsForPerson(
+  lix: Lix,
+  personId: string,
+): Promise<TranscriptItem[]> {
+  // Find transcripts where this person is a participant, joined with the
+  // transcript's title and started_at.
+  const r = await exec(
+    lix,
+    `SELECT
+       t.record_id AS id,
+       v_title.value_json AS title_json,
+       v_started.value_json AS started_json
+     FROM acrm_record t
+     JOIN acrm_value v_part
+       ON v_part.record_id = t.record_id
+       AND v_part.object_slug = 'transcripts'
+       AND v_part.attribute_slug = 'participants'
+       AND v_part.ref_record_id = $1
+       AND v_part.active_until IS NULL
+     LEFT JOIN acrm_value v_title
+       ON v_title.record_id = t.record_id
+       AND v_title.attribute_slug = 'title'
+       AND v_title.active_until IS NULL
+     LEFT JOIN acrm_value v_started
+       ON v_started.record_id = t.record_id
+       AND v_started.attribute_slug = 'started_at'
+       AND v_started.active_until IS NULL
+     WHERE t.object_slug = 'transcripts'`,
+    [personId],
+  );
+  const transcripts = r.rows.map((row) => {
+    const titleObj = parseJson(row.title_json);
+    const startedObj = parseJson(row.started_json);
+    return {
+      id: row.id as string,
+      title: (titleObj?.value as string | undefined) ?? null,
+      started_at: (startedObj?.timestamp as string | undefined) ?? null,
+    };
+  });
+  if (transcripts.length === 0) return [];
+
+  // For each transcript, fetch the other participants' names (everyone except
+  // the focus person). Single query, then group in JS.
+  const ids = transcripts.map((t) => t.id);
+  const placeholders = ids.map((_, i) => `$${i + 2}`).join(",");
+  const parts = await exec(
+    lix,
+    `SELECT
+       v.record_id AS transcript_id,
+       v.ref_record_id AS person_id,
+       v_name.value_json AS name_json
+     FROM acrm_value v
+     LEFT JOIN acrm_value v_name
+       ON v_name.record_id = v.ref_record_id
+       AND v_name.object_slug = 'people'
+       AND v_name.attribute_slug = 'name'
+       AND v_name.active_until IS NULL
+     WHERE v.object_slug = 'transcripts'
+       AND v.attribute_slug = 'participants'
+       AND v.active_until IS NULL
+       AND v.ref_record_id <> $1
+       AND v.record_id IN (${placeholders})`,
+    [personId, ...ids],
+  );
+  const otherByTranscript = new Map<string, string[]>();
+  for (const row of parts.rows) {
+    const tid = row.transcript_id as string;
+    const nameObj = parseJson(row.name_json);
+    const name =
+      (nameObj?.full_name as string | undefined) ??
+      (nameObj?.first_name as string | undefined) ??
+      null;
+    if (!name) continue;
+    const list = otherByTranscript.get(tid) ?? [];
+    list.push(name);
+    otherByTranscript.set(tid, list);
+  }
+
+  const out: TranscriptItem[] = transcripts.map((t) => ({
+    ...t,
+    other_participants: otherByTranscript.get(t.id) ?? [],
+  }));
+  // Reverse chronological. Nulls last.
+  out.sort((a, b) => {
+    if (a.started_at && b.started_at) {
+      return b.started_at.localeCompare(a.started_at);
+    }
+    if (a.started_at) return -1;
+    if (b.started_at) return 1;
+    return 0;
+  });
   return out;
 }
 
@@ -283,11 +491,80 @@ a:hover { text-decoration: underline; }
 }
 .empty h2 { font-size: 14px; font-weight: 500; color: #a0a0a0; margin: 0 0 6px; }
 .empty p { margin: 0; font-size: 12px; }
+.row-link { color: inherit; display: flex; align-items: center; min-width: 0; }
+.row-link:hover { text-decoration: none; }
+tbody tr.clickable { cursor: pointer; }
+.detail { max-width: 720px; margin: 0 auto; padding: 40px 32px 80px; }
+.hero { display: flex; align-items: center; gap: 16px; margin-bottom: 18px; }
+.hero .avatar {
+  width: 44px; height: 44px;
+  font-size: 16px;
+  margin: 0;
+}
+.hero h1 {
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0;
+  color: #f0f0f0;
+}
+.contact { display: flex; flex-direction: column; gap: 6px; margin-bottom: 36px; }
+.contact-row { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #b0b0b0; }
+.contact-row .field-icon { width: 14px; height: 14px; color: #6a6a6a; flex: none; }
+.contact-row a { color: #b0b0b0; }
+.contact-row a:hover { color: #e6e6e6; text-decoration: underline; }
+.section-divider {
+  border-top: 1px solid rgba(255,255,255,0.06);
+  margin: 8px 0 28px;
+}
+.timeline-empty { color: #6a6a6a; font-size: 13px; padding: 8px 0; }
+.timeline-group { margin-bottom: 24px; }
+.timeline-group-label {
+  font-size: 12px;
+  color: #6a6a6a;
+  margin: 0 0 10px;
+  font-weight: 500;
+}
+.timeline-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 8px;
+  border-radius: 6px;
+  color: inherit;
+}
+.timeline-item:hover { background: rgba(255,255,255,0.03); text-decoration: none; }
+.timeline-item .avatar { margin: 0; width: 26px; height: 26px; font-size: 11px; }
+.timeline-item .body { flex: 1; min-width: 0; }
+.timeline-item .title {
+  font-size: 14px;
+  color: #e6e6e6;
+  margin: 0 0 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.timeline-item .sub {
+  font-size: 12px;
+  color: #7a7a7a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.timeline-item .time {
+  font-size: 12px;
+  color: #7a7a7a;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
 `;
 
 const ICON_PEOPLE = `<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="6" r="2.5"/><path d="M3 13c0-2.5 2.2-4 5-4s5 1.5 5 4"/></svg>`;
 const ICON_COMPANIES = `<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="10" height="10" rx="1"/><path d="M6 6h1M9 6h1M6 9h1M9 9h1"/></svg>`;
 const ICON_DEALS = `<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6"/><path d="M8 4.5v7M10 6.25c0-.83-.9-1.5-2-1.5s-2 .67-2 1.5.9 1.25 2 1.5 2 .67 2 1.5-.9 1.5-2 1.5-2-.67-2-1.5"/></svg>`;
+const ICON_MAIL = `<svg class="field-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="M2.5 4.5l5.5 4 5.5-4"/></svg>`;
+const ICON_LINKEDIN = `<svg class="field-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M3.6 5.5h2.2v7H3.6v-7zm1.1-3.2a1.3 1.3 0 1 1 0 2.6 1.3 1.3 0 0 1 0-2.6zM7.3 5.5h2.1v1h.03c.3-.55 1.03-1.13 2.12-1.13 2.27 0 2.69 1.49 2.69 3.43V12.5h-2.23V9.27c0-.77-.01-1.76-1.07-1.76-1.07 0-1.24.84-1.24 1.7V12.5H7.3v-7z"/></svg>`;
+const ICON_X = `<svg class="field-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M11.7 2.5h2.05L9.27 7.62 14.5 13.5h-4.13L7.13 9.66 3.4 13.5H1.35l4.78-5.47L1.1 2.5h4.23l2.92 3.5 3.45-3.5zm-.72 9.78h1.14L4.97 3.66H3.75l7.23 8.62z"/></svg>`;
 
 function renderShell(opts: {
   workspace: string;
@@ -331,6 +608,13 @@ function renderShell(opts: {
   </aside>
   <main class="main">${body}</main>
 </div>
+<script>
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('a')) return;
+    const tr = e.target.closest('tr.clickable');
+    if (tr && tr.dataset.href) window.location.href = tr.dataset.href;
+  });
+</script>
 </body>
 </html>`;
 }
@@ -355,11 +639,20 @@ function renderPeoplePage(
       const linkedin = p.linkedin_url
         ? `<a class="mono" href="https://${escapeHtml(p.linkedin_url)}" target="_blank" rel="noreferrer noopener">${escapeHtml(p.linkedin_url)}</a>`
         : `<span class="muted">—</span>`;
-      return `<tr>
-        <td><div class="name-cell"><span class="avatar" style="background:${color}">${escapeHtml(initials(display))}</span><span>${escapeHtml(display)}</span></div></td>
+      const email = p.email
+        ? `<a class="mono" href="mailto:${escapeHtml(p.email)}">${escapeHtml(p.email)}</a>`
+        : `<span class="muted">—</span>`;
+      const x = p.twitter_url
+        ? `<a class="mono" href="https://${escapeHtml(p.twitter_url)}" target="_blank" rel="noreferrer noopener">${escapeHtml(p.twitter_url)}</a>`
+        : `<span class="muted">—</span>`;
+      const href = `/people/${encodeURIComponent(p.id)}`;
+      return `<tr class="clickable" data-href="${href}">
+        <td><a class="row-link" href="${href}"><span class="avatar" style="background:${color}">${escapeHtml(initials(display))}</span><span>${escapeHtml(display)}</span></a></td>
         <td>${role}</td>
+        <td>${email}</td>
         <td>${company}</td>
         <td>${linkedin}</td>
+        <td>${x}</td>
       </tr>`;
     })
     .join("");
@@ -372,7 +665,7 @@ function renderPeoplePage(
     ${
       people.length
         ? `<table>
-          <thead><tr><th>Name</th><th>Role</th><th>Company</th><th>LinkedIn</th></tr></thead>
+          <thead><tr><th>Name</th><th>Role</th><th>Email</th><th>Company</th><th>LinkedIn</th><th>X</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`
         : `<div class="empty"><h2>No people yet</h2><p>Run <span class="mono">acrm import csv ./leads.csv</span> to add some.</p></div>`
@@ -411,7 +704,7 @@ function renderCompaniesPage(
     ${
       companies.length
         ? `<table>
-          <thead><tr><th>Name</th><th>Type</th><th>People</th></tr></thead>
+          <thead><tr><th>Name</th><th>Description</th><th>People</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`
         : `<div class="empty"><h2>No companies yet</h2><p>Run <span class="mono">acrm import csv ./leads.csv</span> to add some.</p></div>`
@@ -420,18 +713,186 @@ function renderCompaniesPage(
   return renderShell({ workspace, active: "companies", counts, body });
 }
 
-function renderDealsPage(workspace: string, counts: Counts): string {
+function formatCurrency(v: { amount: number; currency: string }): string {
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: v.currency,
+      maximumFractionDigits: 0,
+    }).format(v.amount);
+  } catch {
+    return `${v.amount} ${v.currency}`;
+  }
+}
+
+function renderDealsPage(
+  deals: Deal[],
+  companyById: Map<string, string>,
+  workspace: string,
+  counts: Counts,
+): string {
+  const rows = deals
+    .map((d) => {
+      const display = d.name ?? "(unnamed)";
+      const color = avatarColor(d.id);
+      const stage = d.stage
+        ? escapeHtml(d.stage)
+        : `<span class="muted">—</span>`;
+      const value = d.value
+        ? escapeHtml(formatCurrency(d.value))
+        : `<span class="muted">—</span>`;
+      const company =
+        d.company_id && companyById.get(d.company_id)
+          ? escapeHtml(companyById.get(d.company_id)!)
+          : `<span class="muted">—</span>`;
+      const closeDate = d.close_date
+        ? escapeHtml(d.close_date)
+        : `<span class="muted">—</span>`;
+      const nextStep = d.next_step
+        ? escapeHtml(d.next_step)
+        : `<span class="muted">—</span>`;
+      return `<tr>
+        <td><div class="name-cell"><span class="avatar" style="background:${color}">${escapeHtml(initials(display))}</span><span>${escapeHtml(display)}</span></div></td>
+        <td>${stage}</td>
+        <td>${value}</td>
+        <td>${company}</td>
+        <td>${closeDate}</td>
+        <td>${nextStep}</td>
+      </tr>`;
+    })
+    .join("");
+
   const body = `
     <div class="topbar">
       <h1>Deals</h1>
-      <span class="count">${counts.deals}</span>
+      <span class="count">${deals.length}</span>
     </div>
-    <div class="empty">
-      <h2>No deals yet</h2>
-      <p>Deals appear here once imported or created.</p>
-    </div>
+    ${
+      deals.length
+        ? `<table>
+          <thead><tr><th>Name</th><th>Stage</th><th>Value</th><th>Company</th><th>Close date</th><th>Next step</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`
+        : `<div class="empty"><h2>No deals yet</h2><p>Deals appear here once imported or created.</p></div>`
+    }
   `;
   return renderShell({ workspace, active: "deals", counts, body });
+}
+
+function dateGroupLabel(iso: string, now: Date): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Undated";
+  const startOfDay = (x: Date) =>
+    new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86400000);
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+}
+
+function timeLabel(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d
+    .toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+    })
+    .replace(/\s?(AM|PM)/i, (_, p) => " " + p.toLowerCase());
+}
+
+function renderPersonPage(opts: {
+  workspace: string;
+  counts: Counts;
+  person: Person;
+  companyName: string | null;
+  transcripts: TranscriptItem[];
+}): string {
+  const { workspace, counts, person, companyName, transcripts } = opts;
+  const display = person.name ?? "(unnamed)";
+  const color = avatarColor(person.id);
+
+  const contactRows: string[] = [];
+  if (person.email) {
+    contactRows.push(
+      `<div class="contact-row">${ICON_MAIL}<a href="mailto:${escapeHtml(person.email)}">${escapeHtml(person.email)}</a></div>`,
+    );
+  }
+  if (person.linkedin_url) {
+    contactRows.push(
+      `<div class="contact-row">${ICON_LINKEDIN}<a href="https://${escapeHtml(person.linkedin_url)}" target="_blank" rel="noreferrer noopener">${escapeHtml(person.linkedin_url)}</a></div>`,
+    );
+  }
+  if (person.twitter_url) {
+    contactRows.push(
+      `<div class="contact-row">${ICON_X}<a href="https://${escapeHtml(person.twitter_url)}" target="_blank" rel="noreferrer noopener">${escapeHtml(person.twitter_url)}</a></div>`,
+    );
+  }
+  if (person.job_title || companyName) {
+    const bits = [person.job_title, companyName].filter(Boolean) as string[];
+    contactRows.push(
+      `<div class="contact-row" style="color:#9a9a9a">${bits.map(escapeHtml).join(" · ")}</div>`,
+    );
+  }
+
+  const now = new Date();
+  const groups: { label: string; items: TranscriptItem[] }[] = [];
+  for (const t of transcripts) {
+    const label = t.started_at ? dateGroupLabel(t.started_at, now) : "Undated";
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.items.push(t);
+    else groups.push({ label, items: [t] });
+  }
+
+  const renderItem = (t: TranscriptItem): string => {
+    const title = t.title ?? "(untitled transcript)";
+    const sub =
+      t.other_participants.length === 0
+        ? display
+        : t.other_participants.length <= 3
+          ? t.other_participants.join(", ")
+          : `${t.other_participants.slice(0, 2).join(", ")} & ${t.other_participants.length - 2} others`;
+    const itemColor = avatarColor(t.id);
+    const time = t.started_at ? timeLabel(t.started_at) : "";
+    return `<div class="timeline-item">
+      <span class="avatar" style="background:${itemColor}">${escapeHtml(initials(title))}</span>
+      <div class="body">
+        <div class="title">${escapeHtml(title)}</div>
+        <div class="sub">${escapeHtml(sub)}</div>
+      </div>
+      <span class="time">${escapeHtml(time)}</span>
+    </div>`;
+  };
+
+  const timeline = groups.length
+    ? groups
+        .map(
+          (g) => `<div class="timeline-group">
+            <div class="timeline-group-label">${escapeHtml(g.label)}</div>
+            ${g.items.map(renderItem).join("")}
+          </div>`,
+        )
+        .join("")
+    : `<div class="timeline-empty">No transcripts associated with this person yet.</div>`;
+
+  const body = `
+    <div class="detail">
+      <div class="hero">
+        <span class="avatar" style="background:${color}">${escapeHtml(initials(display))}</span>
+        <h1>${escapeHtml(display)}</h1>
+      </div>
+      <div class="contact">${contactRows.join("")}</div>
+      <div class="section-divider"></div>
+      ${timeline}
+    </div>
+  `;
+  return renderShell({ workspace, active: "people", counts, body });
 }
 
 async function handleRequest(
@@ -467,6 +928,40 @@ async function handleRequest(
     return;
   }
 
+  const personMatch = /^\/people\/([^/]+)$/.exec(pathname);
+  if (personMatch) {
+    const id = decodeURIComponent(personMatch[1]!);
+    const [people, companies, transcripts] = await Promise.all([
+      loadPeople(lix),
+      loadCompanies(lix),
+      loadTranscriptsForPerson(lix, id),
+    ]);
+    const person = people.find((p) => p.id === id);
+    if (!person) {
+      res.statusCode = 404;
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end("Person not found");
+      return;
+    }
+    const companyById = new Map(
+      companies.filter((c) => c.name).map((c) => [c.id, c.name as string]),
+    );
+    const companyName = person.company_id
+      ? (companyById.get(person.company_id) ?? null)
+      : null;
+    const html = renderPersonPage({
+      workspace: workspaceLabel,
+      counts,
+      person,
+      companyName,
+      transcripts,
+    });
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(html);
+    return;
+  }
+
   if (pathname === "/companies") {
     const [companies, people] = await Promise.all([
       loadCompanies(lix),
@@ -490,9 +985,17 @@ async function handleRequest(
   }
 
   if (pathname === "/deals") {
+    const [deals, companies] = await Promise.all([
+      loadDeals(lix),
+      loadCompanies(lix),
+    ]);
+    const companyById = new Map(
+      companies.filter((c) => c.name).map((c) => [c.id, c.name as string]),
+    );
+    const html = renderDealsPage(deals, companyById, workspaceLabel, counts);
     res.statusCode = 200;
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.end(renderDealsPage(workspaceLabel, counts));
+    res.end(html);
     return;
   }
 

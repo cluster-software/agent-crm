@@ -12,6 +12,30 @@ are values in the `object_slug` column — not tables.
 ✅ SELECT record_id FROM acrm_record WHERE object_slug='people'
 ```
 
+## Shell quoting (read first — the #1 footgun)
+
+**Always single-quote the SQL** when it contains `$1`, `$2`, … placeholders. In
+zsh/bash, double quotes let the shell expand `$N` to its own positional
+parameters (empty in an interactive shell), so the SQL that reaches `acrm` has
+bare gaps and the parser errors out with `LIX_PARSE_ERROR` at a random column.
+
+```sh
+❌ acrm execute "SELECT $1"  '["hi"]'    # zsh eats $1 → "SELECT "
+✅ acrm execute 'SELECT $1'  '["hi"]'    # single quotes pass it through
+✅ acrm execute "SELECT \$1" '["hi"]'    # or escape each $
+```
+
+The params argument is itself JSON, so single-quote it too. Inside, escape
+inner double-quotes with `\"`:
+
+```sh
+acrm execute 'UPDATE acrm_value SET value_json = $1 WHERE id = $2' \
+  '["{\"key\":\"value\"}","row-id"]'
+```
+
+Why no `$1`-free heredoc trick? `acrm execute` rejects `?` placeholders
+(DataFusion limitation), so `$N` is mandatory whenever you bind params.
+
 ## Tables
 
 | table            | purpose                                                                       |

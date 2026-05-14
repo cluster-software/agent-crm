@@ -9,7 +9,7 @@ export function registerExecute(program: Command): void {
   program
     .command("execute [sql] [params]")
     .description(
-      "run a SQL query or mutation against the .acrm file; params is a JSON array. Pass `--schema` instead of SQL to dump the EAV layout (objects, attributes, types). SQL dialect is DataFusion (NOT SQLite/Postgres) — see `acrm execute --help`.",
+      "run a SQL query or mutation against the .acrm file; params is a JSON array. SHELL: SINGLE-QUOTE the SQL whenever it contains $1/$2/... placeholders (double quotes let zsh/bash expand $N to empty). Pass `--schema` instead of SQL to dump the EAV layout (objects, attributes, types). SQL dialect is DataFusion (NOT SQLite/Postgres) — see `acrm execute --help`.",
     )
     .option(
       "--schema",
@@ -46,6 +46,21 @@ Storage model: EAV. Records are not stored in per-object SQL tables.
   For record-reference attributes, prefer the indexed columns:
     ref_object, ref_record_id        (use these for joins/filters)
   rather than digging into value_json.target_record_id.
+
+SHELL QUOTING (read this first — it's the #1 footgun):
+  - SINGLE-QUOTE any SQL that contains $1, $2, ... placeholders. In zsh/bash,
+    double quotes expand $N to the shell's positional parameters (empty in an
+    interactive shell), so the SQL that reaches acrm has bare gaps and the
+    parser errors out with LIX_PARSE_ERROR at a random column.
+
+      ❌ acrm execute "SELECT \$1"  '["hi"]'    # zsh eats $1 → "SELECT "
+      ✅ acrm execute 'SELECT $1'   '["hi"]'    # single quotes pass it through
+      ✅ acrm execute "SELECT \\$1" '["hi"]'    # or escape each $
+
+  - The params argument is itself JSON, so single-quote it too. Inside, escape
+    inner double-quotes with \\":
+      acrm execute 'UPDATE t SET col = $1 WHERE id = $2' \\
+        '["{\\"key\\":\\"value\\"}","row-id"]'
 
 SQL dialect: DataFusion (NOT SQLite, NOT Postgres)
   - Placeholders are $1, $2, ...   The '?' placeholder is rejected.
@@ -129,6 +144,13 @@ Errors carry the lix engine code + hint when applicable
               );
             }
             params = parsed as LixRuntimeValue[];
+          }
+          if (params.length > 0 && !/\$\d+/.test(sql)) {
+            throw new AcrmError(
+              `params were passed but the SQL has no $1/$2/... placeholders — almost certainly the shell ate them. Use SINGLE quotes around the SQL: \`acrm execute 'SELECT $1' '["hi"]'\` (double quotes let zsh/bash expand $N to empty).`,
+              ERR.INVALID_INPUT,
+              `In zsh/bash, "$1" is the shell's first positional arg. Single-quote the SQL, or escape each $ as \\$. See \`acrm execute --help\`.`,
+            );
           }
           const lix = await openWorkspace({ workspace: root.workspace });
           try {
