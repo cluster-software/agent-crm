@@ -50,6 +50,17 @@ type TranscriptDetail = {
   participants: { id: string; name: string | null }[];
 };
 
+type PostPlatform = "linkedin" | "x" | null;
+
+type PostItem = {
+  id: string;
+  platform: PostPlatform;
+  url: string | null;
+  posted_at: string | null;
+  content: string | null;
+};
+
+
 type Counts = { people: number; companies: number; deals: number };
 
 async function loadPeople(lix: Lix): Promise<Person[]> {
@@ -357,6 +368,102 @@ async function loadTranscript(
   return { id: transcriptId, title, started_at, summary, content, participants };
 }
 
+function parsePlatform(v: unknown): PostPlatform {
+  const obj = parseJson(v);
+  const raw =
+    (obj?.id as string | undefined) ?? (obj?.title as string | undefined) ?? null;
+  if (!raw) return null;
+  const norm = raw.toLowerCase();
+  if (norm === "linkedin" || norm === "x") return norm;
+  return null;
+}
+
+async function loadPostsForPerson(
+  lix: Lix,
+  personId: string,
+): Promise<PostItem[]> {
+  // Posts authored by this person. `author` is a single-valued
+  // record-reference, so ref_record_id pins each post to one person.
+  const r = await exec(
+    lix,
+    `SELECT
+       p.record_id AS id,
+       v_url.value_json AS url_json,
+       v_plat.value_json AS plat_json,
+       v_posted.value_json AS posted_json,
+       v_content.value_json AS content_json
+     FROM acrm_record p
+     JOIN acrm_value v_author
+       ON v_author.record_id = p.record_id
+       AND v_author.object_slug = 'posts'
+       AND v_author.attribute_slug = 'author'
+       AND v_author.ref_record_id = $1
+       AND v_author.active_until IS NULL
+     LEFT JOIN acrm_value v_url
+       ON v_url.record_id = p.record_id
+       AND v_url.attribute_slug = 'url'
+       AND v_url.active_until IS NULL
+     LEFT JOIN acrm_value v_plat
+       ON v_plat.record_id = p.record_id
+       AND v_plat.attribute_slug = 'platform'
+       AND v_plat.active_until IS NULL
+     LEFT JOIN acrm_value v_posted
+       ON v_posted.record_id = p.record_id
+       AND v_posted.attribute_slug = 'posted_at'
+       AND v_posted.active_until IS NULL
+     LEFT JOIN acrm_value v_content
+       ON v_content.record_id = p.record_id
+       AND v_content.attribute_slug = 'content'
+       AND v_content.active_until IS NULL
+     WHERE p.object_slug = 'posts'`,
+    [personId],
+  );
+
+  const out: PostItem[] = r.rows.map((row) => {
+    const urlObj = parseJson(row.url_json);
+    const postedObj = parseJson(row.posted_json);
+    const contentObj = parseJson(row.content_json);
+    return {
+      id: row.id as string,
+      platform: parsePlatform(row.plat_json),
+      url: (urlObj?.value as string | undefined) ?? null,
+      posted_at: (postedObj?.date as string | undefined) ?? null,
+      content: (contentObj?.value as string | undefined) ?? null,
+    };
+  });
+
+  // Reverse chronological by posted_at (YYYY-MM-DD). Nulls last.
+  out.sort((a, b) => {
+    if (a.posted_at && b.posted_at) {
+      return b.posted_at.localeCompare(a.posted_at);
+    }
+    if (a.posted_at) return -1;
+    if (b.posted_at) return 1;
+    return 0;
+  });
+  return out;
+}
+
+function postExternalUrl(rawUrl: string | null): string | null {
+  if (!rawUrl) return null;
+  if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
+  return `https://${rawUrl}`;
+}
+
+function xEmbedTargetUrl(rawUrl: string | null): string | null {
+  if (!rawUrl) return null;
+  const m = /(?:x\.com|twitter\.com)\/([^/?#]+)\/status\/(\d+)/i.exec(rawUrl);
+  if (!m) return null;
+  return `https://twitter.com/${m[1]}/status/${m[2]}`;
+}
+
+function linkedinEmbedUrl(rawUrl: string | null): string | null {
+  if (!rawUrl) return null;
+  const m = /urn:li:(activity|share|ugcPost):(\d+)/i.exec(rawUrl);
+  if (!m) return null;
+  return `https://www.linkedin.com/embed/feed/update/urn:li:${m[1]}:${m[2]}`;
+}
+
 async function loadCompanies(lix: Lix): Promise<Company[]> {
   const r = await exec(
     lix,
@@ -638,6 +745,50 @@ tbody tr.clickable { cursor: pointer; }
   font-variant-numeric: tabular-nums;
   flex: none;
 }
+.person-toggle { margin: 0 0 20px; }
+.post-embed {
+  margin: 0 0 14px;
+  max-width: 550px;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.post-embed.li-embed {
+  background: #ffffff;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.post-embed.li-embed iframe {
+  display: block;
+  width: 100%;
+  height: 640px;
+  border: 0;
+}
+.post-embed.x-embed {
+  /* widgets.js injects its own iframe; we just constrain width */
+}
+.post-embed.x-embed .twitter-tweet { margin: 0 !important; }
+.post-fallback {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  max-width: 550px;
+  margin: 0 0 14px;
+  color: inherit;
+}
+.post-fallback:hover { background: rgba(255,255,255,0.03); text-decoration: none; }
+.post-fallback .avatar { margin: 0; width: 28px; height: 28px; font-size: 11px; flex: none; }
+.post-fallback .body { flex: 1; min-width: 0; }
+.post-fallback .title {
+  font-size: 13px;
+  color: #e6e6e6;
+  margin: 0 0 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.post-fallback .sub { font-size: 12px; color: #7a7a7a; }
 .transcript-detail { max-width: 760px; margin: 0 auto; padding: 56px 32px 80px; }
 .transcript-title {
   font-family: "New York", "Iowan Old Style", Georgia, "Times New Roman", serif;
@@ -758,6 +909,7 @@ const ICON_CALENDAR = `<svg class="field-icon" viewBox="0 0 16 16" fill="none" s
 const ICON_USERS = `<svg class="field-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="6" cy="6" r="2.3"/><path d="M2 13c0-2.3 1.8-3.6 4-3.6s4 1.3 4 3.6"/><circle cx="11.3" cy="6.5" r="1.9"/><path d="M10 9.6c1.5 0 4 .9 4 3"/></svg>`;
 const ICON_SUMMARY = `<svg class="field-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 5h10M3 8h10M3 11h6"/></svg>`;
 const ICON_TRANSCRIPT = `<svg class="field-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 3.5h10v7H6.5L3.5 13V3.5z" stroke-linejoin="round"/><path d="M5.5 6h5M5.5 8h3" stroke-linecap="round"/></svg>`;
+const ICON_POST = `<svg class="field-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M5 5.5h6M5 8h6M5 10.5h4" stroke-linecap="round"/></svg>`;
 
 function renderShell(opts: {
   workspace: string;
@@ -972,8 +1124,17 @@ function renderDealsPage(
   return renderShell({ workspace, active: "deals", counts, body });
 }
 
+function parseDateOrTimestamp(iso: string): Date {
+  // Bare YYYY-MM-DD must be parsed as local time, not UTC midnight — otherwise
+  // negative UTC offsets shift the day backwards (e.g., CST sees "today" as
+  // "yesterday").
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return new Date(iso);
+}
+
 function dateGroupLabel(iso: string, now: Date): string {
-  const d = new Date(iso);
+  const d = parseDateOrTimestamp(iso);
   if (Number.isNaN(d.getTime())) return "Undated";
   const startOfDay = (x: Date) =>
     new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
@@ -1000,14 +1161,28 @@ function timeLabel(iso: string): string {
     .replace(/\s?(AM|PM)/i, (_, p) => " " + p.toLowerCase());
 }
 
+function platformLabel(p: PostPlatform): string {
+  if (p === "linkedin") return "LinkedIn";
+  if (p === "x") return "X";
+  return "Post";
+}
+
+function postSnippet(content: string | null, max = 90): string {
+  if (!content) return "";
+  const collapsed = content.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= max) return collapsed;
+  return collapsed.slice(0, max).replace(/\s+\S*$/, "") + "…";
+}
+
 function renderPersonPage(opts: {
   workspace: string;
   counts: Counts;
   person: Person;
   companyName: string | null;
   transcripts: TranscriptItem[];
+  posts: PostItem[];
 }): string {
-  const { workspace, counts, person, companyName, transcripts } = opts;
+  const { workspace, counts, person, companyName, transcripts, posts } = opts;
   const display = person.name ?? "(unnamed)";
   const color = avatarColor(person.id);
 
@@ -1035,15 +1210,17 @@ function renderPersonPage(opts: {
   }
 
   const now = new Date();
-  const groups: { label: string; items: TranscriptItem[] }[] = [];
+  const backHref = `/people/${encodeURIComponent(person.id)}`;
+
+  const transcriptGroups: { label: string; items: TranscriptItem[] }[] = [];
   for (const t of transcripts) {
     const label = t.started_at ? dateGroupLabel(t.started_at, now) : "Undated";
-    const last = groups[groups.length - 1];
+    const last = transcriptGroups[transcriptGroups.length - 1];
     if (last && last.label === label) last.items.push(t);
-    else groups.push({ label, items: [t] });
+    else transcriptGroups.push({ label, items: [t] });
   }
 
-  const renderItem = (t: TranscriptItem): string => {
+  const renderTranscriptItem = (t: TranscriptItem): string => {
     const title = t.title ?? "(untitled transcript)";
     const sub =
       t.other_participants.length === 0
@@ -1053,7 +1230,6 @@ function renderPersonPage(opts: {
           : `${t.other_participants.slice(0, 2).join(", ")} & ${t.other_participants.length - 2} others`;
     const itemColor = avatarColor(t.id);
     const time = t.started_at ? timeLabel(t.started_at) : "";
-    const backHref = `/people/${encodeURIComponent(person.id)}`;
     return `<a class="timeline-item" href="/transcripts/${encodeURIComponent(t.id)}?back=${encodeURIComponent(backHref)}">
       <span class="avatar" style="background:${itemColor}">${escapeHtml(initials(title))}</span>
       <div class="body">
@@ -1064,16 +1240,75 @@ function renderPersonPage(opts: {
     </a>`;
   };
 
-  const timeline = groups.length
-    ? groups
+  const transcriptTimeline = transcriptGroups.length
+    ? transcriptGroups
         .map(
           (g) => `<div class="timeline-group">
             <div class="timeline-group-label">${escapeHtml(g.label)}</div>
-            ${g.items.map(renderItem).join("")}
+            ${g.items.map(renderTranscriptItem).join("")}
           </div>`,
         )
         .join("")
     : `<div class="timeline-empty">No transcripts associated with this person yet.</div>`;
+
+  const postGroups: { label: string; items: PostItem[] }[] = [];
+  for (const p of posts) {
+    const label = p.posted_at ? dateGroupLabel(p.posted_at, now) : "Undated";
+    const last = postGroups[postGroups.length - 1];
+    if (last && last.label === label) last.items.push(p);
+    else postGroups.push({ label, items: [p] });
+  }
+
+  const renderPostItem = (p: PostItem): string => {
+    const externalUrl = postExternalUrl(p.url);
+    if (p.platform === "x") {
+      const tweetUrl = xEmbedTargetUrl(p.url) ?? externalUrl;
+      if (tweetUrl) {
+        return `<div class="post-embed x-embed">
+          <blockquote class="twitter-tweet" data-theme="dark" data-dnt="true">
+            <a href="${escapeHtml(tweetUrl)}"></a>
+          </blockquote>
+        </div>`;
+      }
+    }
+    if (p.platform === "linkedin") {
+      const embed = linkedinEmbedUrl(p.url);
+      if (embed) {
+        return `<div class="post-embed li-embed">
+          <iframe src="${escapeHtml(embed)}" title="Embedded LinkedIn post" loading="lazy" allowfullscreen></iframe>
+        </div>`;
+      }
+    }
+    // Fallback when we don't have enough info to embed.
+    const platform = platformLabel(p.platform);
+    const title = postSnippet(p.content) || externalUrl || `${platform} post`;
+    const avatarText =
+      p.platform === "x" ? "X" : p.platform === "linkedin" ? "in" : initials(title);
+    const href = externalUrl ?? "#";
+    return `<a class="post-fallback" href="${escapeHtml(href)}" target="_blank" rel="noreferrer noopener">
+      <span class="avatar" style="background:${avatarColor(p.id)}">${escapeHtml(avatarText)}</span>
+      <div class="body">
+        <div class="title">${escapeHtml(title)}</div>
+        <div class="sub">${escapeHtml(platform)}</div>
+      </div>
+    </a>`;
+  };
+
+  const postsTimeline = postGroups.length
+    ? postGroups
+        .map(
+          (g) => `<div class="timeline-group">
+            <div class="timeline-group-label">${escapeHtml(g.label)}</div>
+            ${g.items.map(renderPostItem).join("")}
+          </div>`,
+        )
+        .join("")
+    : `<div class="timeline-empty">No posts associated with this person yet.</div>`;
+
+  const hasXPosts = posts.some((p) => p.platform === "x");
+  const xWidgetScript = hasXPosts
+    ? `<script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>`
+    : "";
 
   const body = `
     <div class="detail">
@@ -1083,8 +1318,30 @@ function renderPersonPage(opts: {
       </div>
       <div class="contact">${contactRows.join("")}</div>
       <div class="section-divider"></div>
-      ${timeline}
+      <div class="view-toggle person-toggle" role="tablist">
+        <button type="button" class="active" data-view="transcripts">${ICON_TRANSCRIPT}<span>Transcripts</span><span class="count" style="margin-left:6px;color:#6a6a6a">${transcripts.length}</span></button>
+        <button type="button" data-view="posts">${ICON_POST}<span>Posts</span><span class="count" style="margin-left:6px;color:#6a6a6a">${posts.length}</span></button>
+      </div>
+      <div data-pane="transcripts">${transcriptTimeline}</div>
+      <div data-pane="posts" style="display:none">${postsTimeline}</div>
     </div>
+    ${xWidgetScript}
+    <script>
+      (() => {
+        const tabs = document.querySelectorAll('.person-toggle button');
+        const panes = document.querySelectorAll('[data-pane]');
+        tabs.forEach((btn) => btn.addEventListener('click', () => {
+          const view = btn.dataset.view;
+          tabs.forEach((b) => b.classList.toggle('active', b === btn));
+          panes.forEach((p) => {
+            p.style.display = p.dataset.pane === view ? '' : 'none';
+          });
+          if (view === 'posts' && window.twttr && window.twttr.widgets) {
+            window.twttr.widgets.load(document.querySelector('[data-pane="posts"]'));
+          }
+        }));
+      })();
+    </script>
   `;
   return renderShell({ workspace, active: "people", counts, body });
 }
@@ -1361,10 +1618,11 @@ async function handleRequest(
   const personMatch = /^\/people\/([^/]+)$/.exec(pathname);
   if (personMatch) {
     const id = decodeURIComponent(personMatch[1]!);
-    const [people, companies, transcripts] = await Promise.all([
+    const [people, companies, transcripts, posts] = await Promise.all([
       loadPeople(lix),
       loadCompanies(lix),
       loadTranscriptsForPerson(lix, id),
+      loadPostsForPerson(lix, id),
     ]);
     const person = people.find((p) => p.id === id);
     if (!person) {
@@ -1385,6 +1643,7 @@ async function handleRequest(
       person,
       companyName,
       transcripts,
+      posts,
     });
     res.statusCode = 200;
     res.setHeader("Content-Type", "text/html; charset=utf-8");
