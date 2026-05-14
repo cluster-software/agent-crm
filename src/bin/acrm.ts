@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { Command } from "commander";
 import { registerInit } from "../commands/init.js";
 import { registerExecute } from "../commands/execute.js";
+import { registerMerge } from "../commands/merge.js";
 import { registerImport, getOrCreateImportCommand } from "../commands/import.js";
 import { attachLinkedinSubcommand } from "../commands/import-linkedin.js";
 import { attachXSubcommand } from "../commands/import-x.js";
@@ -32,6 +33,12 @@ program
   .addHelpText(
     "after",
     `
+Storage model: EAV. There is no \`people\` / \`companies\` / \`transcripts\` SQL
+table — those are \`object_slug\` values on \`acrm_record\`, and each field lives
+as a row in \`acrm_value\` keyed by (object_slug, record_id, attribute_slug).
+\`SELECT * FROM people\` will fail. See \`acrm execute --help\` for the EAV
+query patterns.
+
 Data model:
   people      contacts, identified by email / LinkedIn URL / X URL
   companies   organizations, identified by domain
@@ -48,6 +55,7 @@ Typical flow:
   acrm import transcript          import a meeting transcript — use \`--from <provider>\` for the fast path, or pipe JSON via stdin / \`--file\`
   acrm ui                         browse the workspace in a local UI
   acrm execute "SELECT ..."       run SQL against the workspace
+  acrm merge people --keep <id> --discard <id>   merge two duplicate records
 
 Provider auth (one-time, for \`acrm import transcript --from <provider>\`):
 ${PROVIDERS.filter((p) => p.oauth)
@@ -79,6 +87,7 @@ attachXSubcommand(getOrCreateImportCommand(program));
 attachPostSubcommand(getOrCreateImportCommand(program));
 attachTranscriptSubcommand(getOrCreateImportCommand(program));
 registerExecute(program);
+registerMerge(program);
 registerUi(program);
 registerSkills(program);
 registerAuth(program);

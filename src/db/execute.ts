@@ -4,6 +4,31 @@ import { AcrmError } from "../lib/errors.js";
 
 export type Row = Record<string, unknown>;
 
+// Object slugs seeded by `acrm init`. When a user/agent reaches for one of
+// these as a SQL table, the LIX_TABLE_NOT_FOUND hint is upgraded to call out
+// the EAV shape with a copy-paste fix.
+const KNOWN_OBJECT_SLUGS = new Set([
+  "people",
+  "companies",
+  "deals",
+  "posts",
+  "transcripts",
+]);
+
+function extractMissingTableName(message: string): string | null {
+  // Lix surfaces messages like:
+  //   "Error during planning: table 'datafusion.public.people' not found"
+  // We want just the tail identifier ("people"). Accept dot-qualified names
+  // inside the quoted segment, then peel off the schema prefix.
+  const quoted = /['"`]([A-Za-z_][\w.]*)['"`]/.exec(message);
+  const bare = quoted ? null : /\btable\s+([A-Za-z_][\w.]*)/i.exec(message);
+  const m = quoted ?? bare;
+  if (!m) return null;
+  const raw = m[1] ?? "";
+  const tail = raw.includes(".") ? raw.split(".").pop()! : raw;
+  return tail.toLowerCase();
+}
+
 export async function exec(
   lix: Lix,
   sql: string,
@@ -20,10 +45,19 @@ export async function exec(
       // `message` says what's wrong, `hint` (when present) says how to fix it.
       let hint = e.hint;
       if (e.code === "LIX_TABLE_NOT_FOUND") {
-        // Lix's hint points at information_schema, but users hitting this are
-        // typically reaching for `select * from people` — the data is EAV in
-        // acrm_record + acrm_value, keyed by object_slug.
-        hint = `Records are EAV: try \`acrm execute "SELECT object_slug, COUNT(*) FROM acrm_record GROUP BY object_slug"\` to see what's loaded, then query acrm_value for attribute values.`;
+        const slug = extractMissingTableName(e.message);
+        if (slug && KNOWN_OBJECT_SLUGS.has(slug)) {
+          // Catch the exact mistake at the moment it happens, with the exact
+          // fix inline. Agents reaching for `select * from people` learn the
+          // EAV shape from the error rather than from the docs after the fact.
+          hint =
+            `\`${slug}\` is an object_slug, not a table. Try: ` +
+            `\`SELECT record_id FROM acrm_record WHERE object_slug='${slug}'\`. ` +
+            `To read fields, pivot from acrm_value (filter active_until IS NULL). ` +
+            `Run \`acrm execute --help\` for the full EAV cheat-sheet.`;
+        } else {
+          hint = `Records are EAV: try \`acrm execute "SELECT object_slug, COUNT(*) FROM acrm_record GROUP BY object_slug"\` to see what's loaded, then query acrm_value for attribute values.`;
+        }
       }
       throw new AcrmError(e.message, e.code, hint, e.details);
     }
