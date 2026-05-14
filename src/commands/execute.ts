@@ -7,13 +7,46 @@ import { AcrmError, ERR } from "../lib/errors.js";
 
 export function registerExecute(program: Command): void {
   program
-    .command("execute <sql> [params]")
+    .command("execute [sql] [params]")
     .description(
-      "run a SQL query or mutation against the .acrm file; params is a JSON array. SQL dialect is DataFusion (NOT SQLite/Postgres) — see `acrm execute --help`.",
+      "run a SQL query or mutation against the .acrm file; params is a JSON array. Pass `--schema` instead of SQL to dump the EAV layout (objects, attributes, types). SQL dialect is DataFusion (NOT SQLite/Postgres) — see `acrm execute --help`.",
+    )
+    .option(
+      "--schema",
+      "dump the workspace's EAV layout (objects + attributes) instead of running SQL. Use this once at session start to see what's queryable.",
     )
     .addHelpText(
       "after",
       `
+Storage model: EAV. Records are not stored in per-object SQL tables.
+
+  Tables (the only three you query directly):
+    acrm_record     (record_id, object_slug)              one row per record
+    acrm_value      (id, record_id, object_slug,          one row per attribute
+                     attribute_slug, value_json,           value (current OR
+                     normalized_key, ref_object,           historical)
+                     ref_record_id, active_from, active_until, source, …)
+    acrm_attribute  (object_slug, attribute_slug,         schema: what fields
+                     attribute_type, is_multivalued,       exist on each object
+                     is_unique, config_json)
+
+  There is NO per-object table:
+    ❌ SELECT * FROM people
+    ✅ SELECT record_id FROM acrm_record WHERE object_slug = 'people'
+
+  Read all fields for one record (pivot from acrm_value):
+    SELECT attribute_slug, value_json, normalized_key, ref_record_id
+    FROM   acrm_value
+    WHERE  object_slug = 'people' AND record_id = $1
+           AND active_until IS NULL;
+
+  Always filter \`active_until IS NULL\` for current values — historical rows
+  are kept in the same table with a non-null active_until.
+
+  For record-reference attributes, prefer the indexed columns:
+    ref_object, ref_record_id        (use these for joins/filters)
+  rather than digging into value_json.target_record_id.
+
 SQL dialect: DataFusion (NOT SQLite, NOT Postgres)
   - Placeholders are $1, $2, ...   The '?' placeholder is rejected.
   - No sqlite_master — use information_schema.tables / .columns.
@@ -34,6 +67,7 @@ JSON columns to be aware of:
   acrm_attribute.config_json   per-attribute config (status options, ref target, ...)
 
 Introspection (use these instead of sqlite_master):
+  acrm execute --schema                                          # full EAV layout for this workspace
   acrm execute "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
   acrm execute "SELECT column_name, data_type FROM information_schema.columns WHERE table_name='acrm_value'"
   acrm execute "SELECT * FROM acrm_object"                      # registered objects
@@ -44,37 +78,137 @@ Errors carry the lix engine code + hint when applicable
 (e.g. LIX_SQL_PARSE_ERROR with hint: "Use $1 instead of ?").
 `,
     )
-    .action(async (sql: string, paramsJson: string | undefined) => {
-      const root = program.opts() as { json?: boolean; workspace?: string };
-      setJsonMode(root.json);
-      try {
-        let params: LixRuntimeValue[] = [];
-        if (paramsJson) {
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(paramsJson);
-          } catch {
+    .action(
+      async (
+        sql: string | undefined,
+        paramsJson: string | undefined,
+        opts: { schema?: boolean },
+      ) => {
+        const root = program.opts() as { json?: boolean; workspace?: string };
+        setJsonMode(root.json);
+        try {
+          if (opts.schema) {
+            if (sql) {
+              throw new AcrmError(
+                "--schema does not take a SQL argument",
+                ERR.INVALID_INPUT,
+              );
+            }
+            const lix = await openWorkspace({ workspace: root.workspace });
+            try {
+              const schema = await dumpSchema(lix);
+              ok(schema);
+            } finally {
+              await lix.close();
+            }
+            return;
+          }
+
+          if (!sql) {
             throw new AcrmError(
-              `params must be a JSON array, got: ${paramsJson}`,
+              "missing SQL argument (run `acrm execute --help` for the dialect; pass `--schema` to dump the EAV layout)",
               ERR.INVALID_INPUT,
             );
           }
-          if (!Array.isArray(parsed)) {
-            throw new AcrmError("params must be a JSON array", ERR.INVALID_INPUT);
+
+          let params: LixRuntimeValue[] = [];
+          if (paramsJson) {
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(paramsJson);
+            } catch {
+              throw new AcrmError(
+                `params must be a JSON array, got: ${paramsJson}`,
+                ERR.INVALID_INPUT,
+              );
+            }
+            if (!Array.isArray(parsed)) {
+              throw new AcrmError(
+                "params must be a JSON array",
+                ERR.INVALID_INPUT,
+              );
+            }
+            params = parsed as LixRuntimeValue[];
           }
-          params = parsed as LixRuntimeValue[];
+          const lix = await openWorkspace({ workspace: root.workspace });
+          try {
+            const result = await exec(lix, sql, params);
+            ok({ rows: result.rows, rows_affected: result.rowsAffected });
+          } finally {
+            await lix.close();
+          }
+        } catch (e) {
+          if (e instanceof AcrmError) fail(e.message, e.code, e.hint);
+          else fail(e instanceof Error ? e.message : String(e), ERR.EXECUTE);
+          process.exit(1);
         }
-        const lix = await openWorkspace({ workspace: root.workspace });
-        try {
-          const result = await exec(lix, sql, params);
-          ok({ rows: result.rows, rows_affected: result.rowsAffected });
-        } finally {
-          await lix.close();
-        }
-      } catch (e) {
-        if (e instanceof AcrmError) fail(e.message, e.code, e.hint);
-        else fail(e instanceof Error ? e.message : String(e), ERR.EXECUTE);
-        process.exit(1);
+      },
+    );
+}
+
+type SchemaAttribute = {
+  attribute_slug: string;
+  title: string;
+  attribute_type: string;
+  is_multivalued: boolean;
+  is_unique: boolean;
+  config?: unknown;
+};
+
+type SchemaObject = {
+  object_slug: string;
+  singular_name: string;
+  plural_name: string;
+  attributes: SchemaAttribute[];
+};
+
+async function dumpSchema(
+  lix: import("@lix-js/sdk").Lix,
+): Promise<{ objects: SchemaObject[] }> {
+  const objects = await exec(
+    lix,
+    `SELECT object_slug, singular_name, plural_name
+     FROM acrm_object
+     ORDER BY object_slug`,
+  );
+  const attrs = await exec(
+    lix,
+    `SELECT object_slug, attribute_slug, title, attribute_type,
+            is_multivalued, is_unique, config_json
+     FROM acrm_attribute
+     ORDER BY object_slug, attribute_slug`,
+  );
+
+  const byObject = new Map<string, SchemaAttribute[]>();
+  for (const row of attrs.rows) {
+    const slug = row.object_slug as string;
+    const list = byObject.get(slug) ?? [];
+    const raw = row.config_json as string | null | undefined;
+    let config: unknown;
+    if (raw) {
+      try {
+        config = JSON.parse(raw);
+      } catch {
+        config = raw;
       }
+    }
+    list.push({
+      attribute_slug: row.attribute_slug as string,
+      title: row.title as string,
+      attribute_type: row.attribute_type as string,
+      is_multivalued: Boolean(row.is_multivalued),
+      is_unique: Boolean(row.is_unique),
+      ...(config !== undefined ? { config } : {}),
     });
+    byObject.set(slug, list);
+  }
+
+  return {
+    objects: objects.rows.map((row) => ({
+      object_slug: row.object_slug as string,
+      singular_name: row.singular_name as string,
+      plural_name: row.plural_name as string,
+      attributes: byObject.get(row.object_slug as string) ?? [],
+    })),
+  };
 }
