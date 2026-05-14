@@ -364,9 +364,12 @@ describe("importTranscript participant resolution", () => {
     await lix.close();
   });
 
-  it("marks unknown participants as unresolved with tried[] and reason", async () => {
+  it("auto-creates a person when no record matches the supplied identifiers (covered in autocreate.test.ts)", async () => {
+    // The detailed assertions live in import-transcript.autocreate.test.ts.
+    // Here we just confirm the old "unresolved" branch is no longer reached
+    // for inputs that carry at least one identifier — a regression test on
+    // the behavior change itself.
     const lix = await openTestWorkspace();
-
     const result = await importTranscript(
       lix,
       makePayload([
@@ -376,14 +379,9 @@ describe("importTranscript participant resolution", () => {
         },
       ]),
     );
-
-    expect(result.participants.resolved).toHaveLength(0);
-    expect(result.participants.unresolved).toHaveLength(1);
-    const u = result.participants.unresolved[0]!;
-    expect(u.reason).toBe("person_not_found");
-    expect(u.tried).toEqual(["email_addresses", "linkedin_url"]);
-    expect(u.identifiers.email).toBe("ghost@nowhere.com");
-    expect(u.identifiers.linkedin_url).toBe("linkedin.com/in/ghost");
+    expect(result.participants.unresolved).toHaveLength(0);
+    expect(result.participants.resolved).toHaveLength(1);
+    expect(result.participants.resolved[0]?.created).toBe(true);
     await lix.close();
   });
 
