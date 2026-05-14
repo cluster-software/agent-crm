@@ -41,6 +41,15 @@ type TranscriptItem = {
   other_participants: string[];
 };
 
+type TranscriptDetail = {
+  id: string;
+  title: string | null;
+  started_at: string | null;
+  summary: string | null;
+  content: string | null;
+  participants: { id: string; name: string | null }[];
+};
+
 type Counts = { people: number; companies: number; deals: number };
 
 async function loadPeople(lix: Lix): Promise<Person[]> {
@@ -274,6 +283,78 @@ async function loadTranscriptsForPerson(
     return 0;
   });
   return out;
+}
+
+async function loadTranscript(
+  lix: Lix,
+  transcriptId: string,
+): Promise<TranscriptDetail | null> {
+  const r = await exec(
+    lix,
+    `SELECT attribute_slug, value_json
+     FROM acrm_value
+     WHERE object_slug = 'transcripts'
+       AND record_id = $1
+       AND active_until IS NULL
+       AND attribute_slug IN ('title','started_at','summary','content')`,
+    [transcriptId],
+  );
+  if (r.rows.length === 0) {
+    // Could still be a transcript with only participants set. Confirm record
+    // exists before returning null.
+    const exists = await exec(
+      lix,
+      `SELECT 1 AS x FROM acrm_record
+       WHERE object_slug = 'transcripts' AND record_id = $1`,
+      [transcriptId],
+    );
+    if (exists.rows.length === 0) return null;
+  }
+  let title: string | null = null;
+  let started_at: string | null = null;
+  let summary: string | null = null;
+  let content: string | null = null;
+  for (const row of r.rows) {
+    const slug = row.attribute_slug as string;
+    const obj = parseJson(row.value_json);
+    if (slug === "title") title = (obj?.value as string | undefined) ?? null;
+    else if (slug === "started_at")
+      started_at = (obj?.timestamp as string | undefined) ?? null;
+    else if (slug === "summary")
+      summary = (obj?.value as string | undefined) ?? null;
+    else if (slug === "content")
+      content = (obj?.value as string | undefined) ?? null;
+  }
+
+  const parts = await exec(
+    lix,
+    `SELECT
+       v.ref_record_id AS person_id,
+       v_name.value_json AS name_json
+     FROM acrm_value v
+     LEFT JOIN acrm_value v_name
+       ON v_name.record_id = v.ref_record_id
+       AND v_name.object_slug = 'people'
+       AND v_name.attribute_slug = 'name'
+       AND v_name.active_until IS NULL
+     WHERE v.object_slug = 'transcripts'
+       AND v.record_id = $1
+       AND v.attribute_slug = 'participants'
+       AND v.active_until IS NULL`,
+    [transcriptId],
+  );
+  const participants = parts.rows.map((row) => {
+    const obj = parseJson(row.name_json);
+    return {
+      id: row.person_id as string,
+      name:
+        (obj?.full_name as string | undefined) ??
+        (obj?.first_name as string | undefined) ??
+        null,
+    };
+  });
+
+  return { id: transcriptId, title, started_at, summary, content, participants };
 }
 
 async function loadCompanies(lix: Lix): Promise<Company[]> {
@@ -557,6 +638,114 @@ tbody tr.clickable { cursor: pointer; }
   font-variant-numeric: tabular-nums;
   flex: none;
 }
+.transcript-detail { max-width: 760px; margin: 0 auto; padding: 56px 32px 80px; }
+.transcript-title {
+  font-family: "New York", "Iowan Old Style", Georgia, "Times New Roman", serif;
+  font-size: 34px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  margin: 0 0 18px;
+  color: #f0f0f0;
+}
+.pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 28px; }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 999px;
+  font-size: 12px;
+  color: #b0b0b0;
+  background: transparent;
+}
+.pill .field-icon { width: 13px; height: 13px; color: #8a8a8a; }
+.view-toggle {
+  display: inline-flex;
+  padding: 3px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 999px;
+  margin-bottom: 24px;
+}
+.view-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  color: #8a8a8a;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.view-toggle button:hover { color: #d0d0d0; }
+.view-toggle button.active {
+  background: rgba(255,255,255,0.08);
+  color: #f0f0f0;
+}
+.view-toggle .field-icon { width: 14px; height: 14px; color: currentColor; }
+.prose {
+  font-size: 14px;
+  color: #d0d0d0;
+  line-height: 1.6;
+}
+.prose h2 {
+  display: flex;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #e6e6e6;
+  margin: 28px 0 10px;
+}
+.prose h2::before { content: "#"; color: #5a5a5a; font-weight: 400; }
+.prose h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #d8d8d8;
+  margin: 18px 0 8px;
+}
+.prose ul { margin: 6px 0 6px 4px; padding-left: 20px; }
+.prose li { margin: 4px 0; }
+.prose p { margin: 8px 0; }
+.prose .raw {
+  white-space: pre-wrap;
+  font-family: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  color: #c0c0c0;
+}
+.prose .empty-view { color: #6a6a6a; font-size: 13px; }
+.prose .turn { margin: 0 0 18px; }
+.prose .turn:last-child { margin-bottom: 0; }
+.prose .speaker {
+  font-size: 12px;
+  font-weight: 600;
+  color: #9a9a9a;
+  margin: 0 0 4px;
+  letter-spacing: 0.01em;
+}
+.prose .utterance { color: #d8d8d8; white-space: pre-wrap; }
+.prose code {
+  font-family: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  background: rgba(255,255,255,0.06);
+  color: #e0e0e0;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.back-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 11px 5px 8px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 999px;
+  margin-bottom: 22px;
+  color: #b0b0b0;
+}
+.back-button:hover { color: #e6e6e6; background: rgba(255,255,255,0.04); text-decoration: none; }
+.back-button .icon, .back-button .field-icon { width: 14px; height: 14px; color: currentColor; opacity: 1; }
 `;
 
 const ICON_PEOPLE = `<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="6" r="2.5"/><path d="M3 13c0-2.5 2.2-4 5-4s5 1.5 5 4"/></svg>`;
@@ -565,6 +754,10 @@ const ICON_DEALS = `<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="cu
 const ICON_MAIL = `<svg class="field-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="M2.5 4.5l5.5 4 5.5-4"/></svg>`;
 const ICON_LINKEDIN = `<svg class="field-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M3.6 5.5h2.2v7H3.6v-7zm1.1-3.2a1.3 1.3 0 1 1 0 2.6 1.3 1.3 0 0 1 0-2.6zM7.3 5.5h2.1v1h.03c.3-.55 1.03-1.13 2.12-1.13 2.27 0 2.69 1.49 2.69 3.43V12.5h-2.23V9.27c0-.77-.01-1.76-1.07-1.76-1.07 0-1.24.84-1.24 1.7V12.5H7.3v-7z"/></svg>`;
 const ICON_X = `<svg class="field-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M11.7 2.5h2.05L9.27 7.62 14.5 13.5h-4.13L7.13 9.66 3.4 13.5H1.35l4.78-5.47L1.1 2.5h4.23l2.92 3.5 3.45-3.5zm-.72 9.78h1.14L4.97 3.66H3.75l7.23 8.62z"/></svg>`;
+const ICON_CALENDAR = `<svg class="field-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/><path d="M5 2v3M11 2v3M2.5 7h11"/></svg>`;
+const ICON_USERS = `<svg class="field-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="6" cy="6" r="2.3"/><path d="M2 13c0-2.3 1.8-3.6 4-3.6s4 1.3 4 3.6"/><circle cx="11.3" cy="6.5" r="1.9"/><path d="M10 9.6c1.5 0 4 .9 4 3"/></svg>`;
+const ICON_SUMMARY = `<svg class="field-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 5h10M3 8h10M3 11h6"/></svg>`;
+const ICON_TRANSCRIPT = `<svg class="field-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 3.5h10v7H6.5L3.5 13V3.5z" stroke-linejoin="round"/><path d="M5.5 6h5M5.5 8h3" stroke-linecap="round"/></svg>`;
 
 function renderShell(opts: {
   workspace: string;
@@ -860,14 +1053,15 @@ function renderPersonPage(opts: {
           : `${t.other_participants.slice(0, 2).join(", ")} & ${t.other_participants.length - 2} others`;
     const itemColor = avatarColor(t.id);
     const time = t.started_at ? timeLabel(t.started_at) : "";
-    return `<div class="timeline-item">
+    const backHref = `/people/${encodeURIComponent(person.id)}`;
+    return `<a class="timeline-item" href="/transcripts/${encodeURIComponent(t.id)}?back=${encodeURIComponent(backHref)}">
       <span class="avatar" style="background:${itemColor}">${escapeHtml(initials(title))}</span>
       <div class="body">
         <div class="title">${escapeHtml(title)}</div>
         <div class="sub">${escapeHtml(sub)}</div>
       </div>
       <span class="time">${escapeHtml(time)}</span>
-    </div>`;
+    </a>`;
   };
 
   const timeline = groups.length
@@ -891,6 +1085,214 @@ function renderPersonPage(opts: {
       <div class="section-divider"></div>
       ${timeline}
     </div>
+  `;
+  return renderShell({ workspace, active: "people", counts, body });
+}
+
+function fullDateLabel(iso: string, now: Date): string {
+  const base = dateGroupLabel(iso, now);
+  if (base === "Today" || base === "Yesterday") return base;
+  return base;
+}
+
+function renderInline(text: string): string {
+  // Inline markdown: bold (**...**), italic (*...* or _..._), code (`...`).
+  // Escape first, then re-substitute inline patterns.
+  let s = escapeHtml(text);
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?:;]|$)/g, "$1<em>$2</em>");
+  s = s.replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?:;]|$)/g, "$1<em>$2</em>");
+  return s;
+}
+
+function renderMarkdownLite(text: string): string {
+  // Minimal markdown for summaries that come back as markdown (Granola, manual
+  // paste). Supports headings #..######, ordered/unordered lists with indent
+  // nesting, inline bold/italic/code, and paragraphs.
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const out: string[] = [];
+  type ListFrame = { indent: number; tag: "ul" | "ol" };
+  const stack: ListFrame[] = [];
+  const closeAllLists = () => {
+    while (stack.length) {
+      out.push("</li>");
+      out.push(`</${stack[stack.length - 1]!.tag}>`);
+      stack.pop();
+    }
+  };
+  let inPara = false;
+  const closePara = () => {
+    if (inPara) {
+      out.push("</p>");
+      inPara = false;
+    }
+  };
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, "");
+    if (line.trim() === "") {
+      closePara();
+      closeAllLists();
+      continue;
+    }
+    const heading = /^(#{1,6})\s+(.+)$/.exec(line);
+    const bullet = /^(\s*)[-*•]\s+(.+)$/.exec(line);
+    const numbered = /^(\s*)\d+\.\s+(.+)$/.exec(line);
+    if (heading) {
+      closePara();
+      closeAllLists();
+      const level = Math.min(heading[1]!.length, 4);
+      // We use h2/h3/h4 visually (h1 is reserved for the page title).
+      const tag = level === 1 ? "h2" : level === 2 ? "h2" : level === 3 ? "h3" : "h4";
+      out.push(`<${tag}>${renderInline(heading[2]!)}</${tag}>`);
+      continue;
+    }
+    if (bullet || numbered) {
+      closePara();
+      const m = (bullet ?? numbered)!;
+      const indent = m[1]!.length;
+      const tag: "ul" | "ol" = numbered ? "ol" : "ul";
+      // Pop deeper frames. Close the open <li> inside the nested list, then
+      // its <ul>/<ol>. After popping we're back inside the parent's open <li>.
+      while (stack.length && stack[stack.length - 1]!.indent > indent) {
+        out.push("</li>");
+        out.push(`</${stack[stack.length - 1]!.tag}>`);
+        stack.pop();
+      }
+      const top = stack[stack.length - 1];
+      if (!top || top.indent < indent) {
+        // Open a nested list inside the previous <li> (don't close it).
+        out.push(`<${tag}>`);
+        stack.push({ indent, tag });
+      } else {
+        // Same level: close previous <li>, start a new one.
+        out.push("</li>");
+      }
+      out.push(`<li>${renderInline(m[2]!)}`);
+      continue;
+    }
+    closeAllLists();
+    if (!inPara) {
+      out.push("<p>");
+      inPara = true;
+    } else {
+      out.push(" ");
+    }
+    out.push(renderInline(line));
+  }
+  closePara();
+  closeAllLists();
+  return out.join("");
+}
+
+function renderTranscriptText(text: string): string {
+  const t = text.replace(/\r\n?/g, "\n").trim();
+  if (!t) return "";
+  // Detect speaker turns. A speaker tag looks like "Name:" or "First Last:"
+  // at the start of the text, after a newline, or after a sentence boundary.
+  const re = /([A-Z][\w'’-]{0,40}(?:\s[A-Z][\w'’-]{0,40})?):\s/g;
+  type Turn = { idx: number; end: number; speaker: string };
+  const turns: Turn[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(t)) !== null) {
+    let validStart = m.index === 0;
+    if (!validStart) {
+      // Walk backward across whitespace; the speaker tag is a turn start if
+      // the first non-whitespace character we hit is a newline or a sentence
+      // terminator (.!?). This handles Granola's two-space convention.
+      let k = m.index - 1;
+      while (k >= 0 && (t[k] === " " || t[k] === "\t")) k--;
+      if (k < 0) validStart = true;
+      else if (t[k] === "\n") validStart = true;
+      else if (/[.!?]/.test(t[k]!)) validStart = true;
+    }
+    if (!validStart) continue;
+    turns.push({
+      idx: m.index,
+      end: m.index + m[0].length,
+      speaker: m[1]!,
+    });
+  }
+  if (turns.length === 0) {
+    // No speaker tags detected — fall back to pre-wrap so existing line breaks
+    // (if any) are still preserved.
+    return `<div class="raw">${escapeHtml(t)}</div>`;
+  }
+  const parts: string[] = [];
+  for (let i = 0; i < turns.length; i++) {
+    const cur = turns[i]!;
+    const next = turns[i + 1];
+    const utterance = t.slice(cur.end, next ? next.idx : t.length).trim();
+    if (!utterance && !cur.speaker) continue;
+    parts.push(
+      `<div class="turn"><div class="speaker">${escapeHtml(cur.speaker)}</div><div class="utterance">${escapeHtml(utterance)}</div></div>`,
+    );
+  }
+  return parts.join("");
+}
+
+function renderTranscriptPage(opts: {
+  workspace: string;
+  counts: Counts;
+  transcript: TranscriptDetail;
+  backHref: string;
+}): string {
+  const { workspace, counts, transcript, backHref } = opts;
+  const display = transcript.title ?? "(untitled transcript)";
+  const now = new Date();
+
+  const pills: string[] = [];
+  if (transcript.started_at) {
+    pills.push(
+      `<span class="pill">${ICON_CALENDAR}${escapeHtml(fullDateLabel(transcript.started_at, now))}</span>`,
+    );
+  }
+  const namedParticipants = transcript.participants
+    .map((p) => p.name)
+    .filter(Boolean) as string[];
+  if (namedParticipants.length) {
+    const label =
+      namedParticipants.length <= 2
+        ? namedParticipants.join(", ")
+        : `${namedParticipants.slice(0, 2).join(", ")} & ${namedParticipants.length - 2} others`;
+    pills.push(`<span class="pill">${ICON_USERS}${escapeHtml(label)}</span>`);
+  }
+
+  const summaryBody = transcript.summary
+    ? renderMarkdownLite(transcript.summary)
+    : `<div class="empty-view">No summary saved for this transcript.</div>`;
+  const transcriptBody = transcript.content
+    ? renderTranscriptText(transcript.content)
+    : `<div class="empty-view">No transcript text saved for this transcript.</div>`;
+
+  const body = `
+    <div class="transcript-detail">
+      <a class="back-button" href="${escapeHtml(backHref)}" aria-label="Back">
+        <svg class="field-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 3l-5 5 5 5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        ${ICON_PEOPLE}
+      </a>
+      <h1 class="transcript-title">${escapeHtml(display)}</h1>
+      <div class="pill-row">${pills.join("")}</div>
+      <div class="view-toggle" role="tablist">
+        <button type="button" class="active" data-view="summary">${ICON_SUMMARY}<span>Summary</span></button>
+        <button type="button" data-view="transcript">${ICON_TRANSCRIPT}<span>Transcript</span></button>
+      </div>
+      <div class="prose" data-pane="summary">${summaryBody}</div>
+      <div class="prose" data-pane="transcript" style="display:none">${transcriptBody}</div>
+    </div>
+    <script>
+      (() => {
+        const tabs = document.querySelectorAll('.view-toggle button');
+        const panes = document.querySelectorAll('[data-pane]');
+        tabs.forEach((btn) => btn.addEventListener('click', () => {
+          const view = btn.dataset.view;
+          tabs.forEach((b) => b.classList.toggle('active', b === btn));
+          panes.forEach((p) => {
+            p.style.display = p.dataset.pane === view ? '' : 'none';
+          });
+        }));
+      })();
+    </script>
   `;
   return renderShell({ workspace, active: "people", counts, body });
 }
@@ -922,6 +1324,34 @@ async function handleRequest(
       companies.filter((c) => c.name).map((c) => [c.id, c.name as string]),
     );
     const html = renderPeoplePage(people, companyById, workspaceLabel, counts);
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(html);
+    return;
+  }
+
+  const transcriptMatch = /^\/transcripts\/([^/]+)$/.exec(pathname);
+  if (transcriptMatch) {
+    const id = decodeURIComponent(transcriptMatch[1]!);
+    const transcript = await loadTranscript(lix, id);
+    if (!transcript) {
+      res.statusCode = 404;
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.end("Transcript not found");
+      return;
+    }
+    const backRaw = url.searchParams.get("back");
+    // Only allow same-site path-style hrefs to avoid open redirect.
+    const backHref =
+      backRaw && backRaw.startsWith("/") && !backRaw.startsWith("//")
+        ? backRaw
+        : "/people";
+    const html = renderTranscriptPage({
+      workspace: workspaceLabel,
+      counts,
+      transcript,
+      backHref,
+    });
     res.statusCode = 200;
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(html);
