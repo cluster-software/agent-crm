@@ -8,7 +8,7 @@ import {
   setSingleValue,
 } from "../db/upsert.js";
 import { generateUuid } from "../lib/ids.js";
-import { mergeRecords } from "./merge.js";
+import { dedupeRecords } from "./records.js";
 import { importTranscript } from "./import-transcript.js";
 
 async function seedPerson(
@@ -130,7 +130,7 @@ async function recordExists(
   return r.rows.length > 0;
 }
 
-describe("mergeRecords", () => {
+describe("dedupeRecords", () => {
   it("reassigns multivalued values and dedupes by normalized_key", async () => {
     const lix = await openTestWorkspace();
     const keep = await seedPerson(lix, {
@@ -141,7 +141,7 @@ describe("mergeRecords", () => {
       emails: ["alice@acme.com", "alice.b@acme.com"],
     });
 
-    const result = await mergeRecords(lix, {
+    const result = await dedupeRecords(lix, {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -169,7 +169,7 @@ describe("mergeRecords", () => {
       job_title: "Founder",
     });
 
-    await mergeRecords(lix, {
+    await dedupeRecords(lix, {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -200,7 +200,7 @@ describe("mergeRecords", () => {
       linkedin_url: "linkedin.com/in/discard",
     });
 
-    const result = await mergeRecords(lix, {
+    const result = await dedupeRecords(lix, {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -226,7 +226,7 @@ describe("mergeRecords", () => {
       linkedin_url: "linkedin.com/in/discard",
     });
 
-    await mergeRecords(lix, {
+    await dedupeRecords(lix, {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -264,7 +264,7 @@ describe("mergeRecords", () => {
     );
     expect(before.rows[0]?.ref_record_id).toBe(discard);
 
-    await mergeRecords(lix, {
+    await dedupeRecords(lix, {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -304,7 +304,7 @@ describe("mergeRecords", () => {
     });
     const discard = await seedPerson(lix, { email: "luis@cluster.com" });
 
-    const plan = await mergeRecords(lix, {
+    const plan = await dedupeRecords(lix, {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -324,7 +324,7 @@ describe("mergeRecords", () => {
     const lix = await openTestWorkspace();
     const id = await seedPerson(lix, { email: "a@b.com" });
     await expect(
-      mergeRecords(lix, {
+      dedupeRecords(lix, {
         object_slug: "people",
         keep_record_id: id,
         discard_record_id: id,
@@ -339,7 +339,7 @@ describe("mergeRecords", () => {
     const lix = await openTestWorkspace();
     const id = await seedPerson(lix, { email: "a@b.com" });
     await expect(
-      mergeRecords(lix, {
+      dedupeRecords(lix, {
         object_slug: "people",
         keep_record_id: id,
         discard_record_id: "does-not-exist",
@@ -370,7 +370,7 @@ describe("mergeRecords", () => {
       participants: [{ email: "luis@hello-cluster.com" }],
     });
 
-    const result = await mergeRecords(lix, {
+    const result = await dedupeRecords(lix, {
       object_slug: "people",
       keep_record_id: luis1,
       discard_record_id: luis2,

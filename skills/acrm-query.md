@@ -100,26 +100,29 @@ acrm execute "
 > Don't `SELECT *` from `acrm_value` without filtering by `attribute_slug` —
 > a transcript row's `content` field alone can be tens of kilobytes.
 
-## Merging duplicates
+## Deduping records (collapsing two rows that describe the same entity)
 
-Two records describing the same entity? Don't hand-write merge SQL — use the
-first-class command:
+Don't hand-write merge SQL — use the first-class command:
 
 ```sh
-acrm merge people --keep <record_id> --discard <record_id> --dry-run
-acrm merge people --keep <record_id> --discard <record_id>
+acrm records dedupe people --keep <record_id> --discard <record_id> --dry-run
+acrm records dedupe people --keep <record_id> --discard <record_id>
 ```
 
-It reassigns the discard's `acrm_value` rows to the keeper, rewrites every
-inbound reference (including the embedded `target_record_id` in `value_json`),
-dedupes multivalued attributes, applies a conflict policy on single-valued
-attributes (`--prefer keep|discard|interactive`, default `keep`), and finally
-removes the discarded `acrm_record` row.
+Works on any object (`people`, `companies`, `deals`, `posts`, `transcripts`).
+Reassigns the discard's `acrm_value` rows to the keeper, rewrites every inbound
+reference (including the embedded `target_record_id` in `value_json`), dedupes
+multivalued attributes, applies a conflict policy on single-valued attributes
+(`--prefer keep|discard|interactive`, default `keep`), and removes the discarded
+`acrm_record` row.
+
+> The verb is `dedupe`, not `merge` — `merge` in lix-land means version/branch
+> merging (`mergeVersion`), which is a different operation.
 
 ## Mutating directly (rare)
 
-Prefer the CLI's `acrm import …` and `acrm merge …` commands — they handle
-soft-delete (`active_until`), provenance, and EAV invariants. Hand-rolled
+Prefer the CLI's `acrm import …` and `acrm records dedupe …` commands — they
+handle soft-delete (`active_until`), provenance, and EAV invariants. Hand-rolled
 `INSERT`/`UPDATE` on `acrm_value` should be the last resort, and you should
 read [the upsert helpers](https://github.com/cluster-software/agent-crm) once
 before doing it.
