@@ -19,8 +19,13 @@ this skill required.
 1. **List providers and their current status.** Enumerate the available
    adapter skills — every installed skill whose name starts with
    `transcript-provider-`. For each one, invoke it and run its **Detect**
-   section to find out which of the three states it's in: `connected`,
-   `unauthenticated`, or `not_installed`.
+   section to find out which of the three composite states it's in:
+   `connected`, `unauthenticated`, or `not_installed`.
+
+   Some adapters touch more than one auth surface (Granola has two: an MCP
+   server registered with Claude Code, and the agent-crm CLI's own token
+   cache). When state is not `connected`, surface *which surface* needs work
+   so the user can pick the right recovery step.
 
    Render a numbered menu, with the state in the badge so each provider's
    next action is obvious:
@@ -28,15 +33,16 @@ this skill required.
    Transcript providers
 
      1. Granola        [not installed — run `claude mcp add` first]
-     2. Granola        [installed, needs OAuth]
-     3. Granola        [connected]
-     4. Manual / file  [always available]
-     5. Add new...     (drop a new transcript-provider-<name> SKILL.md into ~/.claude/skills/)
+     2. Granola        [MCP authed, CLI needs `acrm auth granola`]
+     3. Granola        [MCP needs OAuth, CLI authed]
+     4. Granola        [connected]
+     5. Manual / file  [always available]
+     6. Add new...     (drop a new transcript-provider-<name> SKILL.md into ~/.claude/skills/)
    ```
 
-   (Only one row per provider in practice — the example shows all three
-   states for clarity.) If only one adapter is fully native (e.g. Granola)
-   and others are manual, call that out.
+   (Only one row per provider in practice — the example shows several states
+   for clarity.) If only one adapter is fully native (e.g. Granola) and
+   others are manual, call that out.
 
 2. **Ask the user which provider(s) they want to set up.** Accept a number,
    a name, "all", or "skip". They can pick more than one.
@@ -47,7 +53,12 @@ this skill required.
    - Granola, `not_installed`: print the `claude mcp add` command, ask the
      user to run it and restart Claude Code, then stop — re-running
      `/setup-transcripts` after the restart picks up from `unauthenticated`.
-   - Granola, `unauthenticated`: OAuth dance (URL → wait → complete → verify).
+   - Granola, `unauthenticated`: run whichever of the two Connect sub-flows
+     the adapter's Detect flagged. The MCP surface uses the in-session
+     `mcp__granola__authenticate` → `mcp__granola__complete_authentication`
+     dance. The CLI surface uses `! acrm auth granola` (the `!` prefix is
+     load-bearing — it streams output live; the bash tool would buffer the
+     URL and block on the callback forever). Both may need running.
    - Manual / file: no-op — just tell the user what to expect when they run
      `/post-call` (they'll paste or file-import).
    - Future native providers: whatever their adapter says.
