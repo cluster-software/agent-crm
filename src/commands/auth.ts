@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { spawn } from "node:child_process";
 import type { Command } from "commander";
 import { fail, ok, setJsonMode, isJson } from "../output/json.js";
 import { AcrmError, ERR } from "../lib/errors.js";
@@ -19,6 +20,12 @@ import type { TranscriptProvider } from "../integrations/provider.js";
 type AuthMetadata = {
   authorization_endpoint?: string;
   token_endpoint?: string;
+  registration_endpoint?: string;
+};
+
+type RegistrationResponse = {
+  client_id: string;
+  client_secret?: string;
 };
 
 type AuthOpts = {
@@ -110,9 +117,30 @@ async function runProviderOAuth(
 
   const { port, captured } = await startCallbackServer(state);
   const redirect_uri = `http://127.0.0.1:${port}/callback`;
+
+  let client_id = oauth.clientId;
+  let client_secret: string | undefined;
+  if (!client_id) {
+    if (!discovery.registration_endpoint) {
+      throw new AcrmError(
+        `${provider.label} requires a client_id but its discovery doc has no registration_endpoint`,
+        ERR.IMPORT,
+        `set ACRM_${provider.name.toUpperCase()}_CLIENT_ID with a pre-registered client, or pass --token <token>`,
+      );
+    }
+    const reg = await registerClient({
+      registration_endpoint: discovery.registration_endpoint,
+      redirect_uri,
+      scope: oauth.scope,
+      provider_label: provider.label,
+    });
+    client_id = reg.client_id;
+    client_secret = reg.client_secret;
+  }
+
   const url = buildAuthorizationUrl({
     authorization_endpoint: discovery.authorization_endpoint,
-    client_id: oauth.clientId,
+    client_id,
     redirect_uri,
     scope: oauth.scope || undefined,
     state,
@@ -121,9 +149,10 @@ async function runProviderOAuth(
 
   if (!isJson()) {
     process.stderr.write(
-      `\nOpen this URL in your browser to authorize:\n\n  ${url}\n\nWaiting for the callback…\n`,
+      `\nOpening browser to authorize. If it doesn't open, paste this URL:\n\n  ${url}\n\nWaiting for the callback…\n`,
     );
   }
+  openInBrowser(url);
 
   const code = await captured;
   const tokenResp = await exchangeCodeForToken({
@@ -131,7 +160,8 @@ async function runProviderOAuth(
     code,
     redirect_uri,
     code_verifier: pkce.code_verifier,
-    client_id: oauth.clientId,
+    client_id,
+    client_secret,
   });
 
   const expires_at =
@@ -148,6 +178,9 @@ async function runProviderOAuth(
     expires_at,
     authorization_endpoint: discovery.authorization_endpoint,
     token_endpoint: discovery.token_endpoint,
+    client_id,
+    client_secret,
+    registration_endpoint: discovery.registration_endpoint,
   };
   const file = await writeToken(cached);
   return { provider: provider.name, cached_at: new Date().toISOString(), file };
@@ -174,6 +207,63 @@ async function fetchDiscovery(url: string): Promise<AuthMetadata> {
   return (await res.json()) as AuthMetadata;
 }
 
+async function registerClient(input: {
+  registration_endpoint: string;
+  redirect_uri: string;
+  scope?: string;
+  provider_label: string;
+}): Promise<RegistrationResponse> {
+  const body: Record<string, unknown> = {
+    client_name: "acrm",
+    redirect_uris: [input.redirect_uri],
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    token_endpoint_auth_method: "none",
+    application_type: "native",
+  };
+  if (input.scope) body.scope = input.scope;
+
+  let res: Response;
+  try {
+    res = await fetch(input.registration_endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    throw new AcrmError(
+      `failed to reach ${input.provider_label} registration endpoint: ${e instanceof Error ? e.message : String(e)}`,
+      ERR.IMPORT,
+    );
+  }
+  const text = await res.text();
+  if (!res.ok) {
+    throw new AcrmError(
+      `${input.provider_label} dynamic client registration failed: HTTP ${res.status} ${text.slice(0, 200)}`,
+      ERR.IMPORT,
+    );
+  }
+  let parsed: RegistrationResponse;
+  try {
+    parsed = JSON.parse(text) as RegistrationResponse;
+  } catch (e) {
+    throw new AcrmError(
+      `${input.provider_label} registration returned invalid JSON: ${e instanceof Error ? e.message : String(e)}`,
+      ERR.IMPORT,
+    );
+  }
+  if (!parsed.client_id) {
+    throw new AcrmError(
+      `${input.provider_label} registration response missing client_id`,
+      ERR.IMPORT,
+    );
+  }
+  return parsed;
+}
+
 type TokenResponse = {
   access_token: string;
   token_type?: string;
@@ -188,6 +278,7 @@ async function exchangeCodeForToken(input: {
   redirect_uri: string;
   code_verifier: string;
   client_id: string;
+  client_secret?: string;
 }): Promise<TokenResponse> {
   const body = new URLSearchParams({
     grant_type: "authorization_code",
@@ -196,6 +287,7 @@ async function exchangeCodeForToken(input: {
     client_id: input.client_id,
     code_verifier: input.code_verifier,
   });
+  if (input.client_secret) body.set("client_secret", input.client_secret);
   const res = await fetch(input.token_endpoint, {
     method: "POST",
     headers: {
@@ -287,6 +379,20 @@ function startCallbackServer(
       resolveOuter({ port, captured });
     });
   });
+}
+
+function openInBrowser(url: string): void {
+  const cmd =
+    process.platform === "darwin"
+      ? "open"
+      : process.platform === "win32"
+        ? "start"
+        : "xdg-open";
+  try {
+    spawn(cmd, [url], { detached: true, stdio: "ignore" }).unref();
+  } catch {
+    // fine — user can paste the URL manually
+  }
 }
 
 // Re-export for tests.
