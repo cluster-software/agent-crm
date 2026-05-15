@@ -81,6 +81,39 @@ JSON columns to be aware of:
   acrm_value.provenance_json   import row index, source metadata
   acrm_attribute.config_json   per-attribute config (status options, ref target, ...)
 
+value_json shape by attribute_type (the key to use with lix_json_get_text):
+  text / url                 {"value": "<string>"}
+  number                     {"value": <number>}
+  date                       {"date": "<YYYY-MM-DD>"}
+  timestamp                  {"timestamp": "<ISO-8601>"}
+  personal-name              {"full_name": "...", "first_name": "...", "last_name": "..."}
+  email-address              {"email_address": "<lower>", "email_domain": "<lower>", ...}
+  domain                     {"domain": "<lower>", "root_domain": "<lower>"}
+  currency                   {"currency_value": <number>, "currency_code": "<USD>"}
+  status / select            {"id": "<option_id>", "title": "<display>"}
+  record-reference           {"target_object": "<slug>", "target_record_id": "<uuid>"}
+
+  Why this matters: \`lix_json_get_text(value_json, 'value')\` returns NULL on
+  status/currency/personal-name/email-address rows because those types don't
+  use a "value" key. Pick the right key from the table above (or for
+  record-reference attrs, prefer the indexed \`ref_record_id\` column over
+  digging into value_json).
+
+Custom schema (mutations work — there is no "last resort" warning):
+  acrm object create <slug>                                       register a new object
+  acrm attribute add <object>.<slug> --type <type> [...]          add a field
+  acrm attribute edit-options <object>.<slug> add <id>[:<title>]  extend a status enum
+  acrm records create <object> --field <slug>=<value> [...]       create one record
+
+  If you need something the CLI doesn't expose, writing directly to
+  \`acrm_object\` / \`acrm_attribute\` via \`acrm execute\` is supported and
+  expected — see \`acrm execute --schema\` for the current layout, then
+  INSERT with the standard columns (\`object_slug\`, \`singular_name\`,
+  \`plural_name\` for objects; \`object_slug\`, \`attribute_slug\`, \`title\`,
+  \`attribute_type\`, \`is_multivalued\`, \`is_unique\`, \`config_json\` for
+  attributes). The CLI commands above just wrap those INSERTs with input
+  validation.
+
 Introspection (use these instead of sqlite_master):
   acrm execute --schema                                          # full EAV layout for this workspace
   acrm execute "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
