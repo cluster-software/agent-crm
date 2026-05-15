@@ -15,6 +15,10 @@ import { registerAuth } from "../commands/auth.js";
 import { PROVIDERS } from "../integrations/providers.js";
 import { fail } from "../output/json.js";
 import { ERR } from "../lib/errors.js";
+import {
+  promptIfOutdated,
+  scheduleBackgroundRefreshIfStale,
+} from "../lib/update-check.js";
 
 const pkg = createRequire(import.meta.url)("../../package.json") as {
   version: string;
@@ -92,7 +96,17 @@ registerUi(program);
 registerSkills(program);
 registerAuth(program);
 
-program.parseAsync(process.argv).catch((err) => {
+async function main() {
+  // Interactive TTYs get a Codex-style update prompt; non-TTY callers (agents,
+  // pipes, CI) get a plain stderr warning. Either way, kick off a detached
+  // worker to refresh the version cache for next time. All update-check
+  // failures are swallowed — see src/lib/update-check.ts.
+  await promptIfOutdated(pkg.version);
+  scheduleBackgroundRefreshIfStale(pkg.version);
+  await program.parseAsync(process.argv);
+}
+
+main().catch((err) => {
   fail(err instanceof Error ? err.message : String(err), ERR.UNHANDLED);
   process.exit(1);
 });
