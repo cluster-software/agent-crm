@@ -6,6 +6,13 @@ import { exec } from "../db/execute.js";
 import { fail, isJson, ok, setJsonMode } from "../output/json.js";
 import { AcrmError, ERR } from "../lib/errors.js";
 import { nowIso } from "../lib/time.js";
+import { generateUuid } from "../lib/ids.js";
+import {
+  addMultiValue,
+  insertRecord,
+  setSingleValue,
+} from "../db/upsert.js";
+import { encode, type AttributeConfig, type AttributeType } from "../domain/values.js";
 
 type Prefer = "keep" | "discard" | "interactive";
 
@@ -117,6 +124,137 @@ export function registerRecords(program: Command): void {
     .command("records")
     .description(
       "operations on records as a group (dedupe duplicates, etc.). Subcommands act on any object — `people`, `companies`, `deals`, `posts`, `transcripts`.",
+    );
+
+  records
+    .command("create <object>")
+    .description(
+      "create a single record on <object> with one or more fields. Use this for ad-hoc creation against any object (built-in or custom) — for bulk loads use `acrm import csv`.",
+    )
+    .option(
+      "--field <slug=value>",
+      "set an attribute on the new record. Repeatable. For record-reference attributes, pass `<slug>=<target_object>:<target_record_id>`. For multivalued attributes, pass --field <slug>=<value> multiple times.",
+      (val: string, prev: string[]) => [...(prev ?? []), val],
+      [] as string[],
+    )
+    .addHelpText(
+      "after",
+      `
+Examples:
+  # create a deal linked to an existing person
+  acrm records create deals \\
+      --field name="Acme renewal" \\
+      --field stage=in_progress \\
+      --field value=50000 \\
+      --field associated_people=people:<person_record_id>
+
+  # create a record on a custom object (e.g. candidates registered via
+  # \`acrm object create candidates\`)
+  acrm records create candidates \\
+      --field name="Daria Volkov" \\
+      --field stage=screen \\
+      --field email_addresses=daria@example.com
+
+  # multivalued: repeat the same --field slug
+  acrm records create candidates --field name="Liam" \\
+      --field email_addresses=liam@home.com \\
+      --field email_addresses=liam@work.com
+
+Field syntax:
+  <slug>=<value>
+  <slug>=<target_object>:<target_record_id>   for record-reference attributes
+  <slug>=                                     omit value to clear (no-op on create)
+
+Status / select values must match a configured option id or title. To add a
+new option to an enum, use \`acrm attribute edit-options\`.
+
+Returns the new record_id, which you can pass to subsequent --field arguments
+to wire up references.
+`,
+    )
+    .action(async (object: string, opts: { field?: string[] }) => {
+      const root = program.opts() as { json?: boolean; workspace?: string };
+      setJsonMode(root.json);
+      try {
+        const lix = await openWorkspace({ workspace: root.workspace });
+        try {
+          const result = await createRecord(lix, {
+            object_slug: object,
+            fields: opts.field ?? [],
+          });
+          ok(result);
+        } finally {
+          await lix.close();
+        }
+      } catch (e) {
+        if (e instanceof AcrmError) fail(e.message, e.code, e.hint);
+        else fail(e instanceof Error ? e.message : String(e), ERR.UNHANDLED);
+        process.exit(1);
+      }
+    });
+
+  records
+    .command("update <object> <record_id>")
+    .description(
+      "update fields on an existing record. For single-valued attributes (e.g. `stage`, `name`), replaces the current value. For multivalued attributes (e.g. `email_addresses`), adds a new value alongside existing ones — use `acrm records dedupe` to collapse duplicates.",
+    )
+    .option(
+      "--field <slug=value>",
+      "set an attribute. Repeatable. For record-reference attributes, pass `<slug>=<target_object>:<target_record_id>`. For multivalued attributes, repeat --field <slug> to add multiple values.",
+      (val: string, prev: string[]) => [...(prev ?? []), val],
+      [] as string[],
+    )
+    .addHelpText(
+      "after",
+      `
+Examples:
+  # advance a candidate through the pipeline
+  acrm records update candidates <candidate_id> --field stage=screen
+  acrm records update candidates <candidate_id> --field stage=onsite --field notes="great fit on async/io"
+
+  # change a deal's value or close date
+  acrm records update deals <deal_id> --field value=75000 --field close_date=2026-07-01
+
+  # add another email to an existing person (multivalued)
+  acrm records update people <person_id> --field email_addresses=alice@work.com
+
+Field syntax (same as \`records create\`):
+  <slug>=<value>
+  <slug>=<target_object>:<target_record_id>   for record-reference attributes
+
+Status / select values must match a configured option id or title — use
+\`acrm attribute edit-options\` to extend an enum.
+
+Validation runs before any write: bad enum values, unknown attributes, or a
+missing record_id all fail loudly without touching the workspace.
+`,
+    )
+    .action(
+      async (
+        object: string,
+        record_id: string,
+        opts: { field?: string[] },
+      ) => {
+        const root = program.opts() as { json?: boolean; workspace?: string };
+        setJsonMode(root.json);
+        try {
+          const lix = await openWorkspace({ workspace: root.workspace });
+          try {
+            const result = await updateRecord(lix, {
+              object_slug: object,
+              record_id,
+              fields: opts.field ?? [],
+            });
+            ok(result);
+          } finally {
+            await lix.close();
+          }
+        } catch (e) {
+          if (e instanceof AcrmError) fail(e.message, e.code, e.hint);
+          else fail(e instanceof Error ? e.message : String(e), ERR.UNHANDLED);
+          process.exit(1);
+        }
+      },
     );
 
   records
@@ -671,4 +809,237 @@ async function resolveConflict(
 function truncate(s: string, n = 80): string {
   if (s.length <= n) return s;
   return s.slice(0, n) + "…";
+}
+
+type AttributeRow = {
+  attribute_type: AttributeType;
+  is_multivalued: boolean;
+  config?: AttributeConfig;
+};
+
+function parseField(raw: string): { slug: string; value: string } {
+  const i = raw.indexOf("=");
+  if (i <= 0) {
+    throw new AcrmError(
+      `invalid --field value: ${raw} (expected <slug>=<value>)`,
+      ERR.INVALID_INPUT,
+    );
+  }
+  return { slug: raw.slice(0, i).trim(), value: raw.slice(i + 1) };
+}
+
+function coerceFieldValue(
+  attr: AttributeRow,
+  attribute_slug: string,
+  raw: string,
+): unknown {
+  if (attr.attribute_type === "record-reference") {
+    const i = raw.indexOf(":");
+    if (i <= 0 || i === raw.length - 1) {
+      throw new AcrmError(
+        `invalid record-reference value for ${attribute_slug}: ${raw} (expected <target_object>:<target_record_id>)`,
+        ERR.INVALID_INPUT,
+      );
+    }
+    return {
+      target_object: raw.slice(0, i).trim(),
+      target_record_id: raw.slice(i + 1).trim(),
+    };
+  }
+  return raw;
+}
+
+export type CreateRecordResult = {
+  created: true;
+  object_slug: string;
+  record_id: string;
+  values_inserted: number;
+};
+
+export type UpdateRecordResult = {
+  updated: true;
+  object_slug: string;
+  record_id: string;
+  values_changed: number;
+};
+
+type PreparedField = {
+  slug: string;
+  attr: AttributeRow;
+  value: unknown;
+};
+
+async function assertObjectRegistered(
+  lix: Lix,
+  object_slug: string,
+): Promise<void> {
+  const obj = await exec(
+    lix,
+    "SELECT object_slug FROM acrm_object WHERE object_slug = $1",
+    [object_slug],
+  );
+  if (!obj.rows.length) {
+    throw new AcrmError(
+      `unknown object: ${object_slug}. Run \`acrm execute "SELECT object_slug FROM acrm_object"\` to list, or \`acrm object create ${object_slug}\` to register it.`,
+      ERR.NOT_FOUND,
+    );
+  }
+}
+
+// Parse + validate every --field up front. encode() runs in dry-run mode here
+// to catch invalid enum values, unparseable emails, etc.; doing it before any
+// write means we never leave a half-populated record behind. The actual
+// insert path re-runs encode on the raw value — we don't pass the encoded
+// form through because the upsert helpers can't re-handle already-encoded
+// text (encoding {value: "..."} twice produces "[object Object]").
+async function prepareFields(
+  lix: Lix,
+  object_slug: string,
+  fields: string[],
+): Promise<PreparedField[]> {
+  const parsed = fields.map(parseField).filter((f) => f.value !== "");
+  const attrMeta = new Map<string, AttributeRow>();
+  for (const f of parsed) {
+    if (attrMeta.has(f.slug)) continue;
+    const r = await exec(
+      lix,
+      "SELECT attribute_type, is_multivalued, config_json FROM acrm_attribute WHERE object_slug = $1 AND attribute_slug = $2",
+      [object_slug, f.slug],
+    );
+    const row = r.rows[0];
+    if (!row) {
+      throw new AcrmError(
+        `unknown attribute: ${object_slug}.${f.slug}. Run \`acrm attribute add ${object_slug}.${f.slug} --type <type>\` to register it, or \`acrm execute --schema\` to list existing attributes.`,
+        ERR.NOT_FOUND,
+      );
+    }
+    let config: AttributeConfig | undefined;
+    const raw = row.config_json as string | null | undefined;
+    if (raw) {
+      try {
+        config = JSON.parse(raw) as AttributeConfig;
+      } catch {
+        config = undefined;
+      }
+    }
+    attrMeta.set(f.slug, {
+      attribute_type: row.attribute_type as AttributeType,
+      is_multivalued: Boolean(row.is_multivalued),
+      config,
+    });
+  }
+
+  return parsed.map((f) => {
+    const attr = attrMeta.get(f.slug)!;
+    const value = coerceFieldValue(attr, f.slug, f.value);
+    encode(attr.attribute_type, value, attr.config);
+    return { slug: f.slug, attr, value };
+  });
+}
+
+async function applyFields(
+  lix: Lix,
+  object_slug: string,
+  record_id: string,
+  prepared: PreparedField[],
+  source: string,
+): Promise<number> {
+  const provenance: Record<string, unknown> = { command: source };
+  let n = 0;
+  for (const e of prepared) {
+    if (e.attr.is_multivalued) {
+      await addMultiValue(lix, {
+        object_slug,
+        record_id,
+        attribute_slug: e.slug,
+        attribute_type: e.attr.attribute_type,
+        value: e.value,
+        source,
+        provenance,
+      });
+    } else {
+      await setSingleValue(lix, {
+        object_slug,
+        record_id,
+        attribute_slug: e.slug,
+        attribute_type: e.attr.attribute_type,
+        value: e.value,
+        source,
+        provenance,
+      });
+    }
+    n++;
+  }
+  return n;
+}
+
+export async function createRecord(
+  lix: Lix,
+  args: { object_slug: string; fields: string[] },
+): Promise<CreateRecordResult> {
+  const { object_slug, fields } = args;
+
+  await assertObjectRegistered(lix, object_slug);
+  const prepared = await prepareFields(lix, object_slug, fields);
+
+  const record_id = await generateUuid(lix);
+  await insertRecord(lix, object_slug, record_id);
+  const inserted = await applyFields(
+    lix,
+    object_slug,
+    record_id,
+    prepared,
+    "cli:records-create",
+  );
+
+  return {
+    created: true,
+    object_slug,
+    record_id,
+    values_inserted: inserted,
+  };
+}
+
+export async function updateRecord(
+  lix: Lix,
+  args: { object_slug: string; record_id: string; fields: string[] },
+): Promise<UpdateRecordResult> {
+  const { object_slug, record_id, fields } = args;
+
+  await assertObjectRegistered(lix, object_slug);
+
+  const exists = await exec(
+    lix,
+    "SELECT record_id FROM acrm_record WHERE object_slug = $1 AND record_id = $2",
+    [object_slug, record_id],
+  );
+  if (!exists.rows.length) {
+    throw new AcrmError(
+      `record not found: ${object_slug}/${record_id}`,
+      ERR.NOT_FOUND,
+    );
+  }
+
+  const prepared = await prepareFields(lix, object_slug, fields);
+  if (prepared.length === 0) {
+    throw new AcrmError(
+      "no --field arguments provided (nothing to update)",
+      ERR.INVALID_INPUT,
+    );
+  }
+
+  const changed = await applyFields(
+    lix,
+    object_slug,
+    record_id,
+    prepared,
+    "cli:records-update",
+  );
+
+  return {
+    updated: true,
+    object_slug,
+    record_id,
+    values_changed: changed,
+  };
 }

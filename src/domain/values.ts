@@ -1,3 +1,5 @@
+import { AcrmError, ERR } from "../lib/errors.js";
+
 export type AttributeType =
   | "text"
   | "personal-name"
@@ -92,6 +94,20 @@ export function encode(
       const raw = String(input).trim();
       const match = resolveStatusOption(raw, config?.options);
       if (match) return { id: match.id, title: match.title };
+      // If options are configured, reject unknown values rather than silently
+      // creating a "free-text" option that won't roundtrip through the UI and
+      // can't be filtered with `WHERE id=...`. Pre-0.11 builds coerced into
+      // `{title: raw}`, which made `acrm import csv` accept e.g.
+      // `deal_stage,sourced` against the locked sales enum without complaint —
+      // see the ax-eval write-up.
+      if (config?.options && config.options.length > 0) {
+        const labels = config.options.map((o) => o.id).join(", ");
+        throw new AcrmError(
+          `invalid ${type} value: "${raw}" — expected one of: ${labels}`,
+          ERR.INVALID_INPUT,
+          `To add a new option, run \`acrm attribute edit-options <object>.<slug> add ${raw}\`.`,
+        );
+      }
       return { title: raw };
     }
     case "record-reference": {

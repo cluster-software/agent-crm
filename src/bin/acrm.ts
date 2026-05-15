@@ -4,6 +4,7 @@ import { Command } from "commander";
 import { registerInit } from "../commands/init.js";
 import { registerExecute } from "../commands/execute.js";
 import { registerRecords } from "../commands/records.js";
+import { registerSchema } from "../commands/schema.js";
 import { registerImport, getOrCreateImportCommand } from "../commands/import.js";
 import { attachLinkedinSubcommand } from "../commands/import-linkedin.js";
 import { attachXSubcommand } from "../commands/import-x.js";
@@ -50,6 +51,11 @@ Data model:
   posts       LinkedIn/X posts the user wants to track, linked to author via \`posts.author\` + \`people.associated_posts\`
   transcripts meeting/call transcripts (e.g. Granola), linked to attendees via \`transcripts.participants\` + \`people.associated_transcripts\`
 
+  Need a different shape (hiring pipeline, fundraising, projects, …)? Register
+  a custom object: \`acrm object create candidates\`, then add fields with
+  \`acrm attribute add\`. Don't coerce non-sales data into \`deals\` — the
+  \`deals.stage\` enum is locked to sales values (lead/in_progress/won/lost).
+
 Typical flow:
   acrm init <name>.acrm           create a workspace
   acrm import csv ./leads.csv     load people + companies (and deals if columns present)
@@ -59,7 +65,15 @@ Typical flow:
   acrm import transcript          import a meeting transcript — use \`--from <provider>\` for the fast path, or pipe JSON via stdin / \`--file\`
   acrm ui                         browse the workspace in a local UI
   acrm execute "SELECT ..."       run SQL against the workspace
+  acrm records create deals --field name=... --field stage=...  create a single record
+  acrm records update candidates <id> --field stage=screen      advance / edit fields on an existing record
   acrm records dedupe people --keep <id> --discard <id>   collapse two duplicate records into one
+
+Custom schema:
+  acrm object create candidates                                  register a new object
+  acrm attribute add candidates.stage --type status \\
+      --option sourced --option screen --option onsite --option offer
+  acrm attribute edit-options deals.stage add custom_value       extend a built-in enum
 
 Provider auth (one-time, for \`acrm import transcript --from <provider>\`):
 ${PROVIDERS.filter((p) => p.oauth)
@@ -81,6 +95,17 @@ Introspection (run via \`acrm execute "<sql>"\`):
   SELECT * FROM acrm_object                                     -- registered objects
   SELECT object_slug, attribute_slug, attribute_type FROM acrm_attribute
   SELECT object_slug, COUNT(*) FROM acrm_record GROUP BY object_slug
+
+JSON value shapes per attribute_type (key for lix_json_get_text):
+  text / url / number   {"value": ...}
+  date                  {"date": ...}        timestamp     {"timestamp": ...}
+  personal-name         {"full_name": ..., "first_name": ..., "last_name": ...}
+  email-address         {"email_address": ..., "email_domain": ..., ...}
+  domain                {"domain": ..., "root_domain": ...}
+  currency              {"currency_value": ..., "currency_code": ...}
+  status / select       {"id": ..., "title": ...}
+  record-reference      {"target_object": ..., "target_record_id": ...}
+  (for record-references, prefer the indexed \`ref_record_id\` column)
 `,
   );
 
@@ -92,6 +117,7 @@ attachPostSubcommand(getOrCreateImportCommand(program));
 attachTranscriptSubcommand(getOrCreateImportCommand(program));
 registerExecute(program);
 registerRecords(program);
+registerSchema(program);
 registerUi(program);
 registerSkills(program);
 registerAuth(program);

@@ -143,10 +143,72 @@ multivalued attributes, applies a conflict policy on single-valued attributes
 > The verb is `dedupe`, not `merge` — `merge` in lix-land means version/branch
 > merging (`mergeVersion`), which is a different operation.
 
-## Mutating directly (rare)
+## Custom schema (registering objects + attributes)
 
-Prefer the CLI's `acrm import …` and `acrm records dedupe …` commands — they
-handle soft-delete (`active_until`), provenance, and EAV invariants. Hand-rolled
-`INSERT`/`UPDATE` on `acrm_value` should be the last resort, and you should
-read [the upsert helpers](https://github.com/cluster-software/agent-crm) once
-before doing it.
+The five seeded objects (`people`, `companies`, `deals`, `posts`, `transcripts`)
+are not the only ones you can have. When the user's domain doesn't fit (hiring
+pipeline, fundraising, projects, …), register a custom object rather than
+coercing data into `deals`:
+
+```sh
+# 1. register the object
+acrm object create candidates
+
+# 2. add fields (status options are first-class — no need to overload next_step)
+acrm attribute add candidates.name --type personal-name
+acrm attribute add candidates.email_addresses --type email-address \
+    --multivalued --unique
+acrm attribute add candidates.stage --type status \
+    --option sourced --option screen --option onsite --option offer
+acrm attribute add candidates.applied_for --type record-reference \
+    --target-object deals
+
+# 3. create records
+acrm records create candidates \
+    --field name="Daria Volkov" \
+    --field stage=screen \
+    --field email_addresses=daria@example.com
+```
+
+To extend a *built-in* enum (e.g. add a stage to `deals.stage`):
+
+```sh
+acrm attribute edit-options deals.stage add renewed
+```
+
+## value_json shape per attribute_type
+
+`lix_json_get_text(value_json, 'value')` returns NULL on most non-text types
+because they don't use a `value` key. Use the right key:
+
+| attribute_type     | shape                                                            |
+|--------------------|------------------------------------------------------------------|
+| `text`, `url`      | `{"value": "<string>"}`                                          |
+| `number`           | `{"value": <number>}`                                            |
+| `date`             | `{"date": "<YYYY-MM-DD>"}`                                       |
+| `timestamp`        | `{"timestamp": "<ISO-8601>"}`                                    |
+| `personal-name`    | `{"full_name": ..., "first_name": ..., "last_name": ...}`        |
+| `email-address`    | `{"email_address": "<lower>", "email_domain": "<lower>", ...}`   |
+| `domain`           | `{"domain": "<lower>", "root_domain": "<lower>"}`                |
+| `currency`         | `{"currency_value": <number>, "currency_code": "<code>"}`        |
+| `status`, `select` | `{"id": "<option_id>", "title": "<display>"}`                    |
+| `record-reference` | `{"target_object": "<slug>", "target_record_id": "<uuid>"}`      |
+
+For `record-reference` attributes, prefer the indexed columns (`ref_object`,
+`ref_record_id`) for joins/filters over digging into `value_json.target_record_id`.
+
+## Mutating directly
+
+The CLI wraps the common cases: use `acrm import …`, `acrm records create …`,
+`acrm records dedupe …`, `acrm object create …`, `acrm attribute add …`, and
+`acrm attribute edit-options …`. They handle soft-delete (`active_until`),
+provenance, EAV invariants, and enum validation.
+
+When you need something the CLI doesn't cover, writing directly to the EAV
+tables via `acrm execute` is supported and expected — that's what the CLI
+commands do internally. The `acrm_object`, `acrm_attribute`, `acrm_record`, and
+`acrm_value` tables are stable surfaces. The only thing to watch for on
+`acrm_value` mutations is that you maintain the invariants the CLI handles for
+you: a fresh `id` (`lix_uuid_v7()`), `active_from = NOW`, `active_until = NULL`
+for current values, the right `normalized_key` for unique-keyed attribute
+types, and `ref_object` / `ref_record_id` for record-references.
