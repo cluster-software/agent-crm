@@ -24,8 +24,9 @@ Storage model: EAV. Records are not stored in per-object SQL tables.
     acrm_record     (record_id, object_slug)              one row per record
     acrm_value      (id, record_id, object_slug,          one row per attribute
                      attribute_slug, value_json,           value (current OR
-                     normalized_key, ref_object,           historical)
-                     ref_record_id, active_from, active_until, source, …)
+                     normalized_key, ref_object,           historical).
+                     ref_record_id, active_from,           attribute_type is NOT
+                     active_until, source, …)              here — JOIN acrm_attribute.
     acrm_attribute  (object_slug, attribute_slug,         schema: what fields
                      attribute_type, is_multivalued,       exist on each object
                      is_unique, config_json)

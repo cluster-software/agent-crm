@@ -696,10 +696,12 @@ async function loadActiveValues(
 ): Promise<ValueRow[]> {
   const r = await exec(
     lix,
-    `SELECT id, attribute_slug, attribute_type, value_json, normalized_key,
-            ref_object, ref_record_id
-     FROM acrm_value
-     WHERE object_slug = $1 AND record_id = $2 AND active_until IS NULL`,
+    `SELECT v.id, v.attribute_slug, a.attribute_type, v.value_json,
+            v.normalized_key, v.ref_object, v.ref_record_id
+     FROM acrm_value v
+     JOIN acrm_attribute a
+       ON a.object_slug = v.object_slug AND a.attribute_slug = v.attribute_slug
+     WHERE v.object_slug = $1 AND v.record_id = $2 AND v.active_until IS NULL`,
     [object_slug, record_id],
   );
   return r.rows.map((row) => ({
@@ -720,10 +722,12 @@ async function loadInboundRefs(
 ): Promise<InboundRow[]> {
   const r = await exec(
     lix,
-    `SELECT id, object_slug, record_id, attribute_slug, attribute_type,
-            value_json, normalized_key, ref_object, ref_record_id
-     FROM acrm_value
-     WHERE ref_object = $1 AND ref_record_id = $2 AND active_until IS NULL`,
+    `SELECT v.id, v.object_slug, v.record_id, v.attribute_slug, a.attribute_type,
+            v.value_json, v.normalized_key, v.ref_object, v.ref_record_id
+     FROM acrm_value v
+     JOIN acrm_attribute a
+       ON a.object_slug = v.object_slug AND a.attribute_slug = v.attribute_slug
+     WHERE v.ref_object = $1 AND v.ref_record_id = $2 AND v.active_until IS NULL`,
     [ref_object, ref_record_id],
   );
   return r.rows.map((row) => ({

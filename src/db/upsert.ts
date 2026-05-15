@@ -103,8 +103,6 @@ export async function insertValue(
     args.record_id,
     args.attribute_slug,
     JSON.stringify(args.value_json),
-    args.attribute_type,
-    nowIso(),
     normalized,
     ref.ref_object,
     ref.ref_record_id,
@@ -114,9 +112,9 @@ export async function insertValue(
   await exec(
     lix,
     `INSERT INTO acrm_value
-      (id, object_slug, record_id, attribute_slug, value_json, attribute_type,
-       active_from, normalized_key, ref_object, ref_record_id, source, provenance_json)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      (id, object_slug, record_id, attribute_slug, value_json,
+       normalized_key, ref_object, ref_record_id, source, provenance_json)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     params,
   );
 }

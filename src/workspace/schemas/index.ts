@@ -84,8 +84,6 @@ export const SCHEMA_VALUE: LixSchema = {
     "record_id",
     "attribute_slug",
     "value_json",
-    "attribute_type",
-    "active_from",
   ],
   properties: {
     id: { type: "string", "x-lix-default": "lix_uuid_v7()" },
@@ -93,8 +91,7 @@ export const SCHEMA_VALUE: LixSchema = {
     record_id: { type: "string" },
     attribute_slug: { type: "string" },
     value_json: { type: "string" },
-    attribute_type: { type: "string" },
-    active_from: { type: "string" },
+    active_from: { type: "string", "x-lix-default": "lix_timestamp()" },
     active_until: nullable("string"),
     normalized_key: nullable("string"),
     ref_object: nullable("string"),

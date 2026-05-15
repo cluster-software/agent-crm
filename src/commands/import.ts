@@ -198,8 +198,6 @@ type PendingValue = {
   record_id: string;
   attribute_slug: string;
   value_json: string;
-  attribute_type: AttributeType;
-  active_from: string;
   normalized_key: string | null;
   ref_object: string | null;
   ref_record_id: string | null;
@@ -262,7 +260,7 @@ class WriteBatcher {
   }
 
   private async flushValues(): Promise<void> {
-    const COLS = 12;
+    const COLS = 10;
     for (let i = 0; i < this.values.length; i += MAX_BATCH_VALUES) {
       const chunk = this.values.slice(i, i + MAX_BATCH_VALUES);
       const placeholders = chunk
@@ -277,8 +275,6 @@ class WriteBatcher {
         v.record_id,
         v.attribute_slug,
         v.value_json,
-        v.attribute_type,
-        v.active_from,
         v.normalized_key,
         v.ref_object,
         v.ref_record_id,
@@ -288,8 +284,8 @@ class WriteBatcher {
       await exec(
         this.lix,
         `INSERT INTO acrm_value
-          (id, object_slug, record_id, attribute_slug, value_json, attribute_type,
-           active_from, normalized_key, ref_object, ref_record_id, source, provenance_json)
+          (id, object_slug, record_id, attribute_slug, value_json,
+           normalized_key, ref_object, ref_record_id, source, provenance_json)
          VALUES ${placeholders}`,
         params,
       );
@@ -332,8 +328,6 @@ function buildValueRow(
     record_id: args.record_id,
     attribute_slug: args.attribute_slug,
     value_json: JSON.stringify(args.value_json),
-    attribute_type: args.attribute_type,
-    active_from: nowIso(),
     normalized_key: normalized,
     ref_object: ref.ref_object,
     ref_record_id: ref.ref_record_id,
