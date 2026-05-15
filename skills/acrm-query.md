@@ -48,12 +48,26 @@ Why no `$1`-free heredoc trick? `acrm execute` rejects `?` placeholders
 ### `acrm_value` columns worth knowing
 
 - `id` — value-row PK. Use this for surgical updates (`UPDATE … WHERE id=$1`).
+  Lix-defaulted to `lix_uuid_v7()` if omitted on insert.
 - `object_slug`, `record_id`, `attribute_slug` — the entity this value belongs to.
 - `value_json` — the typed payload (e.g. `{"value":"Cluster"}` or `{"target_record_id":"…"}`).
 - `normalized_key` — denormalized key for unique-keyed attrs (email_address, domain, url, text).
 - `ref_object`, `ref_record_id` — for record-reference attrs, the indexed link target.
-- `active_from`, `active_until` — versioning. **Always filter `active_until IS NULL` for current values.**
+- `active_from`, `active_until` — versioning. `active_from` is Lix-defaulted to
+  `lix_timestamp()` if omitted. **Always filter `active_until IS NULL` for current values.**
 - `source`, `provenance_json` — where this value came from.
+
+`attribute_type` is **not** a column on `acrm_value` — it lives on
+`acrm_attribute`. JOIN when you need it:
+
+```sql
+SELECT v.attribute_slug, a.attribute_type, v.value_json
+FROM   acrm_value v
+JOIN   acrm_attribute a
+       ON a.object_slug = v.object_slug AND a.attribute_slug = v.attribute_slug
+WHERE  v.object_slug = 'people' AND v.record_id = $1
+       AND v.active_until IS NULL;
+```
 
 ## SQL dialect: DataFusion
 
@@ -207,8 +221,16 @@ provenance, EAV invariants, and enum validation.
 When you need something the CLI doesn't cover, writing directly to the EAV
 tables via `acrm execute` is supported and expected — that's what the CLI
 commands do internally. The `acrm_object`, `acrm_attribute`, `acrm_record`, and
-`acrm_value` tables are stable surfaces. The only thing to watch for on
-`acrm_value` mutations is that you maintain the invariants the CLI handles for
-you: a fresh `id` (`lix_uuid_v7()`), `active_from = NOW`, `active_until = NULL`
-for current values, the right `normalized_key` for unique-keyed attribute
-types, and `ref_object` / `ref_record_id` for record-references.
+`acrm_value` tables are stable surfaces. The minimal insert is:
+
+```sql
+INSERT INTO acrm_value (object_slug, record_id, attribute_slug, value_json)
+VALUES ('people', 'person_1', 'name', '{"full_name":"Ada Lovelace"}');
+```
+
+`id` defaults to `lix_uuid_v7()` and `active_from` to `lix_timestamp()`. The
+invariants `acrm_value` mutations must still maintain themselves: `active_until = NULL`
+for current values (set the previous current row's `active_until` to NOW when
+replacing a single-valued attr), the right `normalized_key` for unique-keyed
+attribute types (`email-address`, `domain`, `url`, `text`), and
+`ref_object` / `ref_record_id` for record-references.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { exec } from "../../db/execute.js";
-import { openTestLix } from "../../test/open-test-lix.js";
+import { openTestLix, openTestWorkspace } from "../../test/open-test-lix.js";
 import { ALL_SCHEMAS, registerAllSchemas } from "./index.js";
 
 describe("registerAllSchemas", () => {
@@ -78,5 +78,42 @@ describe("registerAllSchemas", () => {
       await expect(exec(lix, `SELECT * FROM ${tableName} LIMIT 0`)).resolves
         .toMatchObject({ rows: [], rowsAffected: 0 });
     }
+  });
+
+  // Issue #51: a developer who knows the EAV layout should be able to write a
+  // value with only the four logical columns. id + active_from must be filled
+  // by Lix defaults; attribute_type must not be required (it lives on
+  // acrm_attribute).
+  it("accepts the minimal acrm_value insert from issue #51", async () => {
+    const lix = await openTestWorkspace();
+
+    await exec(
+      lix,
+      "INSERT INTO acrm_record (object_slug, record_id) VALUES ($1, $2)",
+      ["people", "person_1"],
+    );
+
+    await exec(
+      lix,
+      `INSERT INTO acrm_value (object_slug, record_id, attribute_slug, value_json)
+       VALUES ($1, $2, $3, $4)`,
+      ["people", "person_1", "name", '{"full_name":"Ada Lovelace"}'],
+    );
+
+    const r = await exec(
+      lix,
+      `SELECT v.value_json, a.attribute_type, v.id, v.active_from
+       FROM acrm_value v
+       JOIN acrm_attribute a
+         ON a.object_slug = v.object_slug AND a.attribute_slug = v.attribute_slug
+       WHERE v.object_slug = 'people' AND v.record_id = 'person_1'
+         AND v.active_until IS NULL`,
+    );
+    expect(r.rows).toHaveLength(1);
+    const row = r.rows[0]!;
+    expect(row.value_json).toContain("Ada Lovelace");
+    expect(row.attribute_type).toBe("personal-name");
+    expect(row.id).toBeTruthy();
+    expect(row.active_from).toBeTruthy();
   });
 });
