@@ -15,10 +15,20 @@ import { registerAuth } from "../commands/auth.js";
 import { PROVIDERS } from "../integrations/providers.js";
 import { fail } from "../output/json.js";
 import { ERR } from "../lib/errors.js";
+import {
+  notifyIfOutdated,
+  scheduleBackgroundRefreshIfStale,
+} from "../lib/update-check.js";
 
 const pkg = createRequire(import.meta.url)("../../package.json") as {
   version: string;
 };
+
+// Print a stderr warning if a newer published version is cached, then kick
+// off a detached worker to refresh the cache for next time. Both calls are
+// non-blocking and swallow all errors — see src/lib/update-check.ts.
+notifyIfOutdated(pkg.version);
+scheduleBackgroundRefreshIfStale(pkg.version);
 
 const program = new Command();
 
