@@ -14,13 +14,20 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import * as readline from "node:readline";
 
 const TTL_MS = 24 * 60 * 60 * 1000;
 const LOCK_TTL_MS = 60 * 1000;
+const RELEASES_URL =
+  "https://github.com/cluster-software/agent-crm/releases/latest";
 
 export type UpdateCheckCache = {
   checked_at: number;
   latest_version: string;
+  // Set when the user picks "Skip" at the interactive prompt. We keep the
+  // prompt suppressed for this version only — a newer published version
+  // will replace latest_version and re-trigger the prompt next time.
+  skipped_version?: string;
 };
 
 export function configDir(): string {
@@ -78,16 +85,12 @@ function readCache(): UpdateCheckCache | null {
   }
 }
 
-export function writeCache(latest: string): void {
+function writeCacheRaw(cache: UpdateCheckCache): void {
   try {
     const dir = configDir();
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const file = cachePath();
-    const payload: UpdateCheckCache = {
-      checked_at: Date.now(),
-      latest_version: latest,
-    };
-    writeFileSync(file, JSON.stringify(payload) + "\n", {
+    writeFileSync(file, JSON.stringify(cache) + "\n", {
       encoding: "utf8",
       mode: 0o600,
     });
@@ -95,6 +98,19 @@ export function writeCache(latest: string): void {
   } catch {
     // Swallow — we'd rather skip future checks than break this command.
   }
+}
+
+export function writeCache(latest: string): void {
+  // Background-worker entry point — overwrites the cache wholesale, dropping
+  // any prior skipped_version because a fresh fetch may have surfaced a new
+  // latest that the user hasn't dismissed yet.
+  writeCacheRaw({ checked_at: Date.now(), latest_version: latest });
+}
+
+function markSkipped(version: string): void {
+  const existing = readCache();
+  if (!existing) return;
+  writeCacheRaw({ ...existing, skipped_version: version });
 }
 
 function isOptedOut(): boolean {
@@ -183,4 +199,155 @@ export function scheduleBackgroundRefreshIfStale(
 function defaultWorkerPath(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
   return path.join(here, "..", "scripts", "refresh-version-cache.js");
+}
+
+// Interactive TTY prompt — Codex-style heading, release notes link, and a
+// 2-option selector. Non-TTY callers (agents, pipes, CI) fall back to the
+// plain stderr warning from notifyIfOutdated.
+export async function promptIfOutdated(currentVersion: string): Promise<void> {
+  if (isOptedOut()) return;
+  if (!isComparableVersion(currentVersion)) return;
+  const cached = readCache();
+  if (!cached) return;
+  if (compareVersions(cached.latest_version, currentVersion) <= 0) return;
+
+  const interactive =
+    Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
+  if (!interactive) {
+    notifyIfOutdated(currentVersion);
+    return;
+  }
+
+  // The user already chose "Skip" for this exact latest version — stay quiet
+  // until a newer one is published.
+  if (cached.skipped_version === cached.latest_version) return;
+
+  const choice = await renderPrompt(currentVersion, cached.latest_version);
+  if (choice === "update") {
+    await runUpdate();
+  } else {
+    markSkipped(cached.latest_version);
+  }
+}
+
+type PromptChoice = "update" | "skip";
+
+function renderPrompt(
+  current: string,
+  latest: string,
+): Promise<PromptChoice> {
+  const out = process.stderr;
+  const noColor = Boolean(process.env.NO_COLOR);
+  const c = (code: string, s: string) =>
+    noColor ? s : `\x1b[${code}m${s}\x1b[0m`;
+  const bold = (s: string) => c("1", s);
+  const dim = (s: string) => c("2", s);
+  const cyan = (s: string) => c("36", s);
+  const yellow = (s: string) => c("33", s);
+
+  const options = [
+    "Update now (runs `npm install -g @agent-crm/cli@latest`)",
+    "Skip",
+  ];
+  let selected = 0;
+
+  // Header is drawn once; only the option block + hint redraw on keypress.
+  out.write("\n");
+  out.write(`${yellow("✨")} ${bold("Update available!")} ${dim(current)} → ${latest}\n`);
+  out.write("\n");
+  out.write(`Release notes: ${cyan(RELEASES_URL)}\n`);
+  out.write("\n");
+
+  const REDRAW_LINES = options.length + 2; // options + blank + hint
+
+  const drawOptions = (firstPaint: boolean) => {
+    if (!firstPaint) {
+      for (let i = 0; i < REDRAW_LINES; i++) {
+        out.write("\x1b[1A\x1b[2K");
+      }
+    }
+    options.forEach((opt, i) => {
+      const marker = i === selected ? cyan("›") : " ";
+      const label = `${i + 1}. ${opt}`;
+      out.write(`${marker} ${i === selected ? bold(label) : label}\n`);
+    });
+    out.write("\n");
+    out.write(dim("Press enter to continue") + "\n");
+  };
+
+  drawOptions(true);
+
+  return new Promise<PromptChoice>((resolve) => {
+    const stdin = process.stdin;
+    readline.emitKeypressEvents(stdin);
+    const hadRawMode = stdin.isRaw;
+    if (stdin.setRawMode) stdin.setRawMode(true);
+    stdin.resume();
+
+    const cleanup = () => {
+      stdin.removeListener("keypress", onKey);
+      if (stdin.setRawMode) stdin.setRawMode(hadRawMode ?? false);
+      stdin.pause();
+      out.write("\n");
+    };
+
+    const onKey = (
+      _str: string,
+      key: { name?: string; ctrl?: boolean } | undefined,
+    ) => {
+      if (!key) return;
+      if (key.ctrl && key.name === "c") {
+        cleanup();
+        process.exit(130);
+      }
+      if (key.name === "up" || key.name === "k") {
+        if (selected > 0) {
+          selected--;
+          drawOptions(false);
+        }
+      } else if (key.name === "down" || key.name === "j") {
+        if (selected < options.length - 1) {
+          selected++;
+          drawOptions(false);
+        }
+      } else if (key.name === "1") {
+        selected = 0;
+        drawOptions(false);
+      } else if (key.name === "2") {
+        selected = 1;
+        drawOptions(false);
+      } else if (key.name === "return") {
+        cleanup();
+        resolve(selected === 0 ? "update" : "skip");
+      }
+    };
+
+    stdin.on("keypress", onKey);
+  });
+}
+
+function runUpdate(): Promise<void> {
+  return new Promise((resolve) => {
+    const out = process.stderr;
+    out.write("\nRunning `npm install -g @agent-crm/cli@latest`...\n\n");
+    const child = spawn("npm", ["install", "-g", "@agent-crm/cli@latest"], {
+      stdio: "inherit",
+    });
+    child.on("exit", (code) => {
+      if (code === 0) {
+        out.write("\n✓ Updated. Please re-run your command.\n");
+        process.exit(0);
+      }
+      out.write(
+        `\nnpm install exited with code ${code}. Continuing with your command anyway.\n`,
+      );
+      resolve();
+    });
+    child.on("error", (err) => {
+      out.write(
+        `\nFailed to run npm install: ${err.message}. Continuing with your command anyway.\n`,
+      );
+      resolve();
+    });
+  });
 }

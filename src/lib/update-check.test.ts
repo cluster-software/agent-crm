@@ -139,6 +139,23 @@ describe("update-check cache + notify", () => {
     expect(output()).toBe("");
   });
 
+  it("writeCache overwrites a prior skipped_version", () => {
+    // Simulate the background worker running after the user dismissed the
+    // prompt: the cache must reset so the next published bump re-prompts.
+    writeFileSync(
+      cachePath(),
+      JSON.stringify({
+        checked_at: Date.now(),
+        latest_version: "0.9.0",
+        skipped_version: "0.9.0",
+      }),
+    );
+    writeCache("0.10.0");
+    const parsed = JSON.parse(readFileSync(cachePath(), "utf8"));
+    expect(parsed.latest_version).toBe("0.10.0");
+    expect(parsed.skipped_version).toBeUndefined();
+  });
+
   for (const optOut of ["ACRM_NO_UPDATE_CHECK", "NO_UPDATE_NOTIFIER", "CI"]) {
     it(`stays silent when ${optOut} is set`, () => {
       writeCache("0.9.0");
