@@ -16,6 +16,27 @@ import {
 } from "@agent-crm/sdk";
 import { PROVIDERS } from "@agent-crm/sdk";
 import type { TranscriptProvider } from "@agent-crm/sdk";
+import { acrmConfigDir } from "../lib/config-dir.js";
+
+// Apply CLI-only env-var overrides for per-provider OAuth config. Convention:
+// ACRM_<NAME>_CLIENT_ID and ACRM_<NAME>_SCOPE override the provider's
+// declared OAuth defaults. The SDK provider object itself never reads env;
+// the CLI is the one source of truth for env-driven configuration.
+function applyEnvOverrides(provider: TranscriptProvider): TranscriptProvider {
+  if (!provider.oauth) return provider;
+  const prefix = `ACRM_${provider.name.toUpperCase()}_`;
+  const clientId = process.env[`${prefix}CLIENT_ID`]?.trim();
+  const scope = process.env[`${prefix}SCOPE`]?.trim();
+  if (!clientId && !scope) return provider;
+  return {
+    ...provider,
+    oauth: {
+      ...provider.oauth,
+      clientId: clientId || provider.oauth.clientId,
+      scope: scope || provider.oauth.scope,
+    },
+  };
+}
 
 type AuthMetadata = {
   authorization_endpoint?: string;
@@ -63,9 +84,10 @@ function registerProviderAuth(
       const root = program.opts() as { json?: boolean };
       setJsonMode(root.json);
       try {
+        const effectiveProvider = applyEnvOverrides(provider);
         const result = opts.token
-          ? await persistTokenLiteral(provider, opts.token)
-          : await runProviderOAuth(provider);
+          ? await persistTokenLiteral(effectiveProvider, opts.token)
+          : await runProviderOAuth(effectiveProvider);
         ok(result);
       } catch (e) {
         if (e instanceof AcrmError) fail(e.message, e.code, e.hint);
@@ -88,7 +110,7 @@ async function persistTokenLiteral(
     access_token: token,
     token_type: "Bearer",
   };
-  const file = await writeToken(cached);
+  const file = await writeToken(cached, acrmConfigDir());
   return { provider: provider.name, cached_at: new Date().toISOString(), file };
 }
 
@@ -182,7 +204,7 @@ async function runProviderOAuth(
     client_secret,
     registration_endpoint: discovery.registration_endpoint,
   };
-  const file = await writeToken(cached);
+  const file = await writeToken(cached, acrmConfigDir());
   return { provider: provider.name, cached_at: new Date().toISOString(), file };
 }
 

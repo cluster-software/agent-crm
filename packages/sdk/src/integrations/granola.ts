@@ -10,7 +10,7 @@ import {
   McpHttpClient,
   unwrapToolResult,
 } from "./mcp-http-client.js";
-import type { TranscriptProvider } from "./provider.js";
+import type { ProviderFetchOpts, TranscriptProvider } from "./provider.js";
 import type {
   ParticipantInput,
   TranscriptPayload,
@@ -24,19 +24,20 @@ export const GRANOLA_DISCOVERY_URL =
 export const granolaProvider: TranscriptProvider = {
   name: GRANOLA_PROVIDER,
   label: "Granola",
-  fetchTranscript: (meetingId) => fetchGranolaTranscript(meetingId),
+  fetchTranscript: (meetingId, opts) => fetchGranolaTranscript(meetingId, opts),
   oauth: {
     discoveryUrl: GRANOLA_DISCOVERY_URL,
     // Granola's MCP server requires RFC 7591 Dynamic Client Registration —
     // there is no static public `client_id`. Leaving this undefined makes
-    // `acrm auth granola` register a fresh client per auth. Set
-    // ACRM_GRANOLA_CLIENT_ID to override with a pre-registered client.
-    clientId: process.env.ACRM_GRANOLA_CLIENT_ID?.trim() || undefined,
-    scope: process.env.ACRM_GRANOLA_SCOPE?.trim() || undefined,
+    // `acrm auth granola` register a fresh client per auth. The CLI reads
+    // ACRM_GRANOLA_CLIENT_ID / ACRM_GRANOLA_SCOPE and overrides these at
+    // auth time when set; the SDK itself never touches process.env.
+    clientId: undefined,
+    scope: undefined,
   },
 };
 
-export type GranolaFetchOpts = {
+export type GranolaFetchOpts = ProviderFetchOpts & {
   endpoint?: string;
   fetchImpl?: typeof fetch;
   // Inject a client directly for tests. Skips token cache lookup.
@@ -77,7 +78,7 @@ export async function fetchGranolaTranscript(
 async function buildGranolaClient(
   opts: GranolaFetchOpts,
 ): Promise<McpHttpClient> {
-  const token = await readToken(GRANOLA_PROVIDER);
+  const token = await readToken(GRANOLA_PROVIDER, opts.configDir);
   if (!token) {
     throw new AcrmError(
       "no cached Granola credentials found",

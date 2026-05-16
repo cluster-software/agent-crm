@@ -1,5 +1,13 @@
 import type { TranscriptPayload } from "./transcript.js";
 
+// Options the caller passes to every provider operation. `configDir` is the
+// resolved path to the acrm config dir (where cached OAuth tokens live);
+// the SDK never reads it from process.env directly. The CLI's
+// `acrmConfigDir()` helper resolves ACRM_CONFIG_DIR and threads it through.
+export type ProviderFetchOpts = {
+  configDir?: string;
+};
+
 // Transcript provider contract.
 //
 // To add a new provider:
@@ -20,7 +28,10 @@ export type TranscriptProvider = {
   // Fetch a meeting transcript and return the canonical payload. Should
   // throw AcrmError(IMPORT, hint="run: acrm auth <name>") when the cached
   // token is missing.
-  fetchTranscript(meetingId: string): Promise<TranscriptPayload>;
+  fetchTranscript(
+    meetingId: string,
+    opts?: ProviderFetchOpts,
+  ): Promise<TranscriptPayload>;
 
   // Optional OAuth 2.0 + PKCE config. Providers without OAuth (API key,
   // webhook export, manual paste) leave this unset; the `acrm auth <name>`

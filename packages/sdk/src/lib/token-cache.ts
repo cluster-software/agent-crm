@@ -18,21 +18,28 @@ export type CachedToken = {
   registration_endpoint?: string;
 };
 
-export function tokenCacheDir(): string {
-  if (process.env.ACRM_CONFIG_DIR && process.env.ACRM_CONFIG_DIR.trim().length) {
-    return process.env.ACRM_CONFIG_DIR;
-  }
+// All token-cache functions accept an optional `configDir`. When omitted,
+// the SDK falls back to `~/.config/acrm`. The CLI's `acrmConfigDir()` helper
+// reads ACRM_CONFIG_DIR and passes the resolved path explicitly — keeping
+// env-var handling out of the SDK.
+function resolveDir(configDir?: string): string {
+  if (configDir && configDir.trim().length) return configDir;
   return path.join(homedir(), ".config", "acrm");
 }
 
-export function tokenCachePath(provider: string): string {
-  return path.join(tokenCacheDir(), `${provider}.json`);
+export function tokenCacheDir(configDir?: string): string {
+  return resolveDir(configDir);
+}
+
+export function tokenCachePath(provider: string, configDir?: string): string {
+  return path.join(resolveDir(configDir), `${provider}.json`);
 }
 
 export async function readToken(
   provider: string,
+  configDir?: string,
 ): Promise<CachedToken | null> {
-  const file = tokenCachePath(provider);
+  const file = tokenCachePath(provider, configDir);
   try {
     const raw = await readFile(file, "utf8");
     const parsed = JSON.parse(raw) as CachedToken;
@@ -50,10 +57,13 @@ export async function readToken(
   }
 }
 
-export async function writeToken(token: CachedToken): Promise<string> {
-  const dir = tokenCacheDir();
+export async function writeToken(
+  token: CachedToken,
+  configDir?: string,
+): Promise<string> {
+  const dir = resolveDir(configDir);
   await mkdir(dir, { recursive: true, mode: 0o700 });
-  const file = tokenCachePath(token.provider);
+  const file = tokenCachePath(token.provider, configDir);
   await writeFile(file, JSON.stringify(token, null, 2) + "\n", {
     encoding: "utf8",
     mode: 0o600,

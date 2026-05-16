@@ -14,6 +14,7 @@ import {
 } from "@agent-crm/sdk";
 import { resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, ok, setJsonMode } from "../output/json.js";
+import { acrmConfigDir } from "../lib/config-dir.js";
 
 type Opts = {
   file?: string;
@@ -175,7 +176,9 @@ async function loadPayload(opts: {
         ERR.INVALID_INPUT,
       );
     }
-    return await adapter.fetchTranscript(meetingId);
+    return await adapter.fetchTranscript(meetingId, {
+      configDir: acrmConfigDir(),
+    });
   }
 
   if (opts.meetingId) {
