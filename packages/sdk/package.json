@@ -1,0 +1,31 @@
+{
+  "name": "@agent-crm/sdk",
+  "version": "0.0.0",
+  "description": "Agent CRM SDK: programmatic API for headless CRM operations",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./*.js": {
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@lix-js/sdk": "0.6.0-preview.3",
+    "better-sqlite3": "^12.9.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
