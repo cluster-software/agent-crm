@@ -25,3 +25,19 @@ npx changeset      # describe the change
 git commit -am "feat: ..."
 git push           # CI opens a release PR; merging it publishes to npm
 ```
+
+### First-publish bootstrap (one time)
+
+`@agent-crm/cli` pins `@agent-crm/sdk` to an exact version, so the first
+CLI release that references a given SDK version requires that SDK to
+already be on the npm registry. Bootstrap once with:
+
+```bash
+npm run build
+cd packages/sdk && npm publish --access public   # SDK must land first
+cd ../cli       && npm publish --access public
+```
+
+After this one-time step, never run `npm publish` by hand —
+`changeset publish` in CI (`.github/workflows/release.yml`) handles
+ordering on every subsequent release.
