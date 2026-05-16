@@ -8,8 +8,7 @@ import {
   setSingleValue,
 } from "@agent-crm/sdk";
 import { generateUuid } from "@agent-crm/sdk";
-import { dedupeRecords } from "./records.js";
-import { importTranscript } from "./import-transcript.js";
+import { dedupeRecords, importTranscript, Workspace } from "@agent-crm/sdk";
 
 async function seedPerson(
   lix: Lix,
@@ -141,7 +140,7 @@ describe("dedupeRecords", () => {
       emails: ["alice@acme.com", "alice.b@acme.com"],
     });
 
-    const result = await dedupeRecords(lix, {
+    const result = await dedupeRecords(Workspace.fromLix(lix), {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -169,7 +168,7 @@ describe("dedupeRecords", () => {
       job_title: "Founder",
     });
 
-    await dedupeRecords(lix, {
+    await dedupeRecords(Workspace.fromLix(lix), {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -200,7 +199,7 @@ describe("dedupeRecords", () => {
       linkedin_url: "linkedin.com/in/discard",
     });
 
-    const result = await dedupeRecords(lix, {
+    const result = await dedupeRecords(Workspace.fromLix(lix), {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -226,7 +225,7 @@ describe("dedupeRecords", () => {
       linkedin_url: "linkedin.com/in/discard",
     });
 
-    await dedupeRecords(lix, {
+    await dedupeRecords(Workspace.fromLix(lix), {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -248,7 +247,7 @@ describe("dedupeRecords", () => {
     const discard = await seedPerson(lix, { email: "luis@cluster.com" });
 
     // Import a transcript that points at the discard via email.
-    await importTranscript(lix, {
+    await importTranscript(Workspace.fromLix(lix), {
       source: "granola",
       source_id: "meeting-1",
       title: "T",
@@ -264,7 +263,7 @@ describe("dedupeRecords", () => {
     );
     expect(before.rows[0]?.ref_record_id).toBe(discard);
 
-    await dedupeRecords(lix, {
+    await dedupeRecords(Workspace.fromLix(lix), {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -304,7 +303,7 @@ describe("dedupeRecords", () => {
     });
     const discard = await seedPerson(lix, { email: "luis@cluster.com" });
 
-    const plan = await dedupeRecords(lix, {
+    const plan = await dedupeRecords(Workspace.fromLix(lix), {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -324,7 +323,7 @@ describe("dedupeRecords", () => {
     const lix = await openTestWorkspace();
     const id = await seedPerson(lix, { email: "a@b.com" });
     await expect(
-      dedupeRecords(lix, {
+      dedupeRecords(Workspace.fromLix(lix), {
         object_slug: "people",
         keep_record_id: id,
         discard_record_id: id,
@@ -339,7 +338,7 @@ describe("dedupeRecords", () => {
     const lix = await openTestWorkspace();
     const id = await seedPerson(lix, { email: "a@b.com" });
     await expect(
-      dedupeRecords(lix, {
+      dedupeRecords(Workspace.fromLix(lix), {
         object_slug: "people",
         keep_record_id: id,
         discard_record_id: "does-not-exist",
@@ -363,14 +362,14 @@ describe("dedupeRecords", () => {
     const luis2 = await seedPerson(lix, { email: "luis@hello-cluster.com" });
 
     // Transcript was imported pointing at luis2.
-    await importTranscript(lix, {
+    await importTranscript(Workspace.fromLix(lix), {
       source: "granola",
       source_id: "meeting-luis",
       title: "Discovery — Luis",
       participants: [{ email: "luis@hello-cluster.com" }],
     });
 
-    const result = await dedupeRecords(lix, {
+    const result = await dedupeRecords(Workspace.fromLix(lix), {
       object_slug: "people",
       keep_record_id: luis1,
       discard_record_id: luis2,

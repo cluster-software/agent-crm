@@ -3,7 +3,8 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import type { Command } from "commander";
 import type { Lix } from "@lix-js/sdk";
-import { findWorkspace, openWorkspace } from "../workspace/open.js";
+import { Workspace } from "@agent-crm/sdk";
+import { findWorkspace, resolveWorkspacePath } from "../workspace-resolve.js";
 import { exec } from "@agent-crm/sdk";
 import { fail, setJsonMode } from "../output/json.js";
 import { AcrmError, ERR } from "@agent-crm/sdk";
@@ -1775,9 +1776,9 @@ detail drawer, edit that file directly.
         process.exit(1);
       }
 
-      let lix: Lix;
+      let ws: Workspace;
       try {
-        lix = await openWorkspace({ workspace: root.workspace });
+        ws = await Workspace.open(resolveWorkspacePath(root.workspace));
       } catch (e) {
         if (e instanceof AcrmError) fail(e.message, e.code, e.hint);
         else fail(e instanceof Error ? e.message : String(e), ERR.UI);
@@ -1791,7 +1792,7 @@ detail drawer, edit that file directly.
         : (findWorkspace() ?? "workspace.acrm");
       const workspaceLabel = path.basename(resolved);
 
-      startUiServer(lix, workspaceLabel, { port, open: opts.open });
+      startUiServer(ws.lix, workspaceLabel, { port, open: opts.open });
     });
 }
 

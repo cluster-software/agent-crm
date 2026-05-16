@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { openTestWorkspace } from "../test/open-test-lix.js";
 import { exec } from "@agent-crm/sdk";
-import { createRecord, updateRecord } from "./records.js";
+import { createRecord, updateRecord, Workspace } from "@agent-crm/sdk";
 import { AcrmError } from "@agent-crm/sdk";
 import { encode } from "@agent-crm/sdk";
 
@@ -148,7 +148,7 @@ describe("records create", () => {
   it("creates a deal with name + stage + value", async () => {
     const lix = await openTestWorkspace();
     try {
-      const result = await createRecord(lix, {
+      const result = await createRecord(Workspace.fromLix(lix), {
         object_slug: "deals",
         fields: [
           "name=Acme renewal",
@@ -188,7 +188,7 @@ describe("records create", () => {
     const lix = await openTestWorkspace();
     try {
       await expect(
-        createRecord(lix, {
+        createRecord(Workspace.fromLix(lix), {
           object_slug: "deals",
           fields: ["name=Acme", "bogus=hello"],
         }),
@@ -209,7 +209,7 @@ describe("records create", () => {
     const lix = await openTestWorkspace();
     try {
       await expect(
-        createRecord(lix, {
+        createRecord(Workspace.fromLix(lix), {
           object_slug: "deals",
           fields: ["name=Hiring D.V.", "stage=sourced"],
         }),
@@ -223,7 +223,7 @@ describe("records create", () => {
     const lix = await openTestWorkspace();
     try {
       await expect(
-        createRecord(lix, {
+        createRecord(Workspace.fromLix(lix), {
           object_slug: "deals",
           fields: ["name=Hiring D.V.", "stage=sourced"], // name valid, stage invalid
         }),
@@ -242,7 +242,7 @@ describe("records create", () => {
     const lix = await openTestWorkspace();
     try {
       await expect(
-        createRecord(lix, {
+        createRecord(Workspace.fromLix(lix), {
           object_slug: "candidates",
           fields: ["name=Daria"],
         }),
@@ -255,11 +255,11 @@ describe("records create", () => {
   it("parses record-reference values as <target_object>:<target_record_id>", async () => {
     const lix = await openTestWorkspace();
     try {
-      const company = await createRecord(lix, {
+      const company = await createRecord(Workspace.fromLix(lix), {
         object_slug: "companies",
         fields: ["name=Acme Co", "domains=acme.test"],
       });
-      const deal = await createRecord(lix, {
+      const deal = await createRecord(Workspace.fromLix(lix), {
         object_slug: "deals",
         fields: [
           "name=Acme renewal",
@@ -281,7 +281,7 @@ describe("records create", () => {
   it("supports multivalued attributes via repeated --field", async () => {
     const lix = await openTestWorkspace();
     try {
-      const result = await createRecord(lix, {
+      const result = await createRecord(Workspace.fromLix(lix), {
         object_slug: "people",
         fields: [
           "name=Liam",
@@ -308,11 +308,11 @@ describe("records update", () => {
   it("advances a single-valued field (replaces the current value)", async () => {
     const lix = await openTestWorkspace();
     try {
-      const deal = await createRecord(lix, {
+      const deal = await createRecord(Workspace.fromLix(lix), {
         object_slug: "deals",
         fields: ["name=Acme renewal", "stage=lead"],
       });
-      const result = await updateRecord(lix, {
+      const result = await updateRecord(Workspace.fromLix(lix), {
         object_slug: "deals",
         record_id: deal.record_id,
         fields: ["stage=in_progress"],
@@ -336,7 +336,7 @@ describe("records update", () => {
     const lix = await openTestWorkspace();
     try {
       await expect(
-        updateRecord(lix, {
+        updateRecord(Workspace.fromLix(lix), {
           object_slug: "deals",
           record_id: "019e2d00-0000-7000-0000-000000000000",
           fields: ["stage=in_progress"],
@@ -350,12 +350,12 @@ describe("records update", () => {
   it("rejects invalid enum values without touching the record", async () => {
     const lix = await openTestWorkspace();
     try {
-      const deal = await createRecord(lix, {
+      const deal = await createRecord(Workspace.fromLix(lix), {
         object_slug: "deals",
         fields: ["name=Acme", "stage=lead"],
       });
       await expect(
-        updateRecord(lix, {
+        updateRecord(Workspace.fromLix(lix), {
           object_slug: "deals",
           record_id: deal.record_id,
           fields: ["stage=sourced"],
@@ -376,12 +376,12 @@ describe("records update", () => {
   it("rejects empty --field list", async () => {
     const lix = await openTestWorkspace();
     try {
-      const deal = await createRecord(lix, {
+      const deal = await createRecord(Workspace.fromLix(lix), {
         object_slug: "deals",
         fields: ["name=Acme", "stage=lead"],
       });
       await expect(
-        updateRecord(lix, {
+        updateRecord(Workspace.fromLix(lix), {
           object_slug: "deals",
           record_id: deal.record_id,
           fields: [],
@@ -395,11 +395,11 @@ describe("records update", () => {
   it("adds another value to a multivalued attribute (dedupe handles collapse)", async () => {
     const lix = await openTestWorkspace();
     try {
-      const person = await createRecord(lix, {
+      const person = await createRecord(Workspace.fromLix(lix), {
         object_slug: "people",
         fields: ["name=Liam", "email_addresses=liam@home.com"],
       });
-      await updateRecord(lix, {
+      await updateRecord(Workspace.fromLix(lix), {
         object_slug: "people",
         record_id: person.record_id,
         fields: ["email_addresses=liam@work.com"],
@@ -462,11 +462,11 @@ describe("end-to-end: custom hiring pipeline", () => {
 
       // 3. Create candidate records that the locked deals.stage enum could
       // never have accepted.
-      await createRecord(lix, {
+      await createRecord(Workspace.fromLix(lix), {
         object_slug: "candidates",
         fields: ["name=Daria Volkov", "stage=screen"],
       });
-      await createRecord(lix, {
+      await createRecord(Workspace.fromLix(lix), {
         object_slug: "candidates",
         fields: ["name=Liam O'Connell", "stage=onsite"],
       });

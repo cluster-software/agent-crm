@@ -1,28 +1,15 @@
 import path from "node:path";
 import type { Command } from "commander";
-import type { Lix } from "@lix-js/sdk";
-import { findWorkspace, openWorkspace } from "../workspace/open.js";
+import {
+  AcrmError,
+  ERR,
+  Workspace,
+  importPost,
+  normalizePostUrl,
+} from "@agent-crm/sdk";
+import { resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, ok, setJsonMode } from "../output/json.js";
-import { generateUuid } from "@agent-crm/sdk";
-import { AcrmError, ERR } from "@agent-crm/sdk";
 import { loadDotenv } from "../lib/dotenv.js";
-import { normalizePostUrl, type PostPlatform } from "@agent-crm/sdk";
-import { exec } from "@agent-crm/sdk";
-import {
-  addMultiValue,
-  findRecordByUnique,
-  insertRecord,
-  setSingleValue,
-} from "@agent-crm/sdk";
-import {
-  extractLinkedinPostId,
-  extractXPostId,
-  loadLinkedinPost,
-  loadXPost,
-} from "@agent-crm/sdk";
-import { mapLinkedinPost, mapXPost, type MappedPost } from "@agent-crm/sdk";
-import { importLinkedinProfile } from "./import-linkedin.js";
-import { importXProfile } from "./import-x.js";
 
 type Opts = {
   refresh?: boolean;
@@ -71,7 +58,17 @@ repeat runs free.
           refresh: opts.refresh,
           noCache: opts.cache === false,
         });
-        ok(result);
+        ok({
+          ...result,
+          cache_paths: {
+            post: result.cache_paths.post
+              ? path.relative(process.cwd(), result.cache_paths.post)
+              : null,
+            profile: result.cache_paths.profile
+              ? path.relative(process.cwd(), result.cache_paths.profile)
+              : null,
+          },
+        });
       } catch (e) {
         if (e instanceof AcrmError) fail(e.message, e.code, e.hint);
         else fail(e instanceof Error ? e.message : String(e), ERR.UNHANDLED);
@@ -91,21 +88,9 @@ async function runImportPost(
       ERR.INVALID_INPUT,
     );
   }
-  const { platform, url: normalizedUrl } = sniffed;
+  const { platform } = sniffed;
 
-  const workspaceFile = opts.workspace
-    ? path.resolve(
-        opts.workspace.endsWith(".acrm")
-          ? opts.workspace
-          : opts.workspace + ".acrm",
-      )
-    : findWorkspace();
-  if (!workspaceFile) {
-    throw new AcrmError(
-      "no .acrm file found (run `acrm init <name>.acrm` to create one)",
-      ERR.NO_WORKSPACE,
-    );
-  }
+  const workspaceFile = resolveWorkspacePath(opts.workspace);
   const workspaceDir = path.dirname(workspaceFile);
   loadDotenv(workspaceDir);
   loadDotenv(process.cwd());
@@ -131,248 +116,17 @@ async function runImportPost(
     platform === "linkedin" ? "linkedin" : "x",
   );
 
-  // 1. Fetch the post (with cache).
-  const postId =
-    platform === "linkedin"
-      ? extractLinkedinPostId(rawUrl)
-      : extractXPostId(rawUrl);
-  const postLoad =
-    platform === "linkedin"
-      ? await loadLinkedinPost({
-          cacheDir: postCacheDir,
-          postId,
-          url: rawUrl,
-          token,
-          refresh: opts.refresh,
-          noCache: opts.noCache,
-        })
-      : await loadXPost({
-          cacheDir: postCacheDir,
-          postId,
-          url: rawUrl,
-          token,
-          refresh: opts.refresh,
-          noCache: opts.noCache,
-        });
-
-  // 2. Map post + extract author profile URL.
-  const mapped: MappedPost =
-    platform === "linkedin"
-      ? mapLinkedinPost(postLoad.post)
-      : mapXPost(postLoad.post);
-
-  if (!mapped.author_profile_url) {
-    throw new AcrmError(
-      "could not extract author profile URL from the post",
-      ERR.UNHANDLED,
-    );
-  }
-
-  const lix = await openWorkspace({ workspace: workspaceFile });
+  const ws = await Workspace.open(workspaceFile);
   try {
-    // 3. Import the author via the existing profile flow.
-    let personId: string;
-    let companyId: string | null = null;
-    let personCreated = false;
-    let companyCreated = false;
-    let profileCachePath: string | null = null;
-    let profileCacheHit = false;
-
-    if (platform === "linkedin") {
-      const r = await importLinkedinProfile({
-        lix,
-        urlOrSlug: mapped.author_profile_url,
-        token,
-        cacheDir: profileCacheDir,
-        refresh: opts.refresh,
-        noCache: opts.noCache,
-      });
-      personId = r.person_record_id;
-      companyId = r.company_record_id;
-      personCreated = r.created.person;
-      companyCreated = r.created.company;
-      profileCachePath = r.cache_path;
-      profileCacheHit = r.cache_hit;
-    } else {
-      const r = await importXProfile({
-        lix,
-        handleOrUrl: mapped.author_profile_url,
-        token,
-        cacheDir: profileCacheDir,
-        refresh: opts.refresh,
-        noCache: opts.noCache,
-      });
-      personId = r.person_record_id;
-      personCreated = r.created.person;
-      profileCachePath = r.cache_path;
-      profileCacheHit = r.cache_hit;
-    }
-
-    // 4. Upsert the post record (dedup by normalized URL).
-    const postRecord = await upsertPost({
-      lix,
-      platform,
-      normalizedUrl,
+    return await importPost(ws, {
       rawUrl,
-      mapped,
-      personId,
-      postCacheHit: postLoad.cacheHit,
-      apifyActor:
-        platform === "linkedin"
-          ? "apimaestro~linkedin-post-detail"
-          : "apidojo~twitter-scraper-lite",
+      token,
+      postCacheDir,
+      profileCacheDir,
+      refresh: opts.refresh,
+      noCache: opts.noCache,
     });
-
-    // 5. Link person → post (skip if already linked).
-    await linkPersonToPost(lix, personId, postRecord.postRecordId, platform);
-
-    return {
-      post_record_id: postRecord.postRecordId,
-      person_record_id: personId,
-      company_record_id: companyId,
-      created: {
-        post: postRecord.created,
-        person: personCreated,
-        company: companyCreated,
-      },
-      platform,
-      post_url: normalizedUrl,
-      cache_paths: {
-        post: postLoad.cachePath
-          ? path.relative(process.cwd(), postLoad.cachePath)
-          : null,
-        profile: profileCachePath
-          ? path.relative(process.cwd(), profileCachePath)
-          : null,
-      },
-      cache_hits: {
-        post: postLoad.cacheHit,
-        profile: profileCacheHit,
-      },
-      mapped,
-    };
   } finally {
-    await lix.close();
+    await ws.close();
   }
-}
-
-async function upsertPost(args: {
-  lix: Lix;
-  platform: PostPlatform;
-  normalizedUrl: string;
-  rawUrl: string;
-  mapped: MappedPost;
-  personId: string;
-  postCacheHit: boolean;
-  apifyActor: string;
-}): Promise<{ postRecordId: string; created: boolean }> {
-  const { lix, platform, normalizedUrl, rawUrl, mapped, personId, apifyActor } =
-    args;
-  const source =
-    platform === "linkedin" ? "linkedin-post-import" : "x-post-import";
-  const provenance = {
-    actor: apifyActor,
-    post_url: rawUrl,
-    fetched_at: new Date().toISOString(),
-    cache_hit: args.postCacheHit,
-  };
-
-  let postRecordId = await findRecordByUnique(
-    lix,
-    "posts",
-    "url",
-    normalizedUrl,
-  );
-  let created = false;
-  if (!postRecordId) {
-    postRecordId = await generateUuid(lix);
-    await insertRecord(lix, "posts", postRecordId);
-    created = true;
-  }
-
-  await setSingleValue(lix, {
-    object_slug: "posts",
-    record_id: postRecordId,
-    attribute_slug: "url",
-    attribute_type: "url",
-    value: normalizedUrl,
-    source,
-    provenance,
-  });
-
-  await setSingleValue(lix, {
-    object_slug: "posts",
-    record_id: postRecordId,
-    attribute_slug: "platform",
-    attribute_type: "status",
-    value: platform,
-    source,
-    provenance,
-  });
-
-  await setSingleValue(lix, {
-    object_slug: "posts",
-    record_id: postRecordId,
-    attribute_slug: "author",
-    attribute_type: "record-reference",
-    value: { target_object: "people", target_record_id: personId },
-    source,
-    provenance,
-  });
-
-  if (mapped.posted_at) {
-    await setSingleValue(lix, {
-      object_slug: "posts",
-      record_id: postRecordId,
-      attribute_slug: "posted_at",
-      attribute_type: "date",
-      value: mapped.posted_at,
-      source,
-      provenance,
-    });
-  }
-
-  if (mapped.content) {
-    await setSingleValue(lix, {
-      object_slug: "posts",
-      record_id: postRecordId,
-      attribute_slug: "content",
-      attribute_type: "text",
-      value: mapped.content,
-      source,
-      provenance,
-    });
-  }
-
-  return { postRecordId, created };
-}
-
-async function linkPersonToPost(
-  lix: Lix,
-  personId: string,
-  postRecordId: string,
-  platform: PostPlatform,
-): Promise<void> {
-  const existing = await exec(
-    lix,
-    `SELECT 1 FROM acrm_value
-     WHERE object_slug = 'people' AND record_id = $1
-       AND attribute_slug = 'associated_posts'
-       AND ref_object = 'posts' AND ref_record_id = $2
-       AND active_until IS NULL LIMIT 1`,
-    [personId, postRecordId],
-  );
-  if (existing.rows.length) return;
-
-  const source =
-    platform === "linkedin" ? "linkedin-post-import" : "x-post-import";
-  await addMultiValue(lix, {
-    object_slug: "people",
-    record_id: personId,
-    attribute_slug: "associated_posts",
-    attribute_type: "record-reference",
-    value: { target_object: "posts", target_record_id: postRecordId },
-    source,
-    provenance: { linked_at: new Date().toISOString() },
-  });
 }

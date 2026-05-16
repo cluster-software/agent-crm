@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Lix } from "@lix-js/sdk";
 import { openTestWorkspace } from "../test/open-test-lix.js";
 import { exec } from "@agent-crm/sdk";
-import { importTranscript } from "./import-transcript.js";
+import { importTranscript, Workspace } from "@agent-crm/sdk";
 
 async function emailsFor(lix: Lix, personId: string): Promise<string[]> {
   const r = await exec(
@@ -43,7 +43,7 @@ const basePayload = {
 describe("auto-create unresolved participants", () => {
   it("creates a person from email when no record matches", async () => {
     const lix = await openTestWorkspace();
-    const result = await importTranscript(lix, {
+    const result = await importTranscript(Workspace.fromLix(lix), {
       ...basePayload,
       participants: [{ email: "newperson@acme.com" }],
     });
@@ -62,7 +62,7 @@ describe("auto-create unresolved participants", () => {
 
   it("creates a person from linkedin_url alone", async () => {
     const lix = await openTestWorkspace();
-    const result = await importTranscript(lix, {
+    const result = await importTranscript(Workspace.fromLix(lix), {
       ...basePayload,
       participants: [{ linkedin_url: "linkedin.com/in/newperson" }],
     });
@@ -77,7 +77,7 @@ describe("auto-create unresolved participants", () => {
 
   it("creates with every identifier the payload supplies", async () => {
     const lix = await openTestWorkspace();
-    const result = await importTranscript(lix, {
+    const result = await importTranscript(Workspace.fromLix(lix), {
       ...basePayload,
       participants: [
         {
@@ -103,7 +103,7 @@ describe("auto-create unresolved participants", () => {
 
   it("links the created person to the transcript via both directions", async () => {
     const lix = await openTestWorkspace();
-    const result = await importTranscript(lix, {
+    const result = await importTranscript(Workspace.fromLix(lix), {
       ...basePayload,
       source_id: "linked-meeting",
       participants: [{ email: "linked@acme.com" }],
@@ -138,7 +138,7 @@ describe("auto-create unresolved participants", () => {
 
   it("does not create a duplicate when the same identifier is imported twice", async () => {
     const lix = await openTestWorkspace();
-    const first = await importTranscript(lix, {
+    const first = await importTranscript(Workspace.fromLix(lix), {
       ...basePayload,
       source_id: "dup-test",
       participants: [{ email: "dup@acme.com" }],
@@ -148,7 +148,7 @@ describe("auto-create unresolved participants", () => {
 
     // Re-import the same meeting with the same participant: should now
     // *match* the person we just created, not create a second copy.
-    const second = await importTranscript(lix, {
+    const second = await importTranscript(Workspace.fromLix(lix), {
       ...basePayload,
       source_id: "dup-test",
       participants: [{ email: "dup@acme.com" }],

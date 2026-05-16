@@ -1,10 +1,16 @@
 import type { Command } from "commander";
-import type { Lix, LixRuntimeValue } from "@lix-js/sdk";
-import { openWorkspace } from "../workspace/open.js";
-import { exec } from "@agent-crm/sdk";
+import {
+  AcrmError,
+  ERR,
+  Workspace,
+  addAttribute,
+  createObject,
+  editAttributeOptions,
+  type AttributeType,
+  type StatusOption,
+} from "@agent-crm/sdk";
+import { resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, ok, setJsonMode } from "../output/json.js";
-import { AcrmError, ERR } from "@agent-crm/sdk";
-import type { AttributeType, StatusOption } from "@agent-crm/sdk";
 
 const ATTRIBUTE_TYPES: AttributeType[] = [
   "text",
@@ -92,54 +98,6 @@ function parseOption(raw: string): StatusOption {
   return { id, title };
 }
 
-async function loadAttribute(
-  lix: Lix,
-  object_slug: string,
-  attribute_slug: string,
-): Promise<{
-  attribute_type: AttributeType;
-  is_multivalued: boolean;
-  is_unique: boolean;
-  config: Record<string, unknown> | null;
-} | null> {
-  const r = await exec(
-    lix,
-    "SELECT attribute_type, is_multivalued, is_unique, config_json FROM acrm_attribute WHERE object_slug = $1 AND attribute_slug = $2",
-    [object_slug, attribute_slug],
-  );
-  const row = r.rows[0];
-  if (!row) return null;
-  let config: Record<string, unknown> | null = null;
-  const raw = row.config_json as string | null | undefined;
-  if (raw) {
-    try {
-      config = JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      config = null;
-    }
-  }
-  return {
-    attribute_type: row.attribute_type as AttributeType,
-    is_multivalued: Boolean(row.is_multivalued),
-    is_unique: Boolean(row.is_unique),
-    config,
-  };
-}
-
-async function assertObjectExists(lix: Lix, object_slug: string): Promise<void> {
-  const r = await exec(
-    lix,
-    "SELECT object_slug FROM acrm_object WHERE object_slug = $1",
-    [object_slug],
-  );
-  if (!r.rows.length) {
-    throw new AcrmError(
-      `unknown object: ${object_slug}. Run \`acrm execute "SELECT object_slug FROM acrm_object"\` to list, or \`acrm object create ${object_slug}\` to register it.`,
-      ERR.NOT_FOUND,
-    );
-  }
-}
-
 export function registerSchema(program: Command): void {
   // `object create` and `attribute add` / `edit-options` are the canonical
   // CLI affordance for shaping the workspace's schema. Without these, agents
@@ -196,32 +154,16 @@ Next steps after creation:
           const object_slug = parseSlug(slug, "object slug");
           const plural = opts.plural?.trim() || titleCase(object_slug);
           const singular = opts.singular?.trim() || defaultSingular(plural);
-          const lix = await openWorkspace({ workspace: root.workspace });
+          const ws = await Workspace.open(resolveWorkspacePath(root.workspace));
           try {
-            const exists = await exec(
-              lix,
-              "SELECT object_slug FROM acrm_object WHERE object_slug = $1",
-              [object_slug],
-            );
-            if (exists.rows.length) {
-              throw new AcrmError(
-                `object already exists: ${object_slug}`,
-                ERR.UNIQUE_VIOLATION,
-              );
-            }
-            await exec(
-              lix,
-              "INSERT INTO acrm_object (object_slug, singular_name, plural_name) VALUES ($1, $2, $3)",
-              [object_slug, singular, plural],
-            );
-            ok({
-              created: true,
+            const result = await createObject(ws, {
               object_slug,
               singular_name: singular,
               plural_name: plural,
             });
+            ok({ created: true, ...result });
           } finally {
-            await lix.close();
+            await ws.close();
           }
         } catch (e) {
           if (e instanceof AcrmError) fail(e.message, e.code, e.hint);
@@ -327,50 +269,20 @@ To edit status/select options after the fact, use \`acrm attribute edit-options\
             currency_code: opts.currencyCode,
           });
 
-          const lix = await openWorkspace({ workspace: root.workspace });
+          const ws = await Workspace.open(resolveWorkspacePath(root.workspace));
           try {
-            await assertObjectExists(lix, object_slug);
-            if (config && config.target_object) {
-              await assertObjectExists(lix, config.target_object as string);
-            }
-            const have = await exec(
-              lix,
-              "SELECT attribute_slug FROM acrm_attribute WHERE object_slug = $1 AND attribute_slug = $2",
-              [object_slug, attribute_slug],
-            );
-            if (have.rows.length) {
-              throw new AcrmError(
-                `attribute already exists: ${object_slug}.${attribute_slug}`,
-                ERR.UNIQUE_VIOLATION,
-              );
-            }
-            const params: LixRuntimeValue[] = [
+            const result = await addAttribute(ws, {
               object_slug,
               attribute_slug,
+              attribute_type,
               title,
-              attribute_type,
               is_multivalued,
               is_unique,
-              config ? JSON.stringify(config) : null,
-            ];
-            await exec(
-              lix,
-              `INSERT INTO acrm_attribute
-                (object_slug, attribute_slug, title, attribute_type, is_multivalued, is_unique, config_json)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-              params,
-            );
-            ok({
-              added: true,
-              object_slug,
-              attribute_slug,
-              attribute_type,
-              is_multivalued,
-              is_unique,
-              ...(config ? { config } : {}),
+              config,
             });
+            ok({ added: true, ...result });
           } finally {
-            await lix.close();
+            await ws.close();
           }
         } catch (e) {
           if (e instanceof AcrmError) fail(e.message, e.code, e.hint);
@@ -416,65 +328,25 @@ rewrite existing values — historical rows continue to reference the old id.
           );
         }
 
-        const lix = await openWorkspace({ workspace: root.workspace });
+        const ws = await Workspace.open(resolveWorkspacePath(root.workspace));
         try {
-          const attr = await loadAttribute(lix, object_slug, attribute_slug);
-          if (!attr) {
-            throw new AcrmError(
-              `attribute not found: ${object_slug}.${attribute_slug}`,
-              ERR.NOT_FOUND,
-            );
-          }
-          if (
-            attr.attribute_type !== "status" &&
-            attr.attribute_type !== "select"
-          ) {
-            throw new AcrmError(
-              `edit-options is only valid for status/select attributes; ${object_slug}.${attribute_slug} is ${attr.attribute_type}`,
-              ERR.INVALID_INPUT,
-            );
-          }
-
-          const current = (attr.config?.options as StatusOption[] | undefined) ?? [];
-          let next: StatusOption[];
-          if (verb === "add") {
-            const opt = parseOption(option);
-            if (current.some((o) => o.id === opt.id)) {
-              throw new AcrmError(
-                `option already exists: ${opt.id}`,
-                ERR.UNIQUE_VIOLATION,
-              );
-            }
-            next = [...current, opt];
-          } else {
-            const id = option.trim();
-            if (!current.some((o) => o.id === id)) {
-              throw new AcrmError(
-                `option not found: ${id} (current: ${current.map((o) => o.id).join(", ") || "<none>"})`,
-                ERR.NOT_FOUND,
-              );
-            }
-            next = current.filter((o) => o.id !== id);
-          }
-
-          const nextConfig: Record<string, unknown> = {
-            ...(attr.config ?? {}),
-            options: next,
-          };
-          await exec(
-            lix,
-            "UPDATE acrm_attribute SET config_json = $1 WHERE object_slug = $2 AND attribute_slug = $3",
-            [JSON.stringify(nextConfig), object_slug, attribute_slug],
-          );
-          ok({
-            updated: true,
-            object_slug,
-            attribute_slug,
-            attribute_type: attr.attribute_type,
-            options: next,
-          });
+          const result =
+            verb === "add"
+              ? await editAttributeOptions(ws, {
+                  object_slug,
+                  attribute_slug,
+                  action: "add",
+                  option: parseOption(option),
+                })
+              : await editAttributeOptions(ws, {
+                  object_slug,
+                  attribute_slug,
+                  action: "remove",
+                  option_id: option.trim(),
+                });
+          ok({ updated: true, ...result });
         } finally {
-          await lix.close();
+          await ws.close();
         }
       } catch (e) {
         if (e instanceof AcrmError) fail(e.message, e.code, e.hint);

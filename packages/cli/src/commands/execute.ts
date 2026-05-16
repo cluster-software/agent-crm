@@ -1,9 +1,8 @@
 import type { Command } from "commander";
 import type { LixRuntimeValue } from "@lix-js/sdk";
-import { openWorkspace } from "../workspace/open.js";
-import { exec } from "@agent-crm/sdk";
+import { AcrmError, ERR, Workspace, dumpSchema, query } from "@agent-crm/sdk";
+import { resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, ok, setJsonMode } from "../output/json.js";
-import { AcrmError, ERR } from "@agent-crm/sdk";
 
 export function registerExecute(program: Command): void {
   program
@@ -143,12 +142,11 @@ Errors carry the lix engine code + hint when applicable
                 ERR.INVALID_INPUT,
               );
             }
-            const lix = await openWorkspace({ workspace: root.workspace });
+            const ws = await Workspace.open(resolveWorkspacePath(root.workspace));
             try {
-              const schema = await dumpSchema(lix);
-              ok(schema);
+              ok(await dumpSchema(ws));
             } finally {
-              await lix.close();
+              await ws.close();
             }
             return;
           }
@@ -186,12 +184,12 @@ Errors carry the lix engine code + hint when applicable
               `In zsh/bash, "$1" is the shell's first positional arg. Single-quote the SQL, or escape each $ as \\$. See \`acrm execute --help\`.`,
             );
           }
-          const lix = await openWorkspace({ workspace: root.workspace });
+          const ws = await Workspace.open(resolveWorkspacePath(root.workspace));
           try {
-            const result = await exec(lix, sql, params);
+            const result = await query(ws, sql, params);
             ok({ rows: result.rows, rows_affected: result.rowsAffected });
           } finally {
-            await lix.close();
+            await ws.close();
           }
         } catch (e) {
           if (e instanceof AcrmError) fail(e.message, e.code, e.hint);
@@ -202,69 +200,3 @@ Errors carry the lix engine code + hint when applicable
     );
 }
 
-type SchemaAttribute = {
-  attribute_slug: string;
-  title: string;
-  attribute_type: string;
-  is_multivalued: boolean;
-  is_unique: boolean;
-  config?: unknown;
-};
-
-type SchemaObject = {
-  object_slug: string;
-  singular_name: string;
-  plural_name: string;
-  attributes: SchemaAttribute[];
-};
-
-async function dumpSchema(
-  lix: import("@lix-js/sdk").Lix,
-): Promise<{ objects: SchemaObject[] }> {
-  const objects = await exec(
-    lix,
-    `SELECT object_slug, singular_name, plural_name
-     FROM acrm_object
-     ORDER BY object_slug`,
-  );
-  const attrs = await exec(
-    lix,
-    `SELECT object_slug, attribute_slug, title, attribute_type,
-            is_multivalued, is_unique, config_json
-     FROM acrm_attribute
-     ORDER BY object_slug, attribute_slug`,
-  );
-
-  const byObject = new Map<string, SchemaAttribute[]>();
-  for (const row of attrs.rows) {
-    const slug = row.object_slug as string;
-    const list = byObject.get(slug) ?? [];
-    const raw = row.config_json as string | null | undefined;
-    let config: unknown;
-    if (raw) {
-      try {
-        config = JSON.parse(raw);
-      } catch {
-        config = raw;
-      }
-    }
-    list.push({
-      attribute_slug: row.attribute_slug as string,
-      title: row.title as string,
-      attribute_type: row.attribute_type as string,
-      is_multivalued: Boolean(row.is_multivalued),
-      is_unique: Boolean(row.is_unique),
-      ...(config !== undefined ? { config } : {}),
-    });
-    byObject.set(slug, list);
-  }
-
-  return {
-    objects: objects.rows.map((row) => ({
-      object_slug: row.object_slug as string,
-      singular_name: row.singular_name as string,
-      plural_name: row.plural_name as string,
-      attributes: byObject.get(row.object_slug as string) ?? [],
-    })),
-  };
-}

@@ -1,7 +1,6 @@
 import { openLix, type Lix } from "@lix-js/sdk";
 import { createBetterSqlite3Backend } from "@lix-js/sdk/sqlite";
-import { registerAllSchemas } from "@agent-crm/sdk";
-import { seedAttributes, seedObjects } from "../commands/init.js";
+import { registerAllSchemas, seedAttributes, seedObjects } from "@agent-crm/sdk";
 
 export async function openTestLix(): Promise<Lix> {
   const lix = await openLix({

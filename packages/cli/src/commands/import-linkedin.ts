@@ -1,38 +1,19 @@
 import path from "node:path";
 import type { Command } from "commander";
-import type { Lix } from "@lix-js/sdk";
-import { findWorkspace, openWorkspace } from "../workspace/open.js";
-import { fail, ok, setJsonMode } from "../output/json.js";
-import { generateUuid } from "@agent-crm/sdk";
-import { AcrmError, ERR } from "@agent-crm/sdk";
-import { loadDotenv } from "../lib/dotenv.js";
-import { normalizeLinkedinUrl } from "@agent-crm/sdk";
 import {
-  findRecordByUnique,
-  findCompanyByName,
-  insertRecord,
-  setSingleValue,
+  AcrmError,
+  ERR,
+  Workspace,
+  importLinkedinProfile,
+  type LinkedinImportResult,
 } from "@agent-crm/sdk";
-import {
-  loadFromCacheOrFetch,
-  normalizeLinkedinInput,
-} from "@agent-crm/sdk/integrations/apify-linkedin.js";
-import { mapProfile, type MappedProfile } from "@agent-crm/sdk/integrations/linkedin-mapping.js";
-
-const SOURCE = "linkedin-import";
+import { resolveWorkspacePath } from "../workspace-resolve.js";
+import { fail, ok, setJsonMode } from "../output/json.js";
+import { loadDotenv } from "../lib/dotenv.js";
 
 type Opts = {
   refresh?: boolean;
   cache?: boolean; // commander negation: --no-cache → cache=false
-};
-
-export type LinkedinImportResult = {
-  person_record_id: string;
-  company_record_id: string | null;
-  created: { person: boolean; company: boolean };
-  cache_path: string | null;
-  cache_hit: boolean;
-  mapped: MappedProfile;
 };
 
 export function attachLinkedinSubcommand(parent: Command): void {
@@ -73,19 +54,7 @@ async function runImportLinkedin(
   urlOrSlug: string,
   opts: { workspace?: string; refresh?: boolean; noCache?: boolean },
 ): Promise<LinkedinImportResult> {
-  const workspaceFile = opts.workspace
-    ? path.resolve(
-        opts.workspace.endsWith(".acrm")
-          ? opts.workspace
-          : opts.workspace + ".acrm",
-      )
-    : findWorkspace();
-  if (!workspaceFile) {
-    throw new AcrmError(
-      "no .acrm file found (run `acrm init <name>.acrm` to create one)",
-      ERR.NO_WORKSPACE,
-    );
-  }
+  const workspaceFile = resolveWorkspacePath(opts.workspace);
   const workspaceDir = path.dirname(workspaceFile);
   loadDotenv(workspaceDir);
   loadDotenv(process.cwd());
@@ -102,10 +71,9 @@ async function runImportLinkedin(
 
   const cacheDir = path.join(workspaceDir, ".cache", "linkedin");
 
-  const lix = await openWorkspace({ workspace: workspaceFile });
+  const ws = await Workspace.open(workspaceFile);
   try {
-    return await importLinkedinProfile({
-      lix,
+    return await importLinkedinProfile(ws, {
       urlOrSlug,
       token,
       cacheDir,
@@ -113,154 +81,6 @@ async function runImportLinkedin(
       noCache: opts.noCache,
     });
   } finally {
-    await lix.close();
+    await ws.close();
   }
-}
-
-export type ImportLinkedinProfileArgs = {
-  lix: Lix;
-  urlOrSlug: string;
-  token: string;
-  cacheDir: string;
-  refresh?: boolean;
-  noCache?: boolean;
-};
-
-export async function importLinkedinProfile(
-  args: ImportLinkedinProfileArgs,
-): Promise<LinkedinImportResult> {
-  const { lix, urlOrSlug, token, cacheDir, refresh, noCache } = args;
-  const { url, publicId } = normalizeLinkedinInput(urlOrSlug);
-
-  const { profile, cachePath, cacheHit } = await loadFromCacheOrFetch({
-    cacheDir,
-    publicId,
-    url,
-    token,
-    refresh,
-    noCache,
-  });
-
-  const mapped = mapProfile(profile);
-
-  const provenance = {
-    actor: "harvestapi~linkedin-profile-scraper",
-    public_id: publicId,
-    fetched_at: new Date().toISOString(),
-    cache_hit: cacheHit,
-  };
-
-  // Company first so the person can reference it.
-  let companyId: string | null = null;
-  let companyCreated = false;
-  if (mapped.company.name) {
-    companyId = await findCompanyByName(lix, mapped.company.name);
-    if (!companyId) {
-      companyId = await generateUuid(lix);
-      await insertRecord(lix, "companies", companyId);
-      await setSingleValue(lix, {
-        object_slug: "companies",
-        record_id: companyId,
-        attribute_slug: "name",
-        attribute_type: "text",
-        value: mapped.company.name,
-        source: SOURCE,
-        provenance,
-      });
-      companyCreated = true;
-    }
-    if (mapped.company.linkedin_url) {
-      const cl = normalizeLinkedinUrl(mapped.company.linkedin_url);
-      if (cl) {
-        await setSingleValue(lix, {
-          object_slug: "companies",
-          record_id: companyId,
-          attribute_slug: "linkedin_url",
-          attribute_type: "url",
-          value: cl,
-          source: SOURCE,
-          provenance,
-        });
-      }
-    }
-  }
-
-  // Person — dedupe by LinkedIn URL.
-  const linkedinKey = mapped.person.linkedin_url
-    ? normalizeLinkedinUrl(mapped.person.linkedin_url)
-    : normalizeLinkedinUrl(url);
-  if (!linkedinKey) {
-    throw new AcrmError(
-      "could not derive a normalized LinkedIn URL from the profile",
-      ERR.INVALID_INPUT,
-    );
-  }
-
-  let personId = await findRecordByUnique(
-    lix,
-    "people",
-    "linkedin_url",
-    linkedinKey,
-  );
-  let personCreated = false;
-  if (!personId) {
-    personId = await generateUuid(lix);
-    await insertRecord(lix, "people", personId);
-    personCreated = true;
-  }
-
-  await setSingleValue(lix, {
-    object_slug: "people",
-    record_id: personId,
-    attribute_slug: "linkedin_url",
-    attribute_type: "url",
-    value: linkedinKey,
-    source: SOURCE,
-    provenance,
-  });
-
-  if (mapped.person.name) {
-    await setSingleValue(lix, {
-      object_slug: "people",
-      record_id: personId,
-      attribute_slug: "name",
-      attribute_type: "personal-name",
-      value: mapped.person.name,
-      source: SOURCE,
-      provenance,
-    });
-  }
-
-  if (mapped.person.job_title) {
-    await setSingleValue(lix, {
-      object_slug: "people",
-      record_id: personId,
-      attribute_slug: "job_title",
-      attribute_type: "text",
-      value: mapped.person.job_title,
-      source: SOURCE,
-      provenance,
-    });
-  }
-
-  if (companyId) {
-    await setSingleValue(lix, {
-      object_slug: "people",
-      record_id: personId,
-      attribute_slug: "company",
-      attribute_type: "record-reference",
-      value: { target_object: "companies", target_record_id: companyId },
-      source: SOURCE,
-      provenance,
-    });
-  }
-
-  return {
-    person_record_id: personId,
-    company_record_id: companyId,
-    created: { person: personCreated, company: companyCreated },
-    cache_path: cachePath,
-    cache_hit: cacheHit,
-    mapped,
-  };
 }

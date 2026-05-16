@@ -22,6 +22,15 @@ export class Workspace {
     return new Workspace(lix);
   }
 
+  // Wrap an existing Lix in a Workspace handle without taking ownership.
+  // Calling close() on the returned Workspace will close the underlying Lix
+  // — callers that want to keep the Lix alive should not call close().
+  // Intended for tests and migration-period callers that already hold a Lix
+  // and want to invoke SDK operations that take a Workspace.
+  static fromLix(lix: Lix): Workspace {
+    return new Workspace(lix);
+  }
+
   static async create(absolutePath: string): Promise<Workspace> {
     if (existsSync(absolutePath)) {
       throw new AcrmError(

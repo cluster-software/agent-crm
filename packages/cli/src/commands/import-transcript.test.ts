@@ -10,10 +10,11 @@ import {
 import { generateUuid } from "@agent-crm/sdk";
 import {
   importTranscript,
-  parsePayload,
+  parseTranscriptPayload,
+  Workspace,
   type ParticipantInput,
   type TranscriptPayload,
-} from "./import-transcript.js";
+} from "@agent-crm/sdk";
 
 type SeedPerson = {
   email?: string;
@@ -122,9 +123,9 @@ function makePayload(
   };
 }
 
-describe("parsePayload", () => {
+describe("parseTranscriptPayload", () => {
   it("accepts a participant with only `linkedin_url`", () => {
-    const out = parsePayload(
+    const out = parseTranscriptPayload(
       JSON.stringify({
         source: "granola",
         source_id: "x",
@@ -137,7 +138,7 @@ describe("parsePayload", () => {
   });
 
   it("accepts a participant with only `twitter_url`", () => {
-    const out = parsePayload(
+    const out = parseTranscriptPayload(
       JSON.stringify({
         source: "granola",
         source_id: "x",
@@ -148,7 +149,7 @@ describe("parsePayload", () => {
   });
 
   it("accepts every identifier on one participant", () => {
-    const out = parsePayload(
+    const out = parseTranscriptPayload(
       JSON.stringify({
         source: "granola",
         source_id: "x",
@@ -170,7 +171,7 @@ describe("parsePayload", () => {
 
   it("rejects a participant with no identifiers", () => {
     expect(() =>
-      parsePayload(
+      parseTranscriptPayload(
         JSON.stringify({
           source: "granola",
           source_id: "x",
@@ -182,7 +183,7 @@ describe("parsePayload", () => {
 
   it("rejects a participant whose only identifier normalizes to empty", () => {
     expect(() =>
-      parsePayload(
+      parseTranscriptPayload(
         JSON.stringify({
           source: "granola",
           source_id: "x",
@@ -194,7 +195,7 @@ describe("parsePayload", () => {
 
   it("rejects malformed email", () => {
     expect(() =>
-      parsePayload(
+      parseTranscriptPayload(
         JSON.stringify({
           source: "granola",
           source_id: "x",
@@ -213,8 +214,7 @@ describe("importTranscript participant resolution", () => {
       name: "Alice",
     });
 
-    const result = await importTranscript(
-      lix,
+    const result = await importTranscript(Workspace.fromLix(lix),
       makePayload([{ email: "alice@acme.com" }]),
     );
 
@@ -234,8 +234,7 @@ describe("importTranscript participant resolution", () => {
       name: "Luis",
     });
 
-    const result = await importTranscript(
-      lix,
+    const result = await importTranscript(Workspace.fromLix(lix),
       makePayload([
         {
           email: "luis@hello-cluster.com",
@@ -258,8 +257,7 @@ describe("importTranscript participant resolution", () => {
       name: "Carol",
     });
 
-    const result = await importTranscript(
-      lix,
+    const result = await importTranscript(Workspace.fromLix(lix),
       makePayload([{ twitter_url: "@carol" }]),
     );
 
@@ -275,8 +273,7 @@ describe("importTranscript participant resolution", () => {
     });
     expect(await emailsFor(lix, personId)).toEqual([]);
 
-    const result = await importTranscript(
-      lix,
+    const result = await importTranscript(Workspace.fromLix(lix),
       makePayload([
         {
           email: "luis@cluster.com",
@@ -299,8 +296,7 @@ describe("importTranscript participant resolution", () => {
       linkedin_url: "linkedin.com/in/alice",
     });
 
-    const result = await importTranscript(
-      lix,
+    const result = await importTranscript(Workspace.fromLix(lix),
       makePayload([
         {
           email: "alice@acme.com",
@@ -319,8 +315,7 @@ describe("importTranscript participant resolution", () => {
     const personId = await seedPerson(lix, { email: "bob@acme.com" });
     expect(await singleValueFor(lix, personId, "linkedin_url")).toBeNull();
 
-    const result = await importTranscript(
-      lix,
+    const result = await importTranscript(Workspace.fromLix(lix),
       makePayload([
         {
           email: "bob@acme.com",
@@ -345,8 +340,7 @@ describe("importTranscript participant resolution", () => {
       linkedin_url: "linkedin.com/in/bob-curated",
     });
 
-    const result = await importTranscript(
-      lix,
+    const result = await importTranscript(Workspace.fromLix(lix),
       makePayload([
         {
           email: "bob@acme.com",
@@ -370,8 +364,7 @@ describe("importTranscript participant resolution", () => {
     // for inputs that carry at least one identifier — a regression test on
     // the behavior change itself.
     const lix = await openTestWorkspace();
-    const result = await importTranscript(
-      lix,
+    const result = await importTranscript(Workspace.fromLix(lix),
       makePayload([
         {
           email: "ghost@nowhere.com",
@@ -389,14 +382,12 @@ describe("importTranscript participant resolution", () => {
     const lix = await openTestWorkspace();
     const personId = await seedPerson(lix, { email: "alice@acme.com" });
 
-    const first = await importTranscript(
-      lix,
+    const first = await importTranscript(Workspace.fromLix(lix),
       makePayload([{ email: "alice@acme.com" }]),
     );
     expect(first.created).toBe(true);
 
-    const second = await importTranscript(
-      lix,
+    const second = await importTranscript(Workspace.fromLix(lix),
       makePayload([{ email: "alice@acme.com" }]),
     );
     expect(second.created).toBe(false);
@@ -440,8 +431,7 @@ describe("importTranscript participant resolution", () => {
       name: "Someone else",
     });
 
-    const result = await importTranscript(
-      lix,
+    const result = await importTranscript(Workspace.fromLix(lix),
       makePayload([
         {
           email: "alice@acme.com",
