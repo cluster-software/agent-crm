@@ -1,5 +1,11 @@
 # @agent-crm/sdk
 
+## 0.1.2
+
+### Patch Changes
+
+- 99a3bbe: Reject relative paths in `Workspace.open` and `Workspace.create` so SDK callers must resolve workspace paths explicitly before opening or creating `.acrm` files.
+
 ## 0.1.1
 
 ### Patch Changes

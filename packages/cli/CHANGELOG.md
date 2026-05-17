@@ -1,5 +1,12 @@
 # @agent-crm/cli
 
+## 0.13.2
+
+### Patch Changes
+
+- Updated dependencies [99a3bbe]
+  - @agent-crm/sdk@0.1.2
+
 ## 0.13.1
 
 ### Patch Changes

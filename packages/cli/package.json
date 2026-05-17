@@ -1,6 +1,6 @@
 {
   "name": "@agent-crm/cli",
-  "version": "0.13.1",
+  "version": "0.13.2",
   "description": "Agent CRM: Headless CRM for claude code",
   "type": "module",
   "bin": {
@@ -21,7 +21,7 @@
     "postinstall": "node ./postinstall.cjs"
   },
   "dependencies": {
-    "@agent-crm/sdk": "0.1.1",
+    "@agent-crm/sdk": "0.1.2",
     "@lix-js/sdk": "0.6.0-preview.3",
     "better-sqlite3": "^12.9.0",
     "commander": "^12.1.0"
