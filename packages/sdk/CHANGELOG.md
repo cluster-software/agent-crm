@@ -1,5 +1,14 @@
 # @agent-crm/sdk
 
+## 0.1.1
+
+### Patch Changes
+
+- d716d14: Verify the CI `NPM_TOKEN` has rights to publish both `@agent-crm/sdk` and
+  `@agent-crm/cli` after the granular-token allowlist fix. Adds a SDK
+  README and bumps both packages by a patch to exercise the full
+  changesets → publish pipeline.
+
 ## 0.1.0
 
 ### Minor Changes
