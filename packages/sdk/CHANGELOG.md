@@ -1,5 +1,11 @@
 # @agent-crm/sdk
 
+## 0.1.3
+
+### Patch Changes
+
+- 03bf969: Update the npm package descriptions.
+
 ## 0.1.2
 
 ### Patch Changes
