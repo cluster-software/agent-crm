@@ -3,9 +3,9 @@
 Programmatic API for the [Agent CRM](https://github.com/cluster-software/agent-crm) `.acrm` workspace — the same operations the [`@agent-crm/cli`](https://www.npmjs.com/package/@agent-crm/cli) `acrm` command runs, but as typed functions you can call in-process.
 
 ```ts
-import { Workspace, createWorkspace, importTranscript } from "@agent-crm/sdk";
+import { openWorkspace, importTranscript } from "@agent-crm/sdk";
 
-const { workspace, workspaceId } = await createWorkspace("/path/to/file.acrm");
+const workspace = await openWorkspace("/path/to/file.acrm");
 try {
   const result = await importTranscript(workspace, {
     source: "granola",

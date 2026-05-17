@@ -1,5 +1,7 @@
+import { existsSync } from "node:fs";
 import type { Lix, LixRuntimeValue } from "@lix-js/sdk";
 import { exec } from "../db/execute.js";
+import { AcrmError, ERR } from "../lib/errors.js";
 import { generateUuid } from "../lib/ids.js";
 import { registerAllSchemas } from "../workspace/schemas/index.js";
 import { Workspace } from "../workspace.js";
@@ -136,4 +138,16 @@ export async function createWorkspace(
   await seedAttributes(workspace.lix);
   const workspaceId = await generateUuid(workspace.lix);
   return { workspace, workspaceId };
+}
+
+// Open an existing .acrm file at `absolutePath`. Throws if the file is
+// missing. The caller owns the returned Workspace and must close it.
+export async function openWorkspace(absolutePath: string): Promise<Workspace> {
+  if (!existsSync(absolutePath)) {
+    throw new AcrmError(
+      `.acrm file not found at ${absolutePath}`,
+      ERR.NO_WORKSPACE,
+    );
+  }
+  return Workspace.open(absolutePath);
 }
