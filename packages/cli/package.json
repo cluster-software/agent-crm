@@ -21,7 +21,7 @@
     "postinstall": "node ./postinstall.cjs"
   },
   "dependencies": {
-    "@agent-crm/sdk": "0.1.0",
+    "@agent-crm/sdk": "0.0.0",
     "@lix-js/sdk": "0.6.0-preview.3",
     "better-sqlite3": "^12.9.0",
     "commander": "^12.1.0"
