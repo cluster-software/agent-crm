@@ -1,7 +1,7 @@
 {
   "name": "@agent-crm/sdk",
   "version": "0.1.2",
-  "description": "Agent CRM SDK: programmatic API for headless CRM operations",
+  "description": "The headless CRM for Claude",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
