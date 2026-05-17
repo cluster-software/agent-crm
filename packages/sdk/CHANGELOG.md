@@ -1,5 +1,13 @@
 # @agent-crm/sdk
 
+## 0.2.0
+
+### Minor Changes
+
+- 4e0255d: Consolidate SDK workspace lifecycle around `Workspace.create()` and
+  `Workspace.open()`, removing the functional lifecycle helpers from the public
+  API. Update CLI initialization to use the canonical workspace API.
+
 ## 0.1.3
 
 ### Patch Changes
