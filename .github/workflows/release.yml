@@ -28,6 +28,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Build both packages before changesets/action runs `npm publish`.
+      # changesets v1 publishes packages in parallel, and each `npm publish`
+      # invocation triggers `prepublishOnly` (= `tsc`) in its own dir. CLI's
+      # tsc resolves `@agent-crm/sdk` via the workspace symlink and reads
+      # the package's declared `types: dist/index.d.ts`; without a prior
+      # build the SDK's `dist/` may not exist yet when CLI's tsc starts,
+      # and CLI's compilation fails (TS code 2). Building topologically
+      # here guarantees both `dist/` trees exist before any publish.
+      - name: Build
+        run: npm run build
+
       - name: Create Release Pull Request or Publish
         uses: changesets/action@v1
         with:
