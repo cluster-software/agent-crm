@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+  smoke-tarballs:
+    # Per the issue's "smoke-test discipline" gate: pack both packages and
+    # install them into a clean dir. Catches the failure mode where the CLI
+    # tarball references a `@agent-crm/sdk` version that isn't installable
+    # — a class of bug that local workspaces make easy to ship.
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run build
+      - name: Pack both packages
+        run: |
+          npm pack --workspace @agent-crm/sdk --pack-destination "$RUNNER_TEMP"
+          npm pack --workspace @agent-crm/cli --pack-destination "$RUNNER_TEMP"
+          ls -la "$RUNNER_TEMP"/*.tgz
+      - name: SDK tarball installs and exports its public API
+        run: |
+          dir=$(mktemp -d)
+          cd "$dir"
+          npm init -y > /dev/null
+          npm install "$RUNNER_TEMP"/agent-crm-sdk-*.tgz
+          node -e "import('@agent-crm/sdk').then(m => { const k = Object.keys(m); if (k.length === 0) { throw new Error('SDK exported zero names'); } console.log('SDK exports:', k.length, 'names'); })"
+      - name: CLI + SDK tarballs install together and acrm runs
+        run: |
+          dir=$(mktemp -d)
+          cd "$dir"
+          npm init -y > /dev/null
+          npm install \
+            "$RUNNER_TEMP"/agent-crm-sdk-*.tgz \
+            "$RUNNER_TEMP"/agent-crm-cli-*.tgz
+          ./node_modules/.bin/acrm --version
+          ./node_modules/.bin/acrm init smoke.acrm
+          ./node_modules/.bin/acrm records create people \
+            --field name=Smoke \
+            --field email_addresses=smoke@test.com \
+            --workspace smoke.acrm
+          ./node_modules/.bin/acrm execute \
+            "select count(*) as n from acrm_record" \
+            --workspace smoke.acrm

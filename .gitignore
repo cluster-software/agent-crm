@@ -8,3 +8,4 @@ test-acrm/
 feedback/
 /scripts/
 .claude/settings.local.json
+*.tgz
