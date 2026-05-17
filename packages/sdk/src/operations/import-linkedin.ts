@@ -15,6 +15,7 @@ import {
 } from "../integrations/linkedin-mapping.js";
 import { AcrmError, ERR } from "../lib/errors.js";
 import { generateUuid } from "../lib/ids.js";
+import { nowIso } from "../lib/time.js";
 import type { Workspace } from "../workspace.js";
 
 const SOURCE = "linkedin-import";
@@ -61,7 +62,7 @@ export async function importLinkedinProfile(
   const provenance = {
     actor: "harvestapi~linkedin-profile-scraper",
     public_id: publicId,
-    fetched_at: new Date().toISOString(),
+    fetched_at: nowIso(),
     cache_hit: cacheHit,
   };
 

@@ -1,8 +1,5 @@
 import type { Lix, LixRuntimeValue } from "@lix-js/sdk";
 import { exec } from "../db/execute.js";
-import { generateUuid } from "../lib/ids.js";
-import { registerAllSchemas } from "../workspace/schemas/index.js";
-import { Workspace } from "../workspace.js";
 
 type ObjectSeed = {
   object_slug: string;
@@ -117,23 +114,4 @@ export async function seedAttributes(lix: Lix): Promise<void> {
       params,
     );
   }
-}
-
-export type CreateWorkspaceResult = {
-  workspace: Workspace;
-  workspaceId: string;
-};
-
-// Create a fresh .acrm file at `absolutePath`, register all built-in
-// schemas, and seed the default objects + attributes. Throws if the file
-// already exists. The caller owns the returned Workspace and must close it.
-export async function createWorkspace(
-  absolutePath: string,
-): Promise<CreateWorkspaceResult> {
-  const workspace = await Workspace.create(absolutePath);
-  await registerAllSchemas(workspace.lix);
-  await seedObjects(workspace.lix);
-  await seedAttributes(workspace.lix);
-  const workspaceId = await generateUuid(workspace.lix);
-  return { workspace, workspaceId };
 }

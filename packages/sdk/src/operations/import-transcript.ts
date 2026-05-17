@@ -14,6 +14,7 @@ import {
 } from "../domain/resolve-person.js";
 import { AcrmError, ERR } from "../lib/errors.js";
 import { generateUuid } from "../lib/ids.js";
+import { nowIso } from "../lib/time.js";
 import type {
   ParticipantInput,
   TranscriptPayload,
@@ -143,7 +144,7 @@ async function createPersonFromIdentifiers(
   await insertRecord(lix, "people", personId);
   const source = `transcript-import:${importSource}`;
   const provenance = {
-    created_at: new Date().toISOString(),
+    created_at: nowIso(),
     via: "transcript-participant",
   };
   for (const email of normalized.emails) {
@@ -208,7 +209,7 @@ async function backfillIdentifiers(
   const backfilled: IdentifierAttribute[] = [];
   const source = `transcript-import:${importSource}`;
   const provenance = {
-    backfilled_at: new Date().toISOString(),
+    backfilled_at: nowIso(),
     matched_by: matchedBy,
   };
 
@@ -270,7 +271,7 @@ async function upsertTranscript(
   const provenance = {
     source: payload.source,
     source_id: payload.source_id,
-    imported_at: new Date().toISOString(),
+    imported_at: nowIso(),
   };
 
   let transcriptId = await findRecordByUnique(
@@ -337,7 +338,7 @@ async function linkParticipant(
   importSource: string,
 ): Promise<void> {
   const source = `transcript-import:${importSource}`;
-  const provenance = { linked_at: new Date().toISOString() };
+  const provenance = { linked_at: nowIso() };
 
   const fwd = await exec(
     lix,

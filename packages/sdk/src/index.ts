@@ -29,10 +29,10 @@ export * from "./lib/token-cache.js";
 export * from "./lib/uuidv7.js";
 
 export * from "./workspace/schemas/index.js";
+export { seedAttributes, seedObjects } from "./workspace/seeds.js";
 export { Workspace } from "./workspace.js";
 
 export * from "./operations/execute.js";
-export * from "./operations/init.js";
 export * from "./operations/import-csv.js";
 export * from "./operations/import-linkedin.js";
 export * from "./operations/import-post.js";

@@ -1,7 +1,12 @@
-import type { Lix, LixRuntimeValue } from "@lix-js/sdk";
+import type { LixRuntimeValue } from "@lix-js/sdk";
 import { exec } from "../db/execute.js";
 import type { AttributeType, StatusOption } from "../domain/values.js";
 import { AcrmError, ERR } from "../lib/errors.js";
+import {
+  assertObjectExists,
+  loadAttribute,
+  loadObject,
+} from "../workspace/catalog.js";
 import type { Workspace } from "../workspace.js";
 
 export type CreateObjectInput = {
@@ -20,12 +25,7 @@ export async function createObject(
   workspace: Workspace,
   input: CreateObjectInput,
 ): Promise<CreateObjectResult> {
-  const exists = await exec(
-    workspace.lix,
-    "SELECT object_slug FROM acrm_object WHERE object_slug = $1",
-    [input.object_slug],
-  );
-  if (exists.rows.length) {
+  if (await loadObject(workspace.lix, input.object_slug)) {
     throw new AcrmError(
       `object already exists: ${input.object_slug}`,
       ERR.UNIQUE_VIOLATION,
@@ -70,12 +70,7 @@ export async function addAttribute(
   if (input.config && input.config.target_object) {
     await assertObjectExists(workspace.lix, input.config.target_object as string);
   }
-  const have = await exec(
-    workspace.lix,
-    "SELECT attribute_slug FROM acrm_attribute WHERE object_slug = $1 AND attribute_slug = $2",
-    [input.object_slug, input.attribute_slug],
-  );
-  if (have.rows.length) {
+  if (await loadAttribute(workspace.lix, input.object_slug, input.attribute_slug)) {
     throw new AcrmError(
       `attribute already exists: ${input.object_slug}.${input.attribute_slug}`,
       ERR.UNIQUE_VIOLATION,
@@ -144,7 +139,7 @@ export async function editAttributeOptions(
     );
   }
 
-  const current = (attr.config?.options as StatusOption[] | undefined) ?? [];
+  const current = attr.config?.options ?? [];
   let next: StatusOption[];
   if (input.action === "add") {
     if (current.some((o) => o.id === input.option.id)) {
@@ -179,53 +174,5 @@ export async function editAttributeOptions(
     attribute_slug: input.attribute_slug,
     attribute_type: attr.attribute_type,
     options: next,
-  };
-}
-
-async function assertObjectExists(lix: Lix, object_slug: string): Promise<void> {
-  const r = await exec(
-    lix,
-    "SELECT object_slug FROM acrm_object WHERE object_slug = $1",
-    [object_slug],
-  );
-  if (!r.rows.length) {
-    throw new AcrmError(
-      `unknown object: ${object_slug}. Register it first via createObject().`,
-      ERR.NOT_FOUND,
-    );
-  }
-}
-
-async function loadAttribute(
-  lix: Lix,
-  object_slug: string,
-  attribute_slug: string,
-): Promise<{
-  attribute_type: AttributeType;
-  is_multivalued: boolean;
-  is_unique: boolean;
-  config: Record<string, unknown> | null;
-} | null> {
-  const r = await exec(
-    lix,
-    "SELECT attribute_type, is_multivalued, is_unique, config_json FROM acrm_attribute WHERE object_slug = $1 AND attribute_slug = $2",
-    [object_slug, attribute_slug],
-  );
-  const row = r.rows[0];
-  if (!row) return null;
-  let config: Record<string, unknown> | null = null;
-  const raw = row.config_json as string | null | undefined;
-  if (raw) {
-    try {
-      config = JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      config = null;
-    }
-  }
-  return {
-    attribute_type: row.attribute_type as AttributeType,
-    is_multivalued: Boolean(row.is_multivalued),
-    is_unique: Boolean(row.is_unique),
-    config,
   };
 }

@@ -17,6 +17,7 @@ import {
 } from "../integrations/x-mapping.js";
 import { AcrmError, ERR } from "../lib/errors.js";
 import { generateUuid } from "../lib/ids.js";
+import { nowIso } from "../lib/time.js";
 import type { Workspace } from "../workspace.js";
 
 const SOURCE = "x-import";
@@ -70,7 +71,7 @@ export async function importXProfile(
   const provenance = {
     actor: "apidojo~twitter-user-scraper",
     handle: mapped.person.handle,
-    fetched_at: new Date().toISOString(),
+    fetched_at: nowIso(),
     cache_hit: cacheHit,
   };
 

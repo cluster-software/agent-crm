@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { Command } from "commander";
-import { AcrmError, ERR, createWorkspace } from "@agent-crm/sdk";
+import { AcrmError, ERR, Workspace, generateUuid } from "@agent-crm/sdk";
 import { fail, isJson, ok, setJsonMode } from "../output/json.js";
 
 export function registerInit(program: Command): void {
@@ -14,7 +14,8 @@ export function registerInit(program: Command): void {
         const workspacePath = path.resolve(
           name.endsWith(".acrm") ? name : name + ".acrm",
         );
-        const { workspace, workspaceId } = await createWorkspace(workspacePath);
+        const workspace = await Workspace.create(workspacePath);
+        const workspaceId = await generateUuid(workspace.lix);
         try {
           ok({
             initialized: true,
