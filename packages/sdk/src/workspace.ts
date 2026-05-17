@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { openLix, type Lix } from "@lix-js/sdk";
 import { createBetterSqlite3Backend } from "@lix-js/sdk/sqlite";
 import { AcrmError, ERR } from "./lib/errors.js";
@@ -16,6 +17,7 @@ export class Workspace {
   }
 
   static async open(absolutePath: string): Promise<Workspace> {
+    assertAbsolutePath(absolutePath);
     const lix = await openLix({
       backend: createBetterSqlite3Backend({ path: absolutePath }),
     });
@@ -32,6 +34,7 @@ export class Workspace {
   }
 
   static async create(absolutePath: string): Promise<Workspace> {
+    assertAbsolutePath(absolutePath);
     if (existsSync(absolutePath)) {
       throw new AcrmError(
         `.acrm file already exists at ${absolutePath}`,
@@ -44,4 +47,12 @@ export class Workspace {
   async close(): Promise<void> {
     await this.lix.close();
   }
+}
+
+function assertAbsolutePath(workspacePath: string): void {
+  if (isAbsolute(workspacePath)) return;
+  throw new AcrmError(
+    `workspace path must be absolute: ${workspacePath}`,
+    ERR.INVALID_INPUT,
+  );
 }
