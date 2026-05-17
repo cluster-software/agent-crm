@@ -6,7 +6,14 @@ on:
     branches:
       - main
 
+# Cancel obsolete runs when a PR gets a new push (or main is pushed again).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # Two parallel jobs (no `needs:` between them) so total wall clock is
+  # max(build-test, smoke-tarballs) instead of build-test + smoke-tarballs.
   build-test:
     runs-on: ubuntu-latest
     steps:
@@ -14,42 +21,72 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm ci
+          # Cache ~/.npm (npm's download cache). Speeds up `npm ci` whenever
+          # node_modules cache misses, and is also shared with subprocess
+          # `npm install`s elsewhere in this job.
+          cache: npm
+      - name: Restore node_modules
+        id: nm
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+          key: nm-${{ runner.os }}-node20-${{ hashFiles('package-lock.json') }}
+      - name: Install
+        if: steps.nm.outputs.cache-hit != 'true'
+        run: npm ci
       - run: npm run build
       - run: npm test
 
   smoke-tarballs:
-    # Per the issue's "smoke-test discipline" gate: pack both packages and
-    # install them into a clean dir. Catches the failure mode where the CLI
-    # tarball references a `@agent-crm/sdk` version that isn't installable
-    # — a class of bug that local workspaces make easy to ship.
+    # Pack the published-tarball shape of both packages and run the issue's
+    # smoke-test gate (SDK alone exports its API; CLI+SDK install together
+    # and `acrm` works end to end). Runs in parallel with build-test.
     runs-on: ubuntu-latest
-    needs: build-test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm ci
+          cache: npm
+      - name: Restore node_modules
+        id: nm
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+          key: nm-${{ runner.os }}-node20-${{ hashFiles('package-lock.json') }}
+      - name: Install
+        if: steps.nm.outputs.cache-hit != 'true'
+        run: npm ci
       - run: npm run build
       - name: Pack both packages
         run: |
           npm pack --workspace @agent-crm/sdk --pack-destination "$RUNNER_TEMP"
           npm pack --workspace @agent-crm/cli --pack-destination "$RUNNER_TEMP"
-          ls -la "$RUNNER_TEMP"/*.tgz
       - name: SDK tarball installs and exports its public API
+        # `--ignore-scripts` skips better-sqlite3's ~30s native build. This
+        # smoke check only verifies the SDK module loads and exports a
+        # non-empty named-export set; it never opens a Lix, so no native
+        # binding is needed.
         run: |
           dir=$(mktemp -d)
           cd "$dir"
           npm init -y > /dev/null
-          npm install "$RUNNER_TEMP"/agent-crm-sdk-*.tgz
+          npm install --ignore-scripts --prefer-offline --no-audit --no-fund \
+            "$RUNNER_TEMP"/agent-crm-sdk-*.tgz
           node -e "import('@agent-crm/sdk').then(m => { const k = Object.keys(m); if (k.length === 0) { throw new Error('SDK exported zero names'); } console.log('SDK exports:', k.length, 'names'); })"
       - name: CLI + SDK tarballs install together and acrm runs
+        # Real install (scripts enabled) so better-sqlite3's postinstall and
+        # CLI's skills installer both run end to end — that's the bug class
+        # this check is specifically here to catch.
         run: |
           dir=$(mktemp -d)
           cd "$dir"
           npm init -y > /dev/null
-          npm install \
+          npm install --prefer-offline --no-audit --no-fund \
             "$RUNNER_TEMP"/agent-crm-sdk-*.tgz \
             "$RUNNER_TEMP"/agent-crm-cli-*.tgz
           ./node_modules/.bin/acrm --version
