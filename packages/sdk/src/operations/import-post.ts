@@ -20,6 +20,7 @@ import {
 } from "../integrations/post-mapping.js";
 import { AcrmError, ERR } from "../lib/errors.js";
 import { generateUuid } from "../lib/ids.js";
+import { nowIso } from "../lib/time.js";
 import type { Workspace } from "../workspace.js";
 import { importLinkedinProfile } from "./import-linkedin.js";
 import { importXProfile } from "./import-x.js";
@@ -195,7 +196,7 @@ async function upsertPost(args: {
   const provenance = {
     actor: apifyActor,
     post_url: rawUrl,
-    fetched_at: new Date().toISOString(),
+    fetched_at: nowIso(),
     cache_hit: args.postCacheHit,
   };
 
@@ -295,6 +296,6 @@ async function linkPersonToPost(
     attribute_type: "record-reference",
     value: { target_object: "posts", target_record_id: postRecordId },
     source,
-    provenance: { linked_at: new Date().toISOString() },
+    provenance: { linked_at: nowIso() },
   });
 }

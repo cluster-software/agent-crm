@@ -76,7 +76,7 @@ describe("token cache", () => {
     const fs = await import("node:fs/promises");
     await fs.mkdir(tmp, { recursive: true });
     await fs.writeFile(file, "not json");
-    await expect(readToken("granola", tmp)).rejects.toThrow();
+    expect(await readToken("granola", tmp)).toBeNull();
   });
 
   it("isExpired returns false when expires_at is absent", () => {

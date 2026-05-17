@@ -53,6 +53,7 @@ export async function readToken(
     return parsed;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if (e instanceof SyntaxError) return null;
     throw e;
   }
 }

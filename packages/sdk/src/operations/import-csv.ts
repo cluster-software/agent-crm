@@ -1,6 +1,10 @@
 import type { Lix, LixRuntimeValue } from "@lix-js/sdk";
 import { exec } from "../db/execute.js";
 import {
+  prepareValueInsert,
+  type PreparedValueInsert,
+} from "../db/value-row.js";
+import {
   encode,
   normalizeUniqueKey,
   normalizeDomain,
@@ -11,6 +15,7 @@ import {
 import { resolvePersonByIdentifiers } from "../domain/resolve-person.js";
 import { generateUuid } from "../lib/ids.js";
 import { nowIso } from "../lib/time.js";
+import { loadAttribute } from "../workspace/catalog.js";
 import type { Workspace } from "../workspace.js";
 
 type CsvRow = Record<string, string>;
@@ -156,18 +161,7 @@ const LARGE_CSV_FLUSH_EVERY_ROWS = 50;
 const MAX_BATCH_VALUES = 5000;
 
 type PendingRecord = { object_slug: string; record_id: string };
-type PendingValue = {
-  id: string;
-  object_slug: string;
-  record_id: string;
-  attribute_slug: string;
-  value_json: string;
-  normalized_key: string | null;
-  ref_object: string | null;
-  ref_record_id: string | null;
-  source: string;
-  provenance_json: string;
-};
+type PendingValue = PreparedValueInsert;
 
 class WriteBatcher {
   private records: PendingRecord[] = [];
@@ -259,64 +253,6 @@ async function insertRecord(
   batcher.enqueueRecord({ object_slug, record_id });
 }
 
-function buildValueRow(
-  id: string,
-  args: {
-    object_slug: string;
-    record_id: string;
-    attribute_slug: string;
-    attribute_type: AttributeType;
-    value_json: Record<string, unknown>;
-    source: string;
-    provenance: Record<string, unknown>;
-  },
-): PendingValue {
-  const normalized = normalizeUniqueKey(args.attribute_type, args.value_json);
-  const ref =
-    args.attribute_type === "record-reference"
-      ? {
-          ref_object: (args.value_json.target_object as string) ?? null,
-          ref_record_id: (args.value_json.target_record_id as string) ?? null,
-        }
-      : { ref_object: null, ref_record_id: null };
-  return {
-    id,
-    object_slug: args.object_slug,
-    record_id: args.record_id,
-    attribute_slug: args.attribute_slug,
-    value_json: JSON.stringify(args.value_json),
-    normalized_key: normalized,
-    ref_object: ref.ref_object,
-    ref_record_id: ref.ref_record_id,
-    source: args.source,
-    provenance_json: JSON.stringify(args.provenance),
-  };
-}
-
-async function getAttribute(
-  lix: Lix,
-  object_slug: string,
-  attribute_slug: string,
-): Promise<{ attribute_type: AttributeType; config?: AttributeConfig } | null> {
-  const r = await exec(
-    lix,
-    "SELECT attribute_type, config_json FROM acrm_attribute WHERE object_slug = $1 AND attribute_slug = $2",
-    [object_slug, attribute_slug],
-  );
-  const row = r.rows[0];
-  if (!row) return null;
-  let config: AttributeConfig | undefined;
-  const raw = row.config_json as string | null | undefined;
-  if (raw) {
-    try {
-      config = JSON.parse(raw) as AttributeConfig;
-    } catch {
-      config = undefined;
-    }
-  }
-  return { attribute_type: row.attribute_type as AttributeType, config };
-}
-
 async function setSingleValue(
   lix: Lix,
   batcher: WriteBatcher,
@@ -343,7 +279,7 @@ async function setSingleValue(
     );
   }
   const id = await generateUuid(lix);
-  batcher.enqueueValue(buildValueRow(id, { ...args, value_json }));
+  batcher.enqueueValue(prepareValueInsert(id, { ...args, value_json }));
 }
 
 async function addMultiValue(
@@ -375,7 +311,7 @@ async function addMultiValue(
     if (exists.rows.length) return;
   }
   const id = await generateUuid(lix);
-  batcher.enqueueValue(buildValueRow(id, { ...args, value_json }));
+  batcher.enqueueValue(prepareValueInsert(id, { ...args, value_json }));
 }
 
 export type ImportCsvStats = {
@@ -725,7 +661,7 @@ async function importRow(
     });
     const stage = pick(row, "deal_stage", "stage");
     if (stage) {
-      const attr = await getAttribute(lix, "deals", "stage");
+      const attr = await loadAttribute(lix, "deals", "stage");
       if (attr) {
         await setSingleValue(lix, batcher, {
           object_slug: "deals",

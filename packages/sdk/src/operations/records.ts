@@ -13,6 +13,10 @@ import {
 import { AcrmError, ERR } from "../lib/errors.js";
 import { generateUuid } from "../lib/ids.js";
 import { nowIso } from "../lib/time.js";
+import {
+  assertObjectExists,
+  loadAttribute as loadCatalogAttribute,
+} from "../workspace/catalog.js";
 import type { Workspace } from "../workspace.js";
 
 type ValueRow = {
@@ -615,17 +619,11 @@ async function assertObjectRegistered(
   lix: Lix,
   object_slug: string,
 ): Promise<void> {
-  const obj = await exec(
+  await assertObjectExists(
     lix,
-    "SELECT object_slug FROM acrm_object WHERE object_slug = $1",
-    [object_slug],
+    object_slug,
+    `unknown object: ${object_slug}. Register it via createObject() or check existing objects with a SELECT against acrm_object.`,
   );
-  if (!obj.rows.length) {
-    throw new AcrmError(
-      `unknown object: ${object_slug}. Register it via createObject() or check existing objects with a SELECT against acrm_object.`,
-      ERR.NOT_FOUND,
-    );
-  }
 }
 
 function parseField(raw: string): { slug: string; value: string } {
@@ -672,31 +670,17 @@ async function prepareFields(
   const attrMeta = new Map<string, AttributeRow>();
   for (const f of parsed) {
     if (attrMeta.has(f.slug)) continue;
-    const r = await exec(
-      lix,
-      "SELECT attribute_type, is_multivalued, config_json FROM acrm_attribute WHERE object_slug = $1 AND attribute_slug = $2",
-      [object_slug, f.slug],
-    );
-    const row = r.rows[0];
-    if (!row) {
+    const attr = await loadCatalogAttribute(lix, object_slug, f.slug);
+    if (!attr) {
       throw new AcrmError(
         `unknown attribute: ${object_slug}.${f.slug}. Register it via addAttribute() or check the workspace schema.`,
         ERR.NOT_FOUND,
       );
     }
-    let config: AttributeConfig | undefined;
-    const raw = row.config_json as string | null | undefined;
-    if (raw) {
-      try {
-        config = JSON.parse(raw) as AttributeConfig;
-      } catch {
-        config = undefined;
-      }
-    }
     attrMeta.set(f.slug, {
-      attribute_type: row.attribute_type as AttributeType,
-      is_multivalued: Boolean(row.is_multivalued),
-      config,
+      attribute_type: attr.attribute_type,
+      is_multivalued: attr.is_multivalued,
+      config: attr.config,
     });
   }
 

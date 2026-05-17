@@ -1,32 +1,14 @@
 import type { Lix, LixRuntimeValue } from "@lix-js/sdk";
 import { exec } from "./execute.js";
+import { prepareValueInsert } from "./value-row.js";
 import { generateUuid } from "../lib/ids.js";
 import { nowIso } from "../lib/time.js";
 import {
   encode,
   normalizeUniqueKey,
-  type AttributeConfig,
   type AttributeType,
 } from "../domain/values.js";
-
-async function loadAttributeConfig(
-  lix: Lix,
-  object_slug: string,
-  attribute_slug: string,
-): Promise<AttributeConfig | undefined> {
-  const r = await exec(
-    lix,
-    "SELECT config_json FROM acrm_attribute WHERE object_slug = $1 AND attribute_slug = $2",
-    [object_slug, attribute_slug],
-  );
-  const raw = r.rows[0]?.config_json as string | null | undefined;
-  if (!raw) return undefined;
-  try {
-    return JSON.parse(raw) as AttributeConfig;
-  } catch {
-    return undefined;
-  }
-}
+import { loadAttributeConfig } from "../workspace/catalog.js";
 
 function needsConfig(type: AttributeType): boolean {
   return type === "status" || type === "select";
@@ -89,25 +71,18 @@ export async function insertValue(
     provenance: Record<string, unknown>;
   },
 ): Promise<void> {
-  const normalized = normalizeUniqueKey(args.attribute_type, args.value_json);
-  const ref =
-    args.attribute_type === "record-reference"
-      ? {
-          ref_object: (args.value_json.target_object as string) ?? null,
-          ref_record_id: (args.value_json.target_record_id as string) ?? null,
-        }
-      : { ref_object: null, ref_record_id: null };
+  const row = prepareValueInsert(await generateUuid(lix), args);
   const params: LixRuntimeValue[] = [
-    await generateUuid(lix),
-    args.object_slug,
-    args.record_id,
-    args.attribute_slug,
-    JSON.stringify(args.value_json),
-    normalized,
-    ref.ref_object,
-    ref.ref_record_id,
-    args.source,
-    JSON.stringify(args.provenance),
+    row.id,
+    row.object_slug,
+    row.record_id,
+    row.attribute_slug,
+    row.value_json,
+    row.normalized_key,
+    row.ref_object,
+    row.ref_record_id,
+    row.source,
+    row.provenance_json,
   ];
   await exec(
     lix,

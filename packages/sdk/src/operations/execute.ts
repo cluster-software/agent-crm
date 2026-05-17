@@ -1,5 +1,6 @@
 import type { LixRuntimeValue } from "@lix-js/sdk";
 import { exec, type Row } from "../db/execute.js";
+import { parseAttributeConfig } from "../workspace/catalog.js";
 import type { Workspace } from "../workspace.js";
 
 export type QueryResult = {
@@ -55,15 +56,7 @@ export async function dumpSchema(workspace: Workspace): Promise<SchemaDump> {
   for (const row of attrs.rows) {
     const slug = row.object_slug as string;
     const list = byObject.get(slug) ?? [];
-    const raw = row.config_json as string | null | undefined;
-    let config: unknown;
-    if (raw) {
-      try {
-        config = JSON.parse(raw);
-      } catch {
-        config = raw;
-      }
-    }
+    const config = parseAttributeConfig(row.config_json);
     list.push({
       attribute_slug: row.attribute_slug as string,
       title: row.title as string,

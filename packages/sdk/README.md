@@ -19,4 +19,10 @@ try {
 }
 ```
 
+`Workspace.create(path)` creates a new `.acrm` file and initializes the built-in
+schemas, objects, and attributes. `Workspace.open(path)` only opens an existing
+workspace and will not create a missing file. The functional helpers
+`createWorkspace(path)` and `openWorkspace(path)` wrap that same lifecycle for
+callers that prefer the function API.
+
 See the [main README](https://github.com/cluster-software/agent-crm) for an overview of the workspace model, the EAV schema, and the CLI on top of this SDK.
