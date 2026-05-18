@@ -209,7 +209,7 @@ Next steps after creation:
     )
     .option(
       "--inverse <attribute_slug>",
-      "for --type record-reference: optional inverse attribute slug on the target object (used by the UI for back-references)",
+      "for --type record-reference: optional inverse attribute slug on the target object (for back-references)",
     )
     .option(
       "--currency-code <code>",
@@ -309,7 +309,7 @@ Examples:
   acrm attribute edit-options deals.stage remove lost
 
 The id is the canonical value stored in acrm_value.value_json.id. The title is
-what the UI / agents see. If you omit the title on \`add\`, it's derived from
+what agents see. If you omit the title on \`add\`, it's derived from
 the id (e.g. \`in_progress\` → \`In Progress\`). Removing an option does NOT
 rewrite existing values — historical rows continue to reference the old id.
 `,

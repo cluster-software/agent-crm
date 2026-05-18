@@ -10,7 +10,6 @@ import { attachLinkedinSubcommand } from "../commands/import-linkedin.js";
 import { attachXSubcommand } from "../commands/import-x.js";
 import { attachPostSubcommand } from "../commands/import-post.js";
 import { attachTranscriptSubcommand } from "../commands/import-transcript.js";
-import { registerUi } from "../commands/ui.js";
 import { registerSkills } from "../commands/skills.js";
 import { registerAuth } from "../commands/auth.js";
 import { PROVIDERS } from "@agent-crm/sdk";
@@ -63,7 +62,6 @@ Typical flow:
   acrm import x <handle>          add one person from an X/Twitter profile
   acrm import post <url>          add a LinkedIn or X **post** by URL — upserts the author as a person and stores the post (use when a user shares a post link they want to track)
   acrm import transcript          import a meeting transcript — use \`--from <provider>\` for the fast path, or pipe JSON via stdin / \`--file\`
-  acrm ui                         browse the workspace in a local UI
   acrm execute "SELECT ..."       run SQL against the workspace
   acrm records create deals --field name=... --field stage=...  create a single record
   acrm records update candidates <id> --field stage=screen      advance / edit fields on an existing record
@@ -118,7 +116,6 @@ attachTranscriptSubcommand(getOrCreateImportCommand(program));
 registerExecute(program);
 registerRecords(program);
 registerSchema(program);
-registerUi(program);
 registerSkills(program);
 registerAuth(program);
 

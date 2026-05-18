@@ -56,11 +56,6 @@ Then import your CSVs
 ! acrm import csv ./leads.csv
 ```
 
-View your data
-```bash
-! acrm ui
-```
-
 ## Why Agent CRM
 - **🧩 Headless:** Ships as a CLI.
 - **⚒️ Skills based:** Claude writes skills against the CLI (transcript ingestion, stale-deal sweeps, weekly reports) as `.md` files.
@@ -83,7 +78,7 @@ A grab-bag of jobs Agent CRM handles today. Each is a skill or a CLI command —
 
 **Sweep stale deals.** Ask Claude to query your `.acrm` for deals untouched in N days and surface them. It's just SQL underneath, so any filter you can describe, Claude can run.
 
-**Import X / LinkedIn posts.** You're scrolling and see a post worth following up on. Paste the URL into Claude Code — `acrm import post <url>` upserts the post and adds the author as a contact, viewable in the UI.
+**Import X / LinkedIn posts.** You're scrolling and see a post worth following up on. Paste the URL into Claude Code — `acrm import post <url>` upserts the post and adds the author as a contact.
 
 **Import X / LinkedIn profiles.** Come across someone you want to chat to. Paste the profile URL into Claude Code — `acrm import linkedin <url>` or `acrm import x <handle>` pulls the enriched profile and dedupes against existing people.
 
