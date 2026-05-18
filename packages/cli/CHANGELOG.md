@@ -1,5 +1,11 @@
 # @agent-crm/cli
 
+## 0.14.1
+
+### Patch Changes
+
+- 08387d6: Add `homepage`, `repository`, and `bugs` fields to `package.json` so the npm page links back to the GitHub repo and tooling like `npm bugs` works.
+
 ## 0.14.0
 
 ### Minor Changes
