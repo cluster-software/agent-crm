@@ -8,6 +8,7 @@ import {
   encode,
   normalizeUniqueKey,
   normalizeDomain,
+  normalizePhoneNumber,
   domainFromEmail,
   type AttributeConfig,
   type AttributeType,
@@ -330,6 +331,8 @@ const EMAIL_HEADER_RE = /^(?:(?:work|personal|primary|business|other)_)?email(?:
 const EMAIL_SPLIT_RE = /[,;]\s*/;
 const LINKEDIN_HEADER_RE = /^(?:linkedin(?:_url|_profile)?|li_url)$/;
 const TWITTER_HEADER_RE = /^(?:twitter(?:_url)?|x(?:_url)?)$/;
+const PHONE_HEADER_RE = /^(?:(?:work|personal|primary|business|other|home|mobile|cell)_)?(?:phone|mobile|cell|tel|telephone)(?:_number)?(?:_\d+)?$/;
+const PHONE_SPLIT_RE = /[,;]\s*/;
 
 function collectEmails(row: CsvRow): string[] {
   const seen = new Set<string>();
@@ -372,10 +375,31 @@ function findTwitter(row: CsvRow): string | null {
   return null;
 }
 
+function collectPhones(row: CsvRow, defaultCountry?: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const k of Object.keys(row)) {
+    if (!PHONE_HEADER_RE.test(k)) continue;
+    const raw = row[k];
+    if (!raw) continue;
+    for (const piece of raw.split(PHONE_SPLIT_RE)) {
+      const trimmed = piece.trim();
+      if (!trimmed) continue;
+      const norm = normalizePhoneNumber(trimmed, defaultCountry);
+      if (!norm) continue;
+      if (seen.has(norm)) continue;
+      seen.add(norm);
+      out.push(trimmed);
+    }
+  }
+  return out;
+}
+
 export type DetectedColumns = {
   email_headers: string[];
   linkedin_headers: string[];
   twitter_headers: string[];
+  phone_headers: string[];
   domain_headers: string[];
   company_name_headers: string[];
   linkedin_by_value: boolean;
@@ -387,6 +411,7 @@ function detectColumns(rows: CsvRow[]): DetectedColumns {
   const email_headers = headers.filter((h) => EMAIL_HEADER_RE.test(h));
   const linkedin_headers = headers.filter((h) => LINKEDIN_HEADER_RE.test(h));
   const twitter_headers = headers.filter((h) => TWITTER_HEADER_RE.test(h));
+  const phone_headers = headers.filter((h) => PHONE_HEADER_RE.test(h));
   const domain_headers = headers.filter((h) => (DOMAIN_HEADERS as readonly string[]).includes(h));
   const company_name_headers = headers.filter((h) => (COMPANY_NAME_HEADERS as readonly string[]).includes(h));
   const sample = rows.slice(0, 50);
@@ -400,6 +425,7 @@ function detectColumns(rows: CsvRow[]): DetectedColumns {
     email_headers,
     linkedin_headers,
     twitter_headers,
+    phone_headers,
     domain_headers,
     company_name_headers,
     linkedin_by_value,
@@ -417,6 +443,7 @@ function diagnoseEmptyImport(
     detected.email_headers.length > 0 ||
     detected.linkedin_headers.length > 0 ||
     detected.twitter_headers.length > 0 ||
+    detected.phone_headers.length > 0 ||
     detected.linkedin_by_value ||
     detected.twitter_by_value;
   const hasCompanyHeader =
@@ -425,7 +452,7 @@ function diagnoseEmptyImport(
     detected.company_name_headers.length > 0;
   if (!hasPersonHeader) {
     warnings.push(
-      `no person-identifier column found — people not created. Accepted: email | email_address | work_email[_N] | personal_email[_N] | primary_email[_N] | other_emails | linkedin_url | linkedin | twitter_url | x_url (or any column whose values are linkedin.com / x.com URLs).`,
+      `no person-identifier column found — people not created. Accepted: email | email_address | work_email[_N] | personal_email[_N] | primary_email[_N] | other_emails | linkedin_url | linkedin | twitter_url | x_url | phone | mobile | phone_number | work_phone[_N] | personal_phone[_N] (or any column whose values are linkedin.com / x.com URLs).`,
     );
   } else if (stats.people_created === 0 && stats.people_skipped_no_identifier === rows.length) {
     warnings.push(
@@ -433,6 +460,7 @@ function diagnoseEmptyImport(
         ...detected.email_headers,
         ...detected.linkedin_headers,
         ...detected.twitter_headers,
+        ...detected.phone_headers,
         ...(detected.linkedin_by_value ? ["<linkedin-by-value>"] : []),
         ...(detected.twitter_by_value ? ["<twitter-by-value>"] : []),
       ].join(", ")}) but every row had empty values for them — people not created.`,
@@ -459,11 +487,13 @@ async function importRow(
   source: string,
   rowIndex: number,
   stats: ImportCsvStats,
+  defaultCountry: string | undefined,
 ): Promise<void> {
   const provenance = { row: rowIndex };
 
   const emails = collectEmails(row);
   const primaryEmail = emails[0] ?? null;
+  const phones = collectPhones(row, defaultCountry);
   const composed = [pick(row, "first_name"), pick(row, "last_name")]
     .filter(Boolean)
     .join(" ")
@@ -551,11 +581,14 @@ async function importRow(
       emails,
       linkedin_url: linkedin ?? undefined,
       twitter_url: twitter ?? undefined,
+      phones,
     },
+    { default_country: defaultCountry },
   );
   const linkedinKey = personLookup.normalized.linkedin_url;
   const twitterKey = personLookup.normalized.twitter_url;
-  if (emails.length || linkedinKey || twitterKey) {
+  const phoneKeys = personLookup.normalized.phones;
+  if (emails.length || linkedinKey || twitterKey || phoneKeys.length) {
     personId = personLookup.person_record_id;
     let personIsFresh = false;
     if (!personId) {
@@ -574,6 +607,22 @@ async function importRow(
           isFresh: true,
         });
         cache.set(cacheKey("people", "email_addresses", e.trim().toLowerCase()), personId);
+      }
+      for (const p of phones) {
+        const normalized = normalizePhoneNumber(p, defaultCountry);
+        if (!normalized) continue;
+        await addMultiValue(lix, batcher, {
+          object_slug: "people",
+          record_id: personId,
+          attribute_slug: "phone_numbers",
+          attribute_type: "phone-number",
+          attribute_config: { default_country: defaultCountry },
+          value: p,
+          source,
+          provenance,
+          isFresh: true,
+        });
+        cache.set(cacheKey("people", "phone_numbers", normalized), personId);
       }
       if (linkedinKey) {
         await setSingleValue(lix, batcher, {
@@ -750,6 +799,11 @@ export type ImportCsvArgs = {
   // `csv:<basename>`).
   source: string;
 
+  // ISO country code (e.g. "US") used to parse locally-formatted phone
+  // numbers into E.164. Without it, "(415) 555-1234" stays as digits-only
+  // and won't dedupe against "+14155551234".
+  default_country?: string;
+
   // Optional progress callbacks. The SDK never writes to process.stderr —
   // these hooks let CLI consumers report progress in their own form.
   onStart?: (info: { total: number; detected: DetectedColumns }) => void;
@@ -765,11 +819,11 @@ export type ImportCsvResult = {
 };
 
 // Import a CSV string into the workspace. Creates one person per email /
-// LinkedIn URL / Twitter URL, one company per domain (or per name when no
-// domain is available), and one deal per row that has `deal_name` / `deal`.
-// All writes are batched into multi-row INSERTs and flushed adaptively
-// (once-at-end for small CSVs, every-N-rows for large CSVs) so file size
-// and memory stay bounded.
+// LinkedIn URL / Twitter URL / phone number, one company per domain (or per
+// name when no domain is available), and one deal per row that has
+// `deal_name` / `deal`. All writes are batched into multi-row INSERTs and
+// flushed adaptively (once-at-end for small CSVs, every-N-rows for large
+// CSVs) so file size and memory stay bounded.
 export async function importCsv(
   workspace: Workspace,
   args: ImportCsvArgs,
@@ -794,7 +848,16 @@ export async function importCsv(
       : Number.POSITIVE_INFINITY;
 
   for (let i = 0; i < rows.length; i++) {
-    await importRow(lix, batcher, cache, rows[i]!, args.source, i + 1, stats);
+    await importRow(
+      lix,
+      batcher,
+      cache,
+      rows[i]!,
+      args.source,
+      i + 1,
+      stats,
+      args.default_country,
+    );
     if ((i + 1) % flushEvery === 0) {
       await batcher.flush();
     }

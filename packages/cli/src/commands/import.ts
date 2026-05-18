@@ -28,7 +28,12 @@ export function registerImport(program: Command): void {
   importCmd
     .command("csv <path>")
     .description(
-      "import a CSV. Creates one person per email, LinkedIn URL, or Twitter/X URL, and one company per domain. Creates a deal only when the CSV has a 'deal_name' or 'deal' column — leads alone do not become deals.",
+      "import a CSV. Creates one person per email, LinkedIn URL, Twitter/X URL, or phone number, and one company per domain. Creates a deal only when the CSV has a 'deal_name' or 'deal' column — leads alone do not become deals.",
+    )
+    .option(
+      "--default-country <iso>",
+      "ISO country code (e.g. US, GB, DE) used to parse locally-formatted phone numbers into E.164. Numbers that already include '+<dial-code>' are unaffected.",
+      "US",
     )
     .addHelpText(
       "after",
@@ -45,6 +50,10 @@ Recognized columns (header is trim+lowercase only — use snake_case, not "Compa
                  (or any column whose values are linkedin.com URLs)
              twitter_url | twitter | x_url | x
                  (or any column whose values are x.com / twitter.com URLs)
+             phone | mobile | cell | telephone | tel | phone_number
+             work_phone[_N] | personal_phone[_N] | home_phone | mobile_number
+                 (comma/semicolon-separated; parsed to E.164 using
+                 --default-country if no '+' prefix is present)
 
   Company    company | company_name | organization
              domain | website | company_domain
@@ -60,15 +69,20 @@ Identity:
     When a row has a company name but no domain/email, the company is
     deduplicated by case-insensitive name instead.
   - people are deduplicated in priority order: lowercased email, then canonical
-    LinkedIn URL, then canonical Twitter/X URL. URLs are normalized by stripping
-    protocol/www/query/fragment/trailing-slash; twitter.com is unified to x.com;
-    bare handles ("@foo") are accepted for twitter and become "x.com/foo"
-  - rows with none of email/linkedin/twitter skip person creation
+    LinkedIn URL, then canonical Twitter/X URL, then E.164 phone number.
+    URLs are normalized by stripping protocol/www/query/fragment/trailing-slash;
+    twitter.com is unified to x.com; bare handles ("@foo") are accepted for
+    twitter and become "x.com/foo". Phone numbers are parsed via libphonenumber
+    using --default-country (defaults to US) — "(415) 555-1234" and
+    "+14155551234" dedupe to the same person. Numbers that already start with
+    "+" are parsed independent of the default country. Pass
+    --default-country=GB (etc.) when importing contacts from another locale.
+  - rows with none of email/linkedin/twitter/phone skip person creation
   - rows without a domain, email, or company name skip company creation
 `,
     )
     .action(
-      async (csvPath: string) => {
+      async (csvPath: string, options: { defaultCountry?: string }) => {
         const root = program.opts() as { json?: boolean; workspace?: string };
         setJsonMode(root.json);
         let ws: Workspace | null = null;
@@ -95,11 +109,13 @@ Identity:
           const result = await importCsv(ws, {
             csvText,
             source,
+            default_country: options.defaultCountry,
             onStart: ({ total, detected }) => {
               const personHints = [
                 ...detected.email_headers,
                 ...detected.linkedin_headers,
                 ...detected.twitter_headers,
+                ...detected.phone_headers,
                 ...(detected.linkedin_by_value ? ["<linkedin-by-value>"] : []),
                 ...(detected.twitter_by_value ? ["<twitter-by-value>"] : []),
               ];
