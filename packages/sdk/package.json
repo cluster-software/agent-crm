@@ -26,7 +26,8 @@
   },
   "dependencies": {
     "@lix-js/sdk": "0.6.0-preview.3",
-    "better-sqlite3": "^12.9.0"
+    "better-sqlite3": "^12.9.0",
+    "libphonenumber-js": "^1.13.2"
   },
   "engines": {
     "node": ">=20"

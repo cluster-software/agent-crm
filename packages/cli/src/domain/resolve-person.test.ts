@@ -27,6 +27,7 @@ describe("normalizeIdentifiers", () => {
       emails: ["alice@example.com"],
       linkedin_url: null,
       twitter_url: null,
+      phones: [],
     });
   });
 
@@ -35,6 +36,7 @@ describe("normalizeIdentifiers", () => {
       emails: ["bob@acme.com"],
       linkedin_url: null,
       twitter_url: null,
+      phones: [],
     });
   });
 
@@ -48,6 +50,7 @@ describe("normalizeIdentifiers", () => {
       emails: ["shared@x.com", "other@x.com"],
       linkedin_url: null,
       twitter_url: null,
+      phones: [],
     });
   });
 
@@ -61,13 +64,88 @@ describe("normalizeIdentifiers", () => {
       emails: [],
       linkedin_url: "linkedin.com/in/foo",
       twitter_url: "x.com/bar",
+      phones: [],
     });
   });
 
   it("returns null for whitespace-only urls", () => {
     expect(
       normalizeIdentifiers({ linkedin_url: "   ", twitter_url: "   " }),
-    ).toEqual({ emails: [], linkedin_url: null, twitter_url: null });
+    ).toEqual({
+      emails: [],
+      linkedin_url: null,
+      twitter_url: null,
+      phones: [],
+    });
+  });
+
+  it("parses E.164 inputs and dedupes formatted duplicates", () => {
+    expect(
+      normalizeIdentifiers({
+        phones: ["+1 (415) 555-1234", "+14155551234", "  no digits  "],
+      }),
+    ).toEqual({
+      emails: [],
+      linkedin_url: null,
+      twitter_url: null,
+      phones: ["+14155551234"],
+    });
+  });
+
+  it("parses locally-formatted numbers when a default country is given", () => {
+    expect(
+      normalizeIdentifiers(
+        { phone: "(212) 555-9999" },
+        { default_country: "US" },
+      ),
+    ).toEqual({
+      emails: [],
+      linkedin_url: null,
+      twitter_url: null,
+      phones: ["+12125559999"],
+    });
+  });
+
+  it("dedupes local and +-prefixed forms under the same country", () => {
+    expect(
+      normalizeIdentifiers(
+        { phones: ["(415) 555-1234", "+1 415 555 1234", "1-415-555-1234"] },
+        { default_country: "US" },
+      ),
+    ).toEqual({
+      emails: [],
+      linkedin_url: null,
+      twitter_url: null,
+      phones: ["+14155551234"],
+    });
+  });
+
+  it("parses non-US numbers when +-prefixed regardless of default country", () => {
+    expect(
+      normalizeIdentifiers(
+        { phone: "+44 20 7946 0958" },
+        { default_country: "US" },
+      ),
+    ).toEqual({
+      emails: [],
+      linkedin_url: null,
+      twitter_url: null,
+      phones: ["+442079460958"],
+    });
+  });
+
+  it("drops phone candidates that have no digits", () => {
+    expect(
+      normalizeIdentifiers(
+        { phones: ["not a phone", "()", "   "] },
+        { default_country: "US" },
+      ),
+    ).toEqual({
+      emails: [],
+      linkedin_url: null,
+      twitter_url: null,
+      phones: [],
+    });
   });
 });
 
@@ -168,6 +246,68 @@ describe("resolvePersonByIdentifiers", () => {
     expect(calls.map((c) => c.key)).toEqual([
       "first@acme.com",
       "second@acme.com",
+    ]);
+  });
+
+  it("falls through to phone when email/linkedin/twitter miss", async () => {
+    const { fn, calls } = makeLookup({
+      phone_numbers: { "+14155551234": "person-4" },
+    });
+    const result = await resolvePersonByIdentifiers(
+      fn,
+      {
+        email: "ghost@nowhere.com",
+        linkedin_url: "linkedin.com/in/ghost",
+        twitter_url: "@ghost",
+        phone: "+1 (415) 555-1234",
+      },
+      { default_country: "US" },
+    );
+    expect(result.person_record_id).toBe("person-4");
+    expect(result.matched_by).toBe("phone_numbers");
+    expect(result.matched_key).toBe("+14155551234");
+    expect(result.tried).toEqual([
+      "email_addresses",
+      "linkedin_url",
+      "twitter_url",
+      "phone_numbers",
+    ]);
+    expect(calls.map((c) => c.attr)).toEqual([
+      "email_addresses",
+      "linkedin_url",
+      "twitter_url",
+      "phone_numbers",
+    ]);
+  });
+
+  it("resolves locally-formatted phones via default_country", async () => {
+    const { fn } = makeLookup({
+      phone_numbers: { "+12125559999": "person-5" },
+    });
+    const result = await resolvePersonByIdentifiers(
+      fn,
+      { phone: "(212) 555-9999" },
+      { default_country: "US" },
+    );
+    expect(result.person_record_id).toBe("person-5");
+    expect(result.matched_by).toBe("phone_numbers");
+    expect(result.tried).toEqual(["phone_numbers"]);
+  });
+
+  it("tries every phone before falling through", async () => {
+    const { fn, calls } = makeLookup({
+      phone_numbers: { "+12125559999": "person-6" },
+    });
+    const result = await resolvePersonByIdentifiers(
+      fn,
+      { phones: ["415-555-1234", "212-555-9999"] },
+      { default_country: "US" },
+    );
+    expect(result.person_record_id).toBe("person-6");
+    expect(result.matched_key).toBe("+12125559999");
+    expect(calls.map((c) => c.key)).toEqual([
+      "+14155551234",
+      "+12125559999",
     ]);
   });
 });

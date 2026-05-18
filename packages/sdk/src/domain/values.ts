@@ -1,9 +1,14 @@
+import {
+  parsePhoneNumberFromString,
+  type CountryCode,
+} from "libphonenumber-js/min";
 import { AcrmError, ERR } from "../lib/errors.js";
 
 export type AttributeType =
   | "text"
   | "personal-name"
   | "email-address"
+  | "phone-number"
   | "domain"
   | "url"
   | "number"
@@ -74,6 +79,13 @@ export function encode(
         email_local_specifier: local,
       };
     }
+    case "phone-number": {
+      const raw = String(input).trim();
+      const defaultCountry = config?.default_country as string | undefined;
+      const normalized = normalizePhoneNumber(raw, defaultCountry);
+      if (!normalized) throw new Error(`invalid phone number: ${raw}`);
+      return { phone_number: normalized, original_phone_number: raw };
+    }
     case "domain": {
       const d = normalizeDomain(String(input));
       return { domain: d, root_domain: rootDomain(d) };
@@ -127,6 +139,8 @@ export function normalizeUniqueKey(
   switch (type) {
     case "email-address":
       return (value.email_address as string | undefined)?.toLowerCase() ?? null;
+    case "phone-number":
+      return (value.phone_number as string | undefined) ?? null;
     case "domain":
       return (value.domain as string | undefined)?.toLowerCase() ?? null;
     case "url":
@@ -165,6 +179,33 @@ export function domainFromEmail(email: string): string | null {
   const at = email.indexOf("@");
   if (at < 0) return null;
   return email.slice(at + 1).toLowerCase();
+}
+
+// Parse to E.164 via libphonenumber-js. With `defaultCountry`, a local-format
+// number ("(415) 555-1234") resolves to E.164 ("+14155551234"); without it,
+// only numbers that already carry a "+<dial-code>" prefix parse cleanly. When
+// the parser can't make sense of the input we fall back to a digit-strip
+// (preserving a leading `+`) so short codes, extensions, and other oddities
+// still produce a stable dedup key instead of getting silently dropped.
+export function normalizePhoneNumber(
+  input: string,
+  defaultCountry?: string,
+): string | null {
+  const s = input.trim();
+  if (!s) return null;
+  const country = (defaultCountry?.toUpperCase() || undefined) as
+    | CountryCode
+    | undefined;
+  try {
+    const parsed = parsePhoneNumberFromString(s, country);
+    if (parsed?.number) return parsed.number;
+  } catch {
+    // libphonenumber-js can throw on malformed input — fall through.
+  }
+  const hasPlus = s.startsWith("+");
+  const digits = s.replace(/\D+/g, "");
+  if (!digits) return null;
+  return hasPlus ? `+${digits}` : digits;
 }
 
 export function normalizeLinkedinUrl(input: string): string | null {
