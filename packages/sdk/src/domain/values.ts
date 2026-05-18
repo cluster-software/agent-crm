@@ -95,8 +95,8 @@ export function encode(
       const match = resolveStatusOption(raw, config?.options);
       if (match) return { id: match.id, title: match.title };
       // If options are configured, reject unknown values rather than silently
-      // creating a "free-text" option that won't roundtrip through the UI and
-      // can't be filtered with `WHERE id=...`. Pre-0.11 builds coerced into
+      // creating a "free-text" option that can't be filtered with `WHERE
+      // id=...`. Pre-0.11 builds coerced into
       // `{title: raw}`, which made `acrm import csv` accept e.g.
       // `deal_stage,sourced` against the locked sales enum without complaint —
       // see the ax-eval write-up.

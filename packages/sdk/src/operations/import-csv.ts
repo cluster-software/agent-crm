@@ -751,7 +751,7 @@ export type ImportCsvArgs = {
   source: string;
 
   // Optional progress callbacks. The SDK never writes to process.stderr —
-  // these hooks let CLI/UI consumers report progress in their own form.
+  // these hooks let CLI consumers report progress in their own form.
   onStart?: (info: { total: number; detected: DetectedColumns }) => void;
   onProgress?: (info: { current: number; total: number; stats: ImportCsvStats }) => void;
   onBeforeFinalFlush?: (info: { pending_count: number }) => void;
