@@ -2,6 +2,15 @@
   "name": "@agent-crm/cli",
   "version": "0.14.0",
   "description": "The headless CRM for Claude",
+  "homepage": "https://github.com/cluster-software/agent-crm#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cluster-software/agent-crm.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/cluster-software/agent-crm/issues"
+  },
   "type": "module",
   "bin": {
     "acrm": "dist/bin/acrm.js"
