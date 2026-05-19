@@ -4,11 +4,9 @@
 
 </div>
 
-Claude is running your GTM and your leads live in CSVs. Spreadsheets fall apart around 30 deals in: you lose track of who said what, what's open, and what's next. CRMs solve that, but they were built for humans clicking through UIs, not agents reading and writing it on your behalf.
+Let Claude run sales for you. Claude needs a source of truth but existing CRMs are too hard for Claude to work with. Their MCPs torch your context window, every action is a network round-trip, and you blow through your usage limits.
 
-Plug Claude into your CRM via MCP and the schema torches your context, every action is a network round-trip, and you blow through your usage limits. Salesforce and HubSpot are shipping their own CLIs, but they end at the deal record — the scrapes, enrichment runs, and half-cleaned lists that fed it live somewhere else. You can't see what your last scrape pulled in and what it didn't clean up, or pick up where last weekend's list-building session left off.
-
-Agents work best on files. Agent CRM is a portable `.acrm` file your agent can query, edit, diff, and version — pipeline, scrapes, and enrichments, all in one place.
+Solution: Agent CRM. Headless, scriptable, with a CLI for Claude to interact with.
 
 ```txt
                     ┌──────────────┐
