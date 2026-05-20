@@ -1,5 +1,14 @@
 # @agent-crm/cli
 
+## 0.15.2
+
+### Patch Changes
+
+- 1c319a3: Fix `import-post` SKILL.md: the description contained `Phrasings:` mid-string,
+  which YAML parses as a nested mapping key. Codex enforces YAML strictly and
+  was skipping the skill with `mapping values are not allowed in this context`.
+  Replace the colon with an em dash so the frontmatter parses everywhere.
+
 ## 0.15.1
 
 ### Patch Changes
