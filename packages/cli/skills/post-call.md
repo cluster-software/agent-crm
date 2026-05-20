@@ -1,4 +1,5 @@
 ---
+name: post-call
 description: After a meeting, pull its transcript from whichever provider you have connected (Granola, manual paste/file, etc.) and import it into the .acrm workspace as a `transcripts` record linked to the attendees. Provider-agnostic.
 ---
 

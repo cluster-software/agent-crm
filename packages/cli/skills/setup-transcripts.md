@@ -1,4 +1,5 @@
 ---
+name: setup-transcripts
 description: Connect a meeting transcription provider (Granola, Otter, Fireflies, Fathom, Zoom export, manual paste, etc.) so /post-call can pull transcripts into the .acrm workspace. Provider-agnostic — pick which one to use, or connect more than one.
 ---
 
