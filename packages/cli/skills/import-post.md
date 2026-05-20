@@ -1,6 +1,6 @@
 ---
 name: import-post
-description: Import a LinkedIn or X post into the .acrm workspace by URL. Triggers when the user shares a LinkedIn post URL (linkedin.com/posts/..., linkedin.com/feed/update/urn:li:activity:...) or an X/Twitter status URL (x.com/<handle>/status/<id>, twitter.com/...) and wants to track the post or its author. Phrasings: "import this post", "save this LinkedIn post", "track this tweet", "add this person from their post", or just a bare post URL in chat.
+description: Import a LinkedIn or X post into the .acrm workspace by URL. Triggers when the user shares a LinkedIn post URL (linkedin.com/posts/..., linkedin.com/feed/update/urn:li:activity:...) or an X/Twitter status URL (x.com/<handle>/status/<id>, twitter.com/...) and wants to track the post or its author. Phrasings — "import this post", "save this LinkedIn post", "track this tweet", "add this person from their post", or just a bare post URL in chat.
 ---
 
 # import-post
