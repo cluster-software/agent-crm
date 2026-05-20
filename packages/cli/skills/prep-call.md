@@ -1,4 +1,5 @@
 ---
+name: prep-call
 description: Prep for a call with a person in your .acrm workspace. Pulls the person's record, their company, and any deals; fetches the LinkedIn profile (cached); produces a one-pager with discovery questions.
 ---
 

@@ -1,4 +1,5 @@
 ---
+name: acrm-query
 description: Cheat-sheet for querying the .acrm workspace with `acrm execute`. Read this before writing any SQL against acrm. acrm uses an EAV schema — there is no `people` / `companies` / `transcripts` table.
 ---
 
