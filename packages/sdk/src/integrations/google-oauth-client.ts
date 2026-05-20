@@ -22,8 +22,8 @@
 // cluster-software Google account) completes. Until then the env-var
 // override path is the only viable one — bundled values intentionally fail
 // so we notice if we ship without populating them.
-const BUNDLED_CLIENT_ID = "";
-const BUNDLED_CLIENT_SECRET = "";
+const BUNDLED_CLIENT_ID = "809836098986-6rmq1log3rc5mdao58ltcr83crrnmshh.apps.googleusercontent.com";
+const BUNDLED_CLIENT_SECRET = "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";
 
 // Standard installed-app OAuth endpoints. Identical across every Google
 // Desktop OAuth client; safe to hard-code.
