@@ -14,6 +14,7 @@ export * from "./domain/values.js";
 // overlapping symbol names — import them via subpath, e.g.
 // "@agent-crm/sdk/integrations/apify-linkedin.js".
 export * from "./integrations/apify-post.js";
+export * from "./integrations/google-oauth-client.js";
 export * from "./integrations/granola.js";
 export * from "./integrations/mcp-http-client.js";
 export * from "./integrations/post-mapping.js";
@@ -34,6 +35,7 @@ export { Workspace } from "./workspace.js";
 
 export * from "./operations/execute.js";
 export * from "./operations/import-csv.js";
+export * from "./operations/import-google.js";
 export * from "./operations/import-linkedin.js";
 export * from "./operations/import-post.js";
 export * from "./operations/import-transcript.js";
