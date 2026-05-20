@@ -25,19 +25,42 @@ describe("gws-bootstrap", () => {
     expect(resolveGwsConfigDir()).toBe(tmp);
   });
 
-  it("ensureBundledClientSecret writes client_secret.json when missing (env-var creds)", () => {
+  it("ensureBundledClientSecret writes client_secret.json with env-var creds when set", () => {
     process.env.ACRM_GOOGLE_CLIENT_ID = "test-client-id.apps.googleusercontent.com";
     process.env.ACRM_GOOGLE_CLIENT_SECRET = "test-client-secret";
+    process.env.ACRM_GOOGLE_PROJECT_ID = "test-proj";
     const result = ensureBundledClientSecret();
     expect(result.wrote).toBe(true);
     expect(result.path).toBe(join(tmp, "client_secret.json"));
     const file = JSON.parse(readFileSync(result.path, "utf8")) as {
-      installed: { client_id: string; client_secret: string };
+      installed: {
+        client_id: string;
+        client_secret: string;
+        project_id: string;
+      };
     };
     expect(file.installed.client_id).toBe(
       "test-client-id.apps.googleusercontent.com",
     );
     expect(file.installed.client_secret).toBe("test-client-secret");
+    expect(file.installed.project_id).toBe("test-proj");
+  });
+
+  it("ensureBundledClientSecret falls back to bundled creds when env is unset", () => {
+    delete process.env.ACRM_GOOGLE_CLIENT_ID;
+    delete process.env.ACRM_GOOGLE_CLIENT_SECRET;
+    delete process.env.ACRM_GOOGLE_PROJECT_ID;
+    const result = ensureBundledClientSecret();
+    expect(result.wrote).toBe(true);
+    const file = JSON.parse(readFileSync(result.path, "utf8")) as {
+      installed: { client_id: string; project_id: string };
+    };
+    // The bundled GCP project for acrm's production OAuth client.
+    expect(file.installed.project_id).toBe("agent-crm-prod");
+    // Bundled client_id matches the value committed to source.
+    expect(file.installed.client_id).toMatch(
+      /^\d+-.+\.apps\.googleusercontent\.com$/,
+    );
   });
 
   it("ensureBundledClientSecret leaves an existing file alone", () => {
@@ -51,11 +74,14 @@ describe("gws-bootstrap", () => {
     expect(readFileSync(path, "utf8")).toBe(userSupplied);
   });
 
-  it("ensureBundledClientSecret throws with a clear hint when no creds are available", () => {
-    delete process.env.ACRM_GOOGLE_CLIENT_ID;
-    delete process.env.ACRM_GOOGLE_CLIENT_SECRET;
-    expect(() => ensureBundledClientSecret()).toThrowError(
-      /no Google OAuth client available/i,
-    );
+  it("ensureBundledClientSecret defaults project_id when env-var creds omit it", () => {
+    process.env.ACRM_GOOGLE_CLIENT_ID = "byo-id";
+    process.env.ACRM_GOOGLE_CLIENT_SECRET = "byo-secret";
+    delete process.env.ACRM_GOOGLE_PROJECT_ID;
+    const result = ensureBundledClientSecret();
+    const file = JSON.parse(readFileSync(result.path, "utf8")) as {
+      installed: { project_id: string };
+    };
+    expect(file.installed.project_id).toBe("user-supplied");
   });
 });

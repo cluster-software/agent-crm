@@ -42,8 +42,17 @@ export function ensureBundledClientSecret(): { wrote: boolean; path: string } {
   return { wrote: true, path };
 }
 
-// Drive `gws auth login -s people` ourselves so the user sees one browser
-// pop-up and that's it — no separate command for them to remember.
+// Scopes we request when driving the OAuth flow. These match what's
+// pre-approved on the consent screen of acrm's production OAuth client.
+// `-s` in gws is a SERVICE filter, not a scope list — use `--scopes` with
+// the full URLs.
+const PEOPLE_SCOPES = [
+  "https://www.googleapis.com/auth/contacts.readonly",
+  "https://www.googleapis.com/auth/contacts.other.readonly",
+].join(",");
+
+// Drive `gws auth login --scopes=...` ourselves so the user sees one
+// browser pop-up and that's it — no separate command for them to remember.
 //
 // gws prints status text ("Your browser has been opened…") to stdout. We
 // must not let that leak into acrm's stdout, because acrm reserves stdout
@@ -51,9 +60,13 @@ export function ensureBundledClientSecret(): { wrote: boolean; path: string } {
 // as malformed JSON. Route gws output to our stderr instead.
 export async function runGwsAuthLogin(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn("gws", ["auth", "login", "-s", "people"], {
-      stdio: ["inherit", "pipe", "inherit"],
-    });
+    const child = spawn(
+      "gws",
+      ["auth", "login", "--scopes", PEOPLE_SCOPES],
+      {
+        stdio: ["inherit", "pipe", "inherit"],
+      },
+    );
     child.stdout?.on("data", (b: Buffer) => process.stderr.write(b));
     child.once("error", reject);
     child.once("close", (code) => {
@@ -63,7 +76,7 @@ export async function runGwsAuthLogin(): Promise<void> {
           new AcrmError(
             `gws auth login exited with code ${code}`,
             ERR.INVALID_INPUT,
-            "the browser-based OAuth flow did not complete. try running `gws auth login -s people` directly to see the full error.",
+            `the browser-based OAuth flow did not complete. try running \`gws auth login --scopes=${PEOPLE_SCOPES}\` directly to see the full error.`,
           ),
         );
     });

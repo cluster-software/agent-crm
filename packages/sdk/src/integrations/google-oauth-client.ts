@@ -24,6 +24,7 @@
 // so we notice if we ship without populating them.
 const BUNDLED_CLIENT_ID = "809836098986-6rmq1log3rc5mdao58ltcr83crrnmshh.apps.googleusercontent.com";
 const BUNDLED_CLIENT_SECRET = "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";
+const BUNDLED_PROJECT_ID = "agent-crm-prod";
 
 // Standard installed-app OAuth endpoints. Identical across every Google
 // Desktop OAuth client; safe to hard-code.
@@ -49,6 +50,9 @@ export type GoogleOauthClientFile = {
 export type ResolvedClientCredentials = {
   client_id: string;
   client_secret: string;
+  // GCP project ID the OAuth client lives under. gws's JSON parser
+  // requires this field — without it the file is rejected as malformed.
+  project_id: string;
   source: "env" | "bundled";
 };
 
@@ -61,12 +65,18 @@ export function resolveGoogleClientCredentials(
   const envId = env.ACRM_GOOGLE_CLIENT_ID?.trim();
   const envSecret = env.ACRM_GOOGLE_CLIENT_SECRET?.trim();
   if (envId && envSecret) {
-    return { client_id: envId, client_secret: envSecret, source: "env" };
+    return {
+      client_id: envId,
+      client_secret: envSecret,
+      project_id: env.ACRM_GOOGLE_PROJECT_ID?.trim() || "user-supplied",
+      source: "env",
+    };
   }
   if (BUNDLED_CLIENT_ID && BUNDLED_CLIENT_SECRET) {
     return {
       client_id: BUNDLED_CLIENT_ID,
       client_secret: BUNDLED_CLIENT_SECRET,
+      project_id: BUNDLED_PROJECT_ID,
       source: "bundled",
     };
   }
@@ -80,6 +90,7 @@ export function buildClientSecretJson(
   return {
     installed: {
       client_id: creds.client_id,
+      project_id: creds.project_id,
       auth_uri: AUTH_URI,
       token_uri: TOKEN_URI,
       auth_provider_x509_cert_url: CERT_URL,
