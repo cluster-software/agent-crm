@@ -40,3 +40,5 @@ export * from "./operations/import-transcript.js";
 export * from "./operations/import-x.js";
 export * from "./operations/records.js";
 export * from "./operations/schema.js";
+export * from "./operations/signal-jobs.js";
+export * from "./operations/signals.js";

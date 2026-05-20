@@ -9,6 +9,7 @@ import {
 } from "@agent-crm/sdk";
 import { resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, isJson, ok, setJsonMode } from "../output/json.js";
+import { startMissingSignalsForRecords } from "../signals.js";
 
 // Exposed so other import subcommands (e.g. `import linkedin`, `import x`)
 // can attach themselves to the same `import` parent without redefining it.
@@ -35,6 +36,7 @@ export function registerImport(program: Command): void {
       "ISO country code (e.g. US, GB, DE) used to parse locally-formatted phone numbers into E.164. Numbers that already include '+<dial-code>' are unaffected.",
       "US",
     )
+    .option("--no-signals", "skip local signals after importing records")
     .addHelpText(
       "after",
       `
@@ -82,7 +84,7 @@ Identity:
 `,
     )
     .action(
-      async (csvPath: string, options: { defaultCountry?: string }) => {
+      async (csvPath: string, options: { defaultCountry?: string; signals?: boolean }) => {
         const root = program.opts() as { json?: boolean; workspace?: string };
         setJsonMode(root.json);
         let ws: Workspace | null = null;
@@ -170,7 +172,29 @@ Identity:
           await ws.close();
           ws = null;
 
-          ok({ ...result.stats });
+          const signalRun =
+            options.signals === false
+              ? null
+              : startMissingSignalsForRecords(
+                  resolveWorkspacePath(root.workspace),
+                  result.touched_records,
+                );
+          if (signalRun?.warning && !isJson()) {
+            process.stderr.write(`warning: signals skipped: ${signalRun.warning}\n`);
+          }
+          if (signalRun?.background && !isJson()) {
+            for (const job of signalRun.background.jobs) {
+              process.stderr.write(
+                `signals running in background for ${job.object_slug} (${job.record_ids.length} records), log: ${job.log_path}\n`,
+              );
+            }
+          }
+
+          ok({
+            ...result.stats,
+            ...(signalRun?.background ? { signals_background: signalRun.background } : {}),
+            ...(signalRun?.warning ? { signals_warning: signalRun.warning } : {}),
+          });
         } catch (e) {
           if (ws) {
             try {

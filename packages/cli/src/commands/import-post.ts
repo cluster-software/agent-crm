@@ -6,14 +6,17 @@ import {
   Workspace,
   importPost,
   normalizePostUrl,
+  type PostImportResult,
 } from "@agent-crm/sdk";
 import { resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, ok, setJsonMode } from "../output/json.js";
 import { loadDotenv } from "../lib/dotenv.js";
+import { type BackgroundSignalRun, startMissingSignalsForRecords } from "../signals.js";
 
 type Opts = {
   refresh?: boolean;
   cache?: boolean;
+  signals?: boolean;
 };
 
 export function attachPostSubcommand(parent: Command): void {
@@ -24,6 +27,7 @@ export function attachPostSubcommand(parent: Command): void {
     )
     .option("--refresh", "bypass cache and re-fetch from Apify")
     .option("--no-cache", "do not write the response to cache")
+    .option("--no-signals", "skip local signals after importing records")
     .addHelpText(
       "after",
       `
@@ -57,6 +61,7 @@ repeat runs free.
           workspace: root?.workspace,
           refresh: opts.refresh,
           noCache: opts.cache === false,
+          noSignals: opts.signals === false,
         });
         ok({
           ...result,
@@ -79,8 +84,8 @@ repeat runs free.
 
 async function runImportPost(
   rawUrl: string,
-  opts: { workspace?: string; refresh?: boolean; noCache?: boolean },
-) {
+  opts: { workspace?: string; refresh?: boolean; noCache?: boolean; noSignals?: boolean },
+): Promise<PostImportResult & { signals_background?: BackgroundSignalRun; signals_warning?: string }> {
   const sniffed = normalizePostUrl(rawUrl);
   if (!sniffed) {
     throw new AcrmError(
@@ -116,9 +121,11 @@ async function runImportPost(
     platform === "linkedin" ? "linkedin" : "x",
   );
 
+  let result: PostImportResult | null = null;
+  let records: Array<{ object_slug: "people" | "companies"; record_id: string }> = [];
   const ws = await Workspace.open(workspaceFile);
   try {
-    return await importPost(ws, {
+    result = await importPost(ws, {
       rawUrl,
       token,
       postCacheDir,
@@ -126,7 +133,23 @@ async function runImportPost(
       refresh: opts.refresh,
       noCache: opts.noCache,
     });
+    if (!opts.noSignals) {
+      records = [
+        { object_slug: "people" as const, record_id: result.person_record_id },
+        ...(result.company_record_id
+          ? [{ object_slug: "companies" as const, record_id: result.company_record_id }]
+          : []),
+      ];
+    }
   } finally {
     await ws.close();
   }
+  if (!result) throw new AcrmError("Post import did not return a result", ERR.UNHANDLED);
+  if (opts.noSignals) return result;
+  const signalRun = startMissingSignalsForRecords(workspaceFile, records);
+  return {
+    ...result,
+    ...(signalRun?.background ? { signals_background: signalRun.background } : {}),
+    ...(signalRun?.warning ? { signals_warning: signalRun.warning } : {}),
+  };
 }

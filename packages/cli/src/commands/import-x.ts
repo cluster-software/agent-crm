@@ -10,10 +10,12 @@ import {
 import { resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, ok, setJsonMode } from "../output/json.js";
 import { loadDotenv } from "../lib/dotenv.js";
+import { type BackgroundSignalRun, startMissingSignalsForRecords } from "../signals.js";
 
 type Opts = {
   refresh?: boolean;
   cache?: boolean;
+  signals?: boolean;
 };
 
 export function attachXSubcommand(parent: Command): void {
@@ -24,6 +26,7 @@ export function attachXSubcommand(parent: Command): void {
     )
     .option("--refresh", "bypass cache and re-fetch from Apify")
     .option("--no-cache", "do not write the response to cache")
+    .option("--no-signals", "skip local signals after importing records")
     .action(async (handleOrUrl: string, opts: Opts) => {
       const root = parent.parent?.opts() as
         | { workspace?: string; json?: boolean }
@@ -34,6 +37,7 @@ export function attachXSubcommand(parent: Command): void {
           workspace: root?.workspace,
           refresh: opts.refresh,
           noCache: opts.cache === false,
+          noSignals: opts.signals === false,
         });
         ok({
           ...result,
@@ -51,8 +55,8 @@ export function attachXSubcommand(parent: Command): void {
 
 async function runImportX(
   handleOrUrl: string,
-  opts: { workspace?: string; refresh?: boolean; noCache?: boolean },
-): Promise<XImportResult> {
+  opts: { workspace?: string; refresh?: boolean; noCache?: boolean; noSignals?: boolean },
+): Promise<XImportResult & { signals_background?: BackgroundSignalRun; signals_warning?: string }> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
   const workspaceDir = path.dirname(workspaceFile);
   loadDotenv(workspaceDir);
@@ -70,16 +74,29 @@ async function runImportX(
 
   const cacheDir = path.join(workspaceDir, ".cache", "x");
 
+  let result: XImportResult | null = null;
+  let records: Array<{ object_slug: "people"; record_id: string }> = [];
   const ws = await Workspace.open(workspaceFile);
   try {
-    return await importXProfile(ws, {
+    result = await importXProfile(ws, {
       handleOrUrl,
       token,
       cacheDir,
       refresh: opts.refresh,
       noCache: opts.noCache,
     });
+    if (!opts.noSignals) {
+      records = [{ object_slug: "people", record_id: result.person_record_id }];
+    }
   } finally {
     await ws.close();
   }
+  if (!result) throw new AcrmError("X import did not return a result", ERR.UNHANDLED);
+  if (opts.noSignals) return result;
+  const signalRun = startMissingSignalsForRecords(workspaceFile, records);
+  return {
+    ...result,
+    ...(signalRun?.background ? { signals_background: signalRun.background } : {}),
+    ...(signalRun?.warning ? { signals_warning: signalRun.warning } : {}),
+  };
 }
