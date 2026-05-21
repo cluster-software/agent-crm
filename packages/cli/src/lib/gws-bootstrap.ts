@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync, existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   AcrmError,
@@ -51,6 +51,15 @@ const PEOPLE_SCOPES = [
   "https://www.googleapis.com/auth/contacts.other.readonly",
 ].join(",");
 
+// Matches the Google OAuth consent URL gws prints when it can't auto-open a
+// browser (e.g. when stdout isn't a real terminal — Claude Code's Bash tool,
+// CI, ssh sessions without $BROWSER, etc).
+const AUTH_URL_REGEX = /https:\/\/accounts\.google\.com\/o\/oauth2\/\S+/;
+
+// Stable path so skills / wrappers can read the URL back without parsing
+// streamed stderr. Overwritten on each auth attempt.
+export const AUTH_URL_FILE = join(tmpdir(), "acrm-auth-url.txt");
+
 // Drive `gws auth login --scopes=...` ourselves so the user sees one
 // browser pop-up and that's it — no separate command for them to remember.
 //
@@ -58,6 +67,11 @@ const PEOPLE_SCOPES = [
 // must not let that leak into acrm's stdout, because acrm reserves stdout
 // for its own JSON output and downstream parsers see anything-else-on-stdout
 // as malformed JSON. Route gws output to our stderr instead.
+//
+// When the URL appears in the stream we ALSO emit a clearly-delimited banner
+// and write the URL to a temp file. Without the banner, long URLs get
+// truncated in Claude Code's tool-output renderer and the user can't click
+// them; the file gives skills a stable place to read the URL from.
 export async function runGwsAuthLogin(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(
@@ -67,7 +81,28 @@ export async function runGwsAuthLogin(): Promise<void> {
         stdio: ["inherit", "pipe", "inherit"],
       },
     );
-    child.stdout?.on("data", (b: Buffer) => process.stderr.write(b));
+    let buffer = "";
+    let urlEmitted = false;
+    child.stdout?.on("data", (b: Buffer) => {
+      const chunk = b.toString("utf8");
+      buffer += chunk;
+      if (!urlEmitted) {
+        const m = buffer.match(AUTH_URL_REGEX);
+        if (m) {
+          const url = m[0];
+          urlEmitted = true;
+          try {
+            writeFileSync(AUTH_URL_FILE, url + "\n", { mode: 0o600 });
+          } catch {
+            // best-effort; auth still works if the file write fails
+          }
+          process.stderr.write(
+            `\n===== ACRM AUTH URL =====\n${url}\n(also saved to ${AUTH_URL_FILE})\n=========================\n\n`,
+          );
+        }
+      }
+      process.stderr.write(chunk);
+    });
     child.once("error", reject);
     child.once("close", (code) => {
       if (code === 0) resolve();
