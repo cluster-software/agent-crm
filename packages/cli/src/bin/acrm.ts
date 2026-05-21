@@ -9,6 +9,7 @@ import { registerImport, getOrCreateImportCommand } from "../commands/import.js"
 import { attachLinkedinSubcommand } from "../commands/import-linkedin.js";
 import { attachXSubcommand } from "../commands/import-x.js";
 import { attachPostSubcommand } from "../commands/import-post.js";
+import { attachGmailSubcommand } from "../commands/import-gmail.js";
 import { attachTranscriptSubcommand } from "../commands/import-transcript.js";
 import { registerSkills } from "../commands/skills.js";
 import { registerAuth } from "../commands/auth.js";
@@ -58,6 +59,7 @@ Data model:
 Typical flow:
   acrm init <name>.acrm           create a workspace
   acrm import csv ./leads.csv     load people + companies (and deals if columns present)
+  acrm import gmail               sync Google contacts via the gws CLI (https://github.com/googleworkspace/cli) — pulls People API connections + auto-created otherContacts
   acrm import linkedin <url>      add one person from a LinkedIn profile (creates person + company)
   acrm import x <handle>          add one person from an X/Twitter profile
   acrm import post <url>          add a LinkedIn or X **post** by URL — upserts the author as a person and stores the post (use when a user shares a post link they want to track)
@@ -112,6 +114,7 @@ registerImport(program);
 attachLinkedinSubcommand(getOrCreateImportCommand(program));
 attachXSubcommand(getOrCreateImportCommand(program));
 attachPostSubcommand(getOrCreateImportCommand(program));
+attachGmailSubcommand(getOrCreateImportCommand(program));
 attachTranscriptSubcommand(getOrCreateImportCommand(program));
 registerExecute(program);
 registerRecords(program);
