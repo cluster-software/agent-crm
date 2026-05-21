@@ -65,19 +65,39 @@ gws --version       # is the gws CLI installed?
 ! npm install -g @googleworkspace/cli
 ```
 
-##### B — Run the import
+##### B — Run the import (MUST be run in the background)
 
-```sh
-! acrm import gmail
+**You MUST run `acrm import gmail` in the background**, not in the
+foreground. Reason: on first run the CLI spawns `gws auth login`, which
+prints the OAuth consent URL and then blocks waiting for the user to click
+Allow in their browser. A foreground Bash call does not return output to
+you until the command exits — meaning you would not see the URL until
+after the user has *already* consented, which is too late to surface it.
+
+Use the `Bash` tool with `run_in_background: true`:
+
+```
+Bash(command="acrm import gmail", run_in_background=true)
 ```
 
-The CLI handles everything:
+Then poll `BashOutput` for that shell every few seconds. As soon as you
+see the `===== ACRM AUTH URL =====` banner in the output, extract the
+URL on the next line and **immediately** surface it to the user as a
+clickable link with a short instruction ("open this URL in your browser
+and click Allow"). Keep polling `BashOutput` until the shell exits — that
+signals the import has finished and the JSON stats are in the output.
+
+If the URL line is truncated or unreadable in the polled output, fall
+back to reading the file path shown in the banner (e.g.
+`cat /var/folders/.../acrm-auth-url.txt`) to recover the full URL.
+
+What the CLI does under the hood:
 
 1. Writes acrm's bundled OAuth client into `~/.config/gws/client_secret.json`
    on first run (idempotent — leaves an existing file alone).
 2. Probes `people.googleapis.com` to see if there's an active session.
-3. If not, spawns `gws auth login -s people`, which opens a browser for the
-   user to consent.
+3. If not, spawns `gws auth login --scopes <people-scopes>`, which prints
+   the consent URL (no browser auto-opens inside Claude Code).
 4. Streams contacts from People API `connections` (the user's curated
    address book) plus `otherContacts` (everyone Google has auto-saved
    because the user emailed them) and upserts them as `people` +
@@ -101,29 +121,6 @@ JSON output reports counts:
 
 Pass `--no-other-contacts` for "My Contacts only" — skips the auto-saved
 bucket.
-
-##### If you see an `ACRM AUTH URL` banner
-
-When `gws` can't auto-open a browser (which is always the case inside
-Claude Code's Bash tool), `acrm import gmail` prints a block like:
-
-```
-===== ACRM AUTH URL =====
-https://accounts.google.com/o/oauth2/auth?…long…
-(also saved to /var/folders/…/acrm-auth-url.txt)
-=========================
-```
-
-The URL is long and **will be truncated** in the tool-output display.
-Do this:
-
-1. Read the file path shown in the banner (e.g.
-   `cat /var/folders/.../acrm-auth-url.txt`) to recover the full URL.
-2. Surface the **complete URL** to the user as a clickable link in your
-   reply — they need to open it in their own browser to consent.
-3. The `acrm import gmail` process is still running, waiting for the
-   loopback callback. Once the user clicks Allow, it resumes
-   automatically.
 
 ##### Heads-ups
 
