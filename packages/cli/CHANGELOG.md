@@ -1,5 +1,16 @@
 # @agent-crm/cli
 
+## 0.16.2
+
+### Patch Changes
+
+- cc0225c: `acrm-onboarding` skill: instruct Claude to run `acrm import gmail` in the
+  background via `Bash(run_in_background=true)` and poll `BashOutput`, so the
+  OAuth URL banner is surfaced _before_ the user consents. A foreground Bash
+  call doesn't return output until the command exits — and `gws auth login`
+  blocks waiting on the consent callback, so the URL was effectively hidden
+  until users manually backgrounded the process.
+
 ## 0.16.1
 
 ### Patch Changes
