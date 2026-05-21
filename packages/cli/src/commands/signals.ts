@@ -107,6 +107,19 @@ export function registerSignals(program: Command): void {
     .option("--record-id <id>", "run against one record_id; repeatable", collect, [] as string[])
     .option("--limit <n>", "maximum record-signal runs")
     .option("--concurrency <n>", "number of runner processes at a time", "1")
+    .addHelpText(
+      "after",
+      `
+Environment:
+  SIGNAL_RUNS_MODEL       Claude model passed to the default signal runner (default: sonnet)
+  ACRM_SIGNAL_RUNNER      JSON string array override for the full runner command
+
+Default runner:
+  Uses claude -p with WebSearch and WebFetch. Bash is exposed only for commands
+  starting with agent-browser via Claude Code's allowed tool pattern:
+  Bash(agent-browser:*)
+`,
+    )
     .action(
       async (opts: {
         missing?: boolean;

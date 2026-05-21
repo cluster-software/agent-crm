@@ -42,6 +42,12 @@ object: companies
       ]
     },
     {
+      "key": "handelsregisternummer",
+      "attribute": "handelsregisternummer",
+      "title": "Handelsregisternummer",
+      "type": "text"
+    },
+    {
       "key": "outreach_path",
       "attribute": "outreach_path",
       "title": "Outreach path",
@@ -78,4 +84,8 @@ Classify `operator_role` as:
 - `property_contact`: only a generic property contact route is available.
 - `unclear`: evidence is too weak or conflicting.
 
-For `outreach_path`, prefer a direct email or named contact route. If only a contact form or phone number is available, state that plainly. Include citations for each factual claim whenever possible.
+For `operator_name`, return exactly one name. Prefer a person over a family, and a family over an operating entity. If there are multiple plausible people, choose the best operator/contact and put the rest in reasoning, not in the field value.
+
+For `handelsregisternummer`, return only the registration number itself, such as `HRB 158326` or the local equivalent. Put registry jurisdiction, country, source context, and caveats in reasoning, not in the field value. Use `n/a` if no registration number is found.
+
+For `outreach_path`, return only one contact detail: an email address, phone number, contact form URL, or direct booking/contact URL. Do not include labels, explanation, names, addresses, or extra prose in the field value. Put context in reasoning instead. Include citations for each factual claim whenever possible.

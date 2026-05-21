@@ -72,6 +72,8 @@ export type SignalRunArgs = {
 export type SignalRunFailure = SignalRecordRef & {
   signal_slug: string;
   message: string;
+  num_turns?: number;
+  estimated_num_turns?: number;
   stdout_excerpt?: string;
   stderr_excerpt?: string;
 };
@@ -80,6 +82,8 @@ export type SignalRunStatus = SignalRecordRef & {
   signal_slug: string;
   status: "succeeded" | "failed" | "skipped";
   values_written?: number;
+  num_turns?: number;
+  estimated_num_turns?: number;
 };
 
 export type SignalRunResult = {
@@ -172,9 +176,9 @@ const DEFAULT_RUNNER = [
   "stream-json",
   "--verbose",
   "--tools",
-  "WebSearch,WebFetch",
+  "WebSearch,WebFetch,Bash",
   "--allowedTools",
-  "WebSearch,WebFetch",
+  "WebSearch,WebFetch,Bash(agent-browser:*)",
 ];
 const DEFAULT_SIGNAL_RUNS_MODEL = "sonnet";
 const DEFAULT_RUNNER_TIMEOUT_MS = 5 * 60 * 1000;
@@ -341,20 +345,21 @@ export async function runSignals(
         }
         result.runs_attempted++;
         try {
-          const written = await runOneSignal(
+          const run = await runOneSignal(
             workspace,
             definition,
             record,
             requested,
             args.runner ?? defaultRunner,
           );
-          result.values_written += written;
+          result.values_written += run.values_written;
           result.runs_succeeded++;
           result.statuses.push({
             ...record,
             signal_slug: definition.slug,
             status: "succeeded",
-            values_written: written,
+            values_written: run.values_written,
+            ...runnerTurnMetricFields(run),
           });
         } catch (e) {
           const failure = signalFailureFromError(e);
@@ -363,11 +368,13 @@ export async function runSignals(
             ...record,
             signal_slug: definition.slug,
             status: "failed",
+            ...runnerTurnMetricFields(failure),
           });
           result.failures.push({
             ...record,
             signal_slug: definition.slug,
             message: failure.message,
+            ...runnerTurnMetricFields(failure),
             ...(failure.stdout_excerpt ? { stdout_excerpt: failure.stdout_excerpt } : {}),
             ...(failure.stderr_excerpt ? { stderr_excerpt: failure.stderr_excerpt } : {}),
           });
@@ -852,7 +859,7 @@ async function runOneSignal(
   record: SignalRecordRef,
   requested: SignalOutputDefinition[],
   runner: SignalRunner,
-): Promise<number> {
+): Promise<{ values_written: number } & RunnerTurnMetrics> {
   const recordContext = await loadRecordContext(workspace, record);
   const prompt = buildRunnerPrompt(definition, record, requested, recordContext);
   const raw = await runner(prompt, {
@@ -860,6 +867,7 @@ async function runOneSignal(
     record,
     requested_outputs: requested.map((output) => output.key),
   });
+  const metrics = runnerTurnMetrics(raw);
   let outputs: ParsedRunnerOutput[];
   try {
     outputs = parseRunnerResponse(raw, definition);
@@ -896,7 +904,10 @@ async function runOneSignal(
     });
     written++;
   }
-  return written;
+  return {
+    values_written: written,
+    ...runnerTurnMetricFields(metrics),
+  };
 }
 
 async function loadRecordContext(
@@ -1077,26 +1088,74 @@ function parseRunnerPayload(raw: string): unknown {
   return unwrapClaudeJson(parseJson(extractJson(raw)));
 }
 
-function parseClaudeStreamResult(raw: string): unknown {
-  const objects = stripAnsi(raw)
+type RunnerTurnMetrics = {
+  num_turns?: number;
+  estimated_num_turns?: number;
+};
+
+function parseClaudeStreamObjects(raw: string): Record<string, unknown>[] {
+  return stripAnsi(raw)
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.startsWith("{"))
     .flatMap((line) => {
       try {
-        return [JSON.parse(line) as unknown];
+        const parsed = JSON.parse(line) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          return [parsed as Record<string, unknown>];
+        }
+        return [];
       } catch {
         return [];
       }
     });
+}
+
+function parseClaudeStreamResult(raw: string): unknown {
+  const objects = parseClaudeStreamObjects(raw);
   if (objects.length < 2) return undefined;
   for (const item of objects.slice().reverse()) {
-    if (item && typeof item === "object" && !Array.isArray(item)) {
-      const object = item as Record<string, unknown>;
-      if (object.type === "result") return object;
-    }
+    if (item.type === "result") return item;
   }
   return undefined;
+}
+
+function runnerTurnMetrics(raw: string): RunnerTurnMetrics {
+  const objects = parseClaudeStreamObjects(raw);
+  let num_turns: number | undefined;
+  let toolResultMessages = 0;
+  for (const item of objects) {
+    if (item.type === "result" && typeof item.num_turns === "number") {
+      num_turns = item.num_turns;
+    }
+    if (item.type === "user") {
+      const message = item.message;
+      if (!message || typeof message !== "object" || Array.isArray(message)) continue;
+      const content = (message as Record<string, unknown>).content;
+      if (!Array.isArray(content)) continue;
+      const hasToolResult = content.some((block) =>
+        block &&
+        typeof block === "object" &&
+        !Array.isArray(block) &&
+        (block as Record<string, unknown>).type === "tool_result",
+      );
+      if (hasToolResult) {
+        toolResultMessages++;
+      }
+    }
+  }
+  const estimated_num_turns =
+    num_turns === undefined && toolResultMessages > 0 ? toolResultMessages + 1 : undefined;
+  return runnerTurnMetricFields({ num_turns, estimated_num_turns });
+}
+
+function runnerTurnMetricFields(metrics: RunnerTurnMetrics): RunnerTurnMetrics {
+  return {
+    ...(metrics.num_turns !== undefined ? { num_turns: metrics.num_turns } : {}),
+    ...(metrics.estimated_num_turns !== undefined
+      ? { estimated_num_turns: metrics.estimated_num_turns }
+      : {}),
+  };
 }
 
 function unwrapClaudeJson(parsed: unknown): unknown {
@@ -1318,12 +1377,19 @@ function teeRunnerChunk(chunk: string): void {
 }
 
 class SignalRunnerProcessError extends Error {
+  num_turns?: number;
+  estimated_num_turns?: number;
   stdout_excerpt?: string;
   stderr_excerpt?: string;
 
   constructor(message: string, stdout: string, stderr: string) {
     super(message);
     this.name = "SignalRunnerProcessError";
+    const metrics = runnerTurnMetrics(stdout);
+    if (metrics.num_turns !== undefined) this.num_turns = metrics.num_turns;
+    if (metrics.estimated_num_turns !== undefined) {
+      this.estimated_num_turns = metrics.estimated_num_turns;
+    }
     const stdoutExcerpt = textExcerpt(stdout, RUNNER_STDOUT_EXCERPT_CHARS);
     if (stdoutExcerpt) this.stdout_excerpt = stdoutExcerpt;
     const excerpt = textExcerpt(stderr, RUNNER_STDERR_EXCERPT_CHARS);
@@ -1332,11 +1398,18 @@ class SignalRunnerProcessError extends Error {
 }
 
 class SignalRunnerOutputError extends Error {
+  num_turns?: number;
+  estimated_num_turns?: number;
   stdout_excerpt?: string;
 
   constructor(error: unknown, stdout: string) {
     super(error instanceof Error ? error.message : String(error));
     this.name = error instanceof Error ? error.name : "SignalRunnerOutputError";
+    const metrics = runnerTurnMetrics(stdout);
+    if (metrics.num_turns !== undefined) this.num_turns = metrics.num_turns;
+    if (metrics.estimated_num_turns !== undefined) {
+      this.estimated_num_turns = metrics.estimated_num_turns;
+    }
     const excerpt = textExcerpt(sanitizeRunnerOutputForLog(stdout), RUNNER_STDOUT_EXCERPT_CHARS);
     if (excerpt) this.stdout_excerpt = excerpt;
   }
@@ -1344,8 +1417,22 @@ class SignalRunnerOutputError extends Error {
 
 function signalFailureFromError(
   error: unknown,
-): { message: string; stdout_excerpt?: string; stderr_excerpt?: string } {
+): { message: string; stdout_excerpt?: string; stderr_excerpt?: string } & RunnerTurnMetrics {
   const message = error instanceof Error ? error.message : String(error);
+  const num_turns =
+    error &&
+    typeof error === "object" &&
+    "num_turns" in error &&
+    typeof (error as { num_turns?: unknown }).num_turns === "number"
+      ? (error as { num_turns: number }).num_turns
+      : undefined;
+  const estimated_num_turns =
+    error &&
+    typeof error === "object" &&
+    "estimated_num_turns" in error &&
+    typeof (error as { estimated_num_turns?: unknown }).estimated_num_turns === "number"
+      ? (error as { estimated_num_turns: number }).estimated_num_turns
+      : undefined;
   const stdout_excerpt =
     error &&
     typeof error === "object" &&
@@ -1360,14 +1447,12 @@ function signalFailureFromError(
     typeof (error as { stderr_excerpt?: unknown }).stderr_excerpt === "string"
       ? (error as { stderr_excerpt: string }).stderr_excerpt
       : undefined;
-  if (stdout_excerpt || stderr_excerpt) {
-    return {
-      message,
-      ...(stdout_excerpt ? { stdout_excerpt } : {}),
-      ...(stderr_excerpt ? { stderr_excerpt } : {}),
-    };
-  }
-  return { message };
+  return {
+    message,
+    ...runnerTurnMetricFields({ num_turns, estimated_num_turns }),
+    ...(stdout_excerpt ? { stdout_excerpt } : {}),
+    ...(stderr_excerpt ? { stderr_excerpt } : {}),
+  };
 }
 
 function normalizeCitations(raw: unknown): unknown[] {

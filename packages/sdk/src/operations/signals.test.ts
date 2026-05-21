@@ -394,6 +394,7 @@ console.log(JSON.stringify({
 console.log(JSON.stringify({
   type: "result",
   subtype: "success",
+  num_turns: 3,
   structured_output: {
     outputs: [
       {
@@ -432,6 +433,7 @@ console.log(JSON.stringify({
         mode: "force",
       });
       expect(result.runs_succeeded).toBe(1);
+      expect(result.statuses[0]?.num_turns).toBe(3);
       const args = JSON.parse(await readFile(argsPath, "utf8")) as string[];
       expect(args).toContain("--output-format");
       expect(args).toContain("stream-json");
@@ -439,8 +441,9 @@ console.log(JSON.stringify({
       expect(args).toContain("--model");
       expect(args[args.indexOf("--model") + 1]).toBe("sonnet");
       expect(args).toContain("--tools");
-      expect(args).toContain("WebSearch,WebFetch");
+      expect(args).toContain("WebSearch,WebFetch,Bash");
       expect(args).toContain("--allowedTools");
+      expect(args).toContain("WebSearch,WebFetch,Bash(agent-browser:*)");
       expect(args).toContain("--json-schema");
       const schema = JSON.parse(args[args.indexOf("--json-schema") + 1]!) as Record<string, unknown>;
       expect(JSON.stringify(schema)).toContain("operator_status");
@@ -527,7 +530,7 @@ console.log(JSON.stringify({
         claudePath,
         `#!/usr/bin/env node
 console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "thinking", thinking: "private scratchpad should not be logged", signature: "sig" }] } }));
-console.log(JSON.stringify({ type: "result", result: "partial claude stdout before failure" }));
+console.log(JSON.stringify({ type: "result", num_turns: 4, result: "partial claude stdout before failure" }));
 console.error("runner stderr: web search quota exhausted for test");
 process.exit(17);
 `,
@@ -548,6 +551,8 @@ process.exit(17);
       });
       expect(result.runs_failed).toBe(1);
       expect(result.failures[0]?.message).toBe("signal runner exited with code 17");
+      expect(result.failures[0]?.num_turns).toBe(4);
+      expect(result.statuses[0]?.num_turns).toBe(4);
       expect(result.failures[0]?.stdout_excerpt).toContain("partial claude stdout");
       expect(result.failures[0]?.stdout_excerpt).not.toContain("private scratchpad");
       expect(result.failures[0]?.stderr_excerpt).toContain("web search quota exhausted");
