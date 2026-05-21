@@ -102,6 +102,29 @@ JSON output reports counts:
 Pass `--no-other-contacts` for "My Contacts only" — skips the auto-saved
 bucket.
 
+##### If you see an `ACRM AUTH URL` banner
+
+When `gws` can't auto-open a browser (which is always the case inside
+Claude Code's Bash tool), `acrm import gmail` prints a block like:
+
+```
+===== ACRM AUTH URL =====
+https://accounts.google.com/o/oauth2/auth?…long…
+(also saved to /var/folders/…/acrm-auth-url.txt)
+=========================
+```
+
+The URL is long and **will be truncated** in the tool-output display.
+Do this:
+
+1. Read the file path shown in the banner (e.g.
+   `cat /var/folders/.../acrm-auth-url.txt`) to recover the full URL.
+2. Surface the **complete URL** to the user as a clickable link in your
+   reply — they need to open it in their own browser to consent.
+3. The `acrm import gmail` process is still running, waiting for the
+   loopback callback. Once the user clicks Allow, it resumes
+   automatically.
+
 ##### Heads-ups
 
 - **"Google hasn't verified this app"** — until acrm completes Google's
