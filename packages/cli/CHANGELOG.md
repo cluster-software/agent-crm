@@ -1,5 +1,16 @@
 # @agent-crm/cli
 
+## 0.17.0
+
+### Minor Changes
+
+- ad40254: Add local multi-output signals with CLI commands, import-time background runs, per-field provenance, and a hotel contact-path example.
+
+### Patch Changes
+
+- Updated dependencies [ad40254]
+  - @agent-crm/sdk@0.5.1
+
 ## 0.16.2
 
 ### Patch Changes
