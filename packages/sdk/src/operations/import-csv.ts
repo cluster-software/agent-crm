@@ -25,6 +25,9 @@ import type { Workspace } from "../workspace.js";
 type CsvRow = Record<string, string>;
 type LookupCache = Map<string, string | null>;
 
+const DEFAULT_IMPORT_CONCURRENCY = 10;
+const IMPORT_CONCURRENCY_ENV = "ACRM_IMPORT_CONCURRENCY";
+
 function parseCsv(text: string): CsvRow[] {
   const rows: string[][] = [];
   let cur: string[] = [];
@@ -175,21 +178,26 @@ class WriteBatcher {
   private records: PendingRecord[] = [];
   private values: PendingValue[] = [];
   private enqueuedMulti = new Set<string>();
+  private mutex = new AsyncMutex();
 
   constructor(private lix: Lix) {}
 
-  enqueueRecord(r: PendingRecord) {
-    this.records.push(r);
+  async enqueueRecord(r: PendingRecord): Promise<void> {
+    await this.mutex.runExclusive(() => {
+      this.records.push(r);
+    });
   }
 
-  enqueueValue(v: PendingValue): boolean {
-    if (v.normalized_key) {
-      const k = `${v.record_id}\x00${v.attribute_slug}\x00${v.normalized_key}`;
-      if (this.enqueuedMulti.has(k)) return false;
-      this.enqueuedMulti.add(k);
-    }
-    this.values.push(v);
-    return true;
+  async enqueueValue(v: PendingValue): Promise<boolean> {
+    return await this.mutex.runExclusive(() => {
+      if (v.normalized_key) {
+        const k = `${v.record_id}\x00${v.attribute_slug}\x00${v.normalized_key}`;
+        if (this.enqueuedMulti.has(k)) return false;
+        this.enqueuedMulti.add(k);
+      }
+      this.values.push(v);
+      return true;
+    });
   }
 
   get size(): number {
@@ -197,9 +205,11 @@ class WriteBatcher {
   }
 
   async flush(): Promise<void> {
-    if (this.records.length) await this.flushRecords();
-    if (this.values.length) await this.flushValues();
-    this.enqueuedMulti.clear();
+    await this.mutex.runExclusive(async () => {
+      if (this.records.length) await this.flushRecords();
+      if (this.values.length) await this.flushValues();
+      this.enqueuedMulti.clear();
+    });
   }
 
   private async flushRecords(): Promise<void> {
@@ -253,12 +263,57 @@ class WriteBatcher {
   }
 }
 
+class AsyncMutex {
+  private current: Promise<void> = Promise.resolve();
+
+  async runExclusive<T>(fn: () => T | Promise<T>): Promise<T> {
+    let release!: () => void;
+    const previous = this.current;
+    this.current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  }
+}
+
+class KeyedLocks {
+  private locks = new Map<string, AsyncMutex>();
+
+  async runExclusive<T>(
+    keys: string[],
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const unique = Array.from(new Set(keys)).sort();
+    let run = fn;
+    for (let i = unique.length - 1; i >= 0; i--) {
+      const key = unique[i]!;
+      const next = run;
+      run = () => this.lockFor(key).runExclusive(next);
+    }
+    return await run();
+  }
+
+  private lockFor(key: string): AsyncMutex {
+    let lock = this.locks.get(key);
+    if (!lock) {
+      lock = new AsyncMutex();
+      this.locks.set(key, lock);
+    }
+    return lock;
+  }
+}
+
 async function insertRecord(
   batcher: WriteBatcher,
   object_slug: string,
   record_id: string,
 ): Promise<void> {
-  batcher.enqueueRecord({ object_slug, record_id });
+  await batcher.enqueueRecord({ object_slug, record_id });
 }
 
 async function setSingleValue(
@@ -287,7 +342,7 @@ async function setSingleValue(
     );
   }
   const id = await generateUuid(lix);
-  batcher.enqueueValue(prepareValueInsert(id, { ...args, value_json }));
+  await batcher.enqueueValue(prepareValueInsert(id, { ...args, value_json }));
 }
 
 async function addMultiValue(
@@ -319,7 +374,7 @@ async function addMultiValue(
     if (exists.rows.length) return;
   }
   const id = await generateUuid(lix);
-  batcher.enqueueValue(prepareValueInsert(id, { ...args, value_json }));
+  await batcher.enqueueValue(prepareValueInsert(id, { ...args, value_json }));
 }
 
 export type ImportCsvStats = {
@@ -329,6 +384,11 @@ export type ImportCsvStats = {
   deals_created: number;
   people_skipped_no_identifier: number;
   warnings?: string[];
+};
+
+export type ImportCsvTouchedRecord = {
+  object_slug: "people" | "companies";
+  record_id: string;
 };
 
 const DOMAIN_HEADERS = ["domain", "website", "company_domain"] as const;
@@ -605,8 +665,9 @@ async function importRow(
   rowIndex: number,
   stats: ImportCsvStats,
   defaultCountry: string | undefined,
-): Promise<void> {
+): Promise<ImportCsvTouchedRecord[]> {
   const provenance = { row: rowIndex };
+  const touched: ImportCsvTouchedRecord[] = [];
 
   const emails = collectEmails(row);
   const primaryEmail = emails[0] ?? null;
@@ -688,6 +749,9 @@ async function importRow(
       cache.set(cacheKey("companies", "name__ci", companyName.trim().toLowerCase()), companyId);
       stats.companies_created++;
     }
+  }
+  if (companyId) {
+    touched.push({ object_slug: "companies", record_id: companyId });
   }
 
   // person
@@ -809,6 +873,9 @@ async function importRow(
   } else {
     stats.people_skipped_no_identifier++;
   }
+  if (personId) {
+    touched.push({ object_slug: "people", record_id: personId });
+  }
 
   // deal (optional)
   const dealName = pick(row, "deal_name", "deal");
@@ -907,6 +974,83 @@ async function importRow(
     }
     stats.deals_created++;
   }
+  return touched;
+}
+
+function rowLockKeys(
+  row: CsvRow,
+  defaultCountry: string | undefined,
+): string[] {
+  const keys: string[] = [];
+  const emails = collectEmails(row);
+  const primaryEmail = emails[0] ?? null;
+  const phones = collectPhones(row, defaultCountry);
+  const linkedin = findLinkedin(row);
+  const twitter = findTwitter(row);
+  const normalized = normalizeIdentifiers(
+    {
+      emails,
+      linkedin_url: linkedin ?? undefined,
+      twitter_url: twitter ?? undefined,
+      phones,
+    },
+    { default_country: defaultCountry },
+  );
+
+  for (const email of normalized.emails) keys.push(`people:email:${email}`);
+  if (normalized.linkedin_url) keys.push(`people:linkedin:${normalized.linkedin_url}`);
+  if (normalized.twitter_url) keys.push(`people:twitter:${normalized.twitter_url}`);
+  for (const phone of normalized.phones) keys.push(`people:phone:${phone}`);
+
+  const companyName = pick(row, "company", "company_name", "organization");
+  const domainRaw = pick(row, "domain", "website", "company_domain");
+  let companyDomain: string | null = null;
+  if (domainRaw) {
+    const norm = normalizeDomain(domainRaw);
+    if (looksLikeDomain(norm)) companyDomain = norm;
+  }
+  if (!companyDomain && primaryEmail) {
+    const fromEmail = domainFromEmail(primaryEmail);
+    if (fromEmail && looksLikeDomain(fromEmail)) companyDomain = fromEmail;
+  }
+  if (companyDomain) {
+    keys.push(`companies:domain:${companyDomain}`);
+  } else if (companyName) {
+    keys.push(`companies:name:${companyName.trim().toLowerCase()}`);
+  }
+  return keys;
+}
+
+function importConcurrency(args: ImportCsvArgs): number {
+  return normalizePositiveInt(
+    args.concurrency ?? process.env[IMPORT_CONCURRENCY_ENV],
+    DEFAULT_IMPORT_CONCURRENCY,
+  );
+}
+
+function normalizePositiveInt(value: unknown, fallback: number): number {
+  if (value === undefined || value === null || value === "") return fallback;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 1) return fallback;
+  return Math.floor(n);
+}
+
+async function runWithConcurrency(
+  total: number,
+  concurrency: number,
+  worker: (index: number) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, concurrency), Math.max(1, total)) },
+    async () => {
+      while (next < total) {
+        const index = next++;
+        await worker(index);
+      }
+    },
+  );
+  await Promise.all(workers);
 }
 
 export type ImportCsvArgs = {
@@ -927,12 +1071,16 @@ export type ImportCsvArgs = {
   onProgress?: (info: { current: number; total: number; stats: ImportCsvStats }) => void;
   onBeforeFinalFlush?: (info: { pending_count: number }) => void;
   onAfterFinalFlush?: (info: { duration_ms: number }) => void;
+
+  // Defaults to 10. Can also be set with ACRM_IMPORT_CONCURRENCY.
+  concurrency?: number;
 };
 
 export type ImportCsvResult = {
   stats: ImportCsvStats;
   warnings: string[];
   pending_at_final_flush: number;
+  touched_records: ImportCsvTouchedRecord[];
 };
 
 // Import a CSV string into the workspace. Creates one person per email /
@@ -960,27 +1108,40 @@ export async function importCsv(
   const cache: LookupCache = new Map();
   await prefetchUniqueLookups(lix, cache, rows, args.default_country);
   const batcher = new WriteBatcher(lix);
+  const rowLocks = new KeyedLocks();
+  const touchedRecords = new Map<string, ImportCsvTouchedRecord>();
   const flushEvery =
     rows.length > LARGE_CSV_THRESHOLD
       ? LARGE_CSV_FLUSH_EVERY_ROWS
       : Number.POSITIVE_INFINITY;
+  const concurrency = importConcurrency(args);
+  let completed = 0;
 
-  for (let i = 0; i < rows.length; i++) {
-    await importRow(
-      lix,
-      batcher,
-      cache,
-      rows[i]!,
-      args.source,
-      i + 1,
-      stats,
-      args.default_country,
+  await runWithConcurrency(rows.length, concurrency, async (i) => {
+    const row = rows[i]!;
+    const touched = await rowLocks.runExclusive(
+      rowLockKeys(row, args.default_country),
+      () =>
+        importRow(
+          lix,
+          batcher,
+          cache,
+          row,
+          args.source,
+          i + 1,
+          stats,
+          args.default_country,
+        ),
     );
-    if ((i + 1) % flushEvery === 0) {
+    for (const record of touched) {
+      touchedRecords.set(`${record.object_slug}:${record.record_id}`, record);
+    }
+    completed++;
+    if (completed % flushEvery === 0) {
       await batcher.flush();
     }
-    args.onProgress?.({ current: i + 1, total: rows.length, stats });
-  }
+    args.onProgress?.({ current: completed, total: rows.length, stats });
+  });
 
   const pendingAtFlush = batcher.size;
   args.onBeforeFinalFlush?.({ pending_count: pendingAtFlush });
@@ -995,5 +1156,6 @@ export async function importCsv(
     stats,
     warnings,
     pending_at_final_flush: pendingAtFlush,
+    touched_records: Array.from(touchedRecords.values()),
   };
 }

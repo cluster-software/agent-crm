@@ -38,6 +38,46 @@ describe("importCsv phone identifier", () => {
     await lix.close();
   });
 
+  it("returns touched people and companies for post-import signal runs", async () => {
+    const lix = await openTestWorkspace();
+    const csv = "name,email,company,domain\nAlice Signal,alice@hotel.example,Hotel Signal,hotel.example\n";
+    const result = await importCsv(Workspace.fromLix(lix), {
+      csvText: csv,
+      source: "csv:test",
+      default_country: "US",
+    });
+    expect(result.touched_records.map((record) => record.object_slug).sort()).toEqual([
+      "companies",
+      "people",
+    ]);
+    await lix.close();
+  });
+
+  it("dedupes repeated company domains while importing rows concurrently", async () => {
+    const lix = await openTestWorkspace();
+    const csv =
+      "name,email,company,domain\n" +
+      Array.from(
+        { length: 20 },
+        (_, i) => `Hotel Person ${i},person${i}@hotel.example,Hotel Concurrent,hotel.example`,
+      ).join("\n") +
+      "\n";
+    const result = await importCsv(Workspace.fromLix(lix), {
+      csvText: csv,
+      source: "csv:test",
+      default_country: "US",
+      concurrency: 10,
+    });
+    expect(result.stats.companies_created).toBe(1);
+    expect(result.stats.people_created).toBe(20);
+    const companies = await exec(
+      lix,
+      "SELECT COUNT(*) AS n FROM acrm_record WHERE object_slug = 'companies'",
+    );
+    expect(companies.rows[0]?.n).toBe(1);
+    await lix.close();
+  });
+
   it("dedupes locally-formatted and +-prefixed phones under default_country=US", async () => {
     const lix = await openTestWorkspace();
     const csv =

@@ -5,6 +5,7 @@ import { registerInit } from "../commands/init.js";
 import { registerExecute } from "../commands/execute.js";
 import { registerRecords } from "../commands/records.js";
 import { registerSchema } from "../commands/schema.js";
+import { registerSignals } from "../commands/signals.js";
 import { registerImport, getOrCreateImportCommand } from "../commands/import.js";
 import { attachLinkedinSubcommand } from "../commands/import-linkedin.js";
 import { attachXSubcommand } from "../commands/import-x.js";
@@ -119,6 +120,7 @@ attachTranscriptSubcommand(getOrCreateImportCommand(program));
 registerExecute(program);
 registerRecords(program);
 registerSchema(program);
+registerSignals(program);
 registerSkills(program);
 registerAuth(program);
 
