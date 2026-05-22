@@ -1,5 +1,69 @@
 # @agent-crm/cli
 
+## 0.16.2
+
+### Patch Changes
+
+- cc0225c: `acrm-onboarding` skill: instruct Claude to run `acrm import gmail` in the
+  background via `Bash(run_in_background=true)` and poll `BashOutput`, so the
+  OAuth URL banner is surfaced _before_ the user consents. A foreground Bash
+  call doesn't return output until the command exits — and `gws auth login`
+  blocks waiting on the consent callback, so the URL was effectively hidden
+  until users manually backgrounded the process.
+
+## 0.16.1
+
+### Patch Changes
+
+- 67f53c9: Fix `acrm import gmail` OAuth URL truncation. When `gws` prints the consent
+  URL because it can't auto-open a browser (Claude Code's Bash tool, CI, ssh
+  without `$BROWSER`), acrm now detects the URL in the stream, prints a
+  clearly-delimited `===== ACRM AUTH URL =====` banner, and writes the URL to
+  `<tmpdir>/acrm-auth-url.txt` so skills can read it back without scraping the
+  truncated stderr. The `acrm-onboarding` skill is updated to surface the full
+  URL to the user as a clickable link.
+
+## 0.16.0
+
+### Minor Changes
+
+- 2e01271: Add `/acrm-onboarding` skill and `acrm import gmail` command.
+
+  New users can now run `/acrm-onboarding` and pick a data source (Gmail / CSV /
+  LinkedIn or X profile) to populate a fresh workspace. The Gmail path shells
+  out to the [`gws` CLI](https://github.com/googleworkspace/cli), pulls People
+  API `connections` plus auto-created `otherContacts` (every email
+  correspondent Google has saved), and upserts them as `people` + `companies`
+  deduped by email and email-domain — matching `acrm import csv` semantics.
+
+  acrm ships with its own bundled Google OAuth Desktop client, so the end-user
+  flow is just `npm install -g @googleworkspace/cli` + `acrm import gmail` →
+  one browser pop-up to consent → done. No GCP project, no gcloud install, no
+  Cloud Console clicks. Power users who prefer their own OAuth client can set
+  `ACRM_GOOGLE_CLIENT_ID` + `ACRM_GOOGLE_CLIENT_SECRET` to override.
+
+  - SDK: `importGoogleContacts(workspace, { contacts, default_country? })`
+    accepts an iterable of `GoogleContact` and upserts via the existing dedup
+    cascade. New `resolveGoogleClientCredentials()` + `buildClientSecretJson()`
+    helpers expose the bundled OAuth client (with env-var override).
+  - CLI: `acrm import gmail [--no-other-contacts] [--default-country <iso>]`.
+    Auto-bootstraps `~/.config/gws/client_secret.json` on first run, then
+    drives `gws auth login -s people` itself if not authed.
+
+### Patch Changes
+
+- Updated dependencies [2e01271]
+  - @agent-crm/sdk@0.5.0
+
+## 0.15.2
+
+### Patch Changes
+
+- 1c319a3: Fix `import-post` SKILL.md: the description contained `Phrasings:` mid-string,
+  which YAML parses as a nested mapping key. Codex enforces YAML strictly and
+  was skipping the skill with `mapping values are not allowed in this context`.
+  Replace the colon with an em dash so the frontmatter parses everywhere.
+
 ## 0.15.1
 
 ### Patch Changes

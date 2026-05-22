@@ -23,7 +23,7 @@ import { loadAttribute } from "../workspace/catalog.js";
 import type { Workspace } from "../workspace.js";
 
 type CsvRow = Record<string, string>;
-type LookupCache = Map<string, string>;
+type LookupCache = Map<string, string | null>;
 
 const DEFAULT_IMPORT_CONCURRENCY = 10;
 const IMPORT_CONCURRENCY_ENV = "ACRM_IMPORT_CONCURRENCY";
@@ -112,6 +112,12 @@ function cacheKey(object_slug: string, attribute_slug: string, normalized_key: s
   return `${object_slug}\x00${attribute_slug}\x00${normalized_key}`;
 }
 
+type LookupKey = {
+  object_slug: string;
+  attribute_slug: string;
+  normalized_key: string;
+};
+
 async function findRecordByUnique(
   lix: Lix,
   cache: LookupCache,
@@ -120,8 +126,7 @@ async function findRecordByUnique(
   normalized_key: string,
 ): Promise<string | null> {
   const ck = cacheKey(object_slug, attribute_slug, normalized_key);
-  const hit = cache.get(ck);
-  if (hit) return hit;
+  if (cache.has(ck)) return cache.get(ck) ?? null;
   const r = await exec(
     lix,
     `SELECT record_id FROM acrm_value
@@ -131,7 +136,7 @@ async function findRecordByUnique(
     [object_slug, attribute_slug, normalized_key],
   );
   const id = (r.rows[0]?.record_id as string | undefined) ?? null;
-  if (id) cache.set(ck, id);
+  cache.set(ck, id);
   return id;
 }
 
@@ -142,8 +147,7 @@ async function findCompanyByName(
 ): Promise<string | null> {
   const key = name.trim().toLowerCase();
   const ck = cacheKey("companies", "name__ci", key);
-  const hit = cache.get(ck);
-  if (hit) return hit;
+  if (cache.has(ck)) return cache.get(ck) ?? null;
   const r = await exec(
     lix,
     `SELECT record_id FROM acrm_value
@@ -154,7 +158,7 @@ async function findCompanyByName(
     [key],
   );
   const id = (r.rows[0]?.record_id as string | undefined) ?? null;
-  if (id) cache.set(ck, id);
+  cache.set(ck, id);
   return id;
 }
 
@@ -456,6 +460,116 @@ function collectPhones(row: CsvRow, defaultCountry?: string): string[] {
     }
   }
   return out;
+}
+
+function collectLookupKeysForRow(
+  row: CsvRow,
+  defaultCountry: string | undefined,
+): LookupKey[] {
+  const keys: LookupKey[] = [];
+  const add = (
+    object_slug: string,
+    attribute_slug: string,
+    normalized_key: string | null | undefined,
+  ) => {
+    if (!normalized_key) return;
+    keys.push({ object_slug, attribute_slug, normalized_key });
+  };
+
+  const emails = collectEmails(row);
+  const primaryEmail = emails[0] ?? null;
+  const phones = collectPhones(row, defaultCountry);
+  const domainRaw = pick(row, "domain", "website", "company_domain");
+  const linkedin = findLinkedin(row);
+  const twitter = findTwitter(row);
+
+  let companyDomain: string | null = null;
+  if (domainRaw) {
+    const norm = normalizeDomain(domainRaw);
+    if (looksLikeDomain(norm)) companyDomain = norm;
+  }
+  if (!companyDomain && primaryEmail) {
+    const fromEmail = domainFromEmail(primaryEmail);
+    if (fromEmail && looksLikeDomain(fromEmail)) companyDomain = fromEmail;
+  }
+  add("companies", "domains", companyDomain);
+
+  const normalized = normalizeIdentifiers(
+    {
+      emails,
+      linkedin_url: linkedin ?? undefined,
+      twitter_url: twitter ?? undefined,
+      phones,
+    },
+    { default_country: defaultCountry },
+  );
+  for (const email of normalized.emails) {
+    add("people", "email_addresses", email);
+  }
+  add("people", "linkedin_url", normalized.linkedin_url);
+  add("people", "twitter_url", normalized.twitter_url);
+  for (const phone of normalized.phones) {
+    add("people", "phone_numbers", phone);
+  }
+  return keys;
+}
+
+const LOOKUP_PREFETCH_CHUNK_SIZE = 500;
+
+async function prefetchUniqueLookups(
+  lix: Lix,
+  cache: LookupCache,
+  rows: readonly CsvRow[],
+  defaultCountry: string | undefined,
+): Promise<void> {
+  const candidates = new Map<string, LookupKey>();
+  for (const row of rows) {
+    for (const key of collectLookupKeysForRow(row, defaultCountry)) {
+      const ck = cacheKey(key.object_slug, key.attribute_slug, key.normalized_key);
+      if (!cache.has(ck)) candidates.set(ck, key);
+    }
+  }
+  for (const [ck] of candidates) {
+    cache.set(ck, null);
+  }
+
+  const groups = new Map<string, LookupKey[]>();
+  for (const key of candidates.values()) {
+    const groupKey = `${key.object_slug}\x00${key.attribute_slug}`;
+    const group = groups.get(groupKey);
+    if (group) group.push(key);
+    else groups.set(groupKey, [key]);
+  }
+
+  for (const group of groups.values()) {
+    const first = group[0];
+    if (!first) continue;
+    for (let i = 0; i < group.length; i += LOOKUP_PREFETCH_CHUNK_SIZE) {
+      const chunk = group.slice(i, i + LOOKUP_PREFETCH_CHUNK_SIZE);
+      const placeholders = chunk.map((_, j) => `$${j + 3}`).join(", ");
+      const result = await exec(
+        lix,
+        `SELECT record_id, normalized_key FROM acrm_value
+         WHERE object_slug = $1 AND attribute_slug = $2
+           AND active_until IS NULL
+           AND normalized_key IN (${placeholders})`,
+        [
+          first.object_slug,
+          first.attribute_slug,
+          ...chunk.map((key) => key.normalized_key),
+        ],
+      );
+      for (const row of result.rows) {
+        const normalizedKey = row.normalized_key as string | undefined;
+        const recordId = row.record_id as string | undefined;
+        if (!normalizedKey || !recordId) continue;
+        cache.set(
+          cacheKey(first.object_slug, first.attribute_slug, normalizedKey),
+          recordId,
+        );
+      }
+    }
+  }
 }
 
 export type DetectedColumns = {
@@ -992,6 +1106,7 @@ export async function importCsv(
     people_skipped_no_identifier: 0,
   };
   const cache: LookupCache = new Map();
+  await prefetchUniqueLookups(lix, cache, rows, args.default_country);
   const batcher = new WriteBatcher(lix);
   const rowLocks = new KeyedLocks();
   const touchedRecords = new Map<string, ImportCsvTouchedRecord>();

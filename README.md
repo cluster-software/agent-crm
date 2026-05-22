@@ -4,6 +4,16 @@
 
 </div>
 
+<br />
+
+<div align="center" style="margin:24px 0;">
+  <a href="https://github.com/cluster-software/agent-crm-app/releases/latest" style="display:inline-block; margin-right:8px; text-decoration:none; outline:none; border:none;">
+    <img src="https://cdn.shopify.com/s/files/1/0748/5902/0324/files/download_0dff1946-6eea-4433-a53f-f6f562442834.png?v=1779414386" alt="Download for macOS" height="45">
+  </a>
+</div>
+
+<br />
+
 Let Claude run sales for you. Claude needs a source of truth but existing CRMs are too hard for Claude to work with. Their MCPs torch your context window, every action is a network round-trip, and you blow through your usage limits.
 
 Solution: Agent CRM. Headless, scriptable, with a CLI for Claude to interact with.
