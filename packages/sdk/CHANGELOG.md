@@ -1,5 +1,11 @@
 # @agent-crm/sdk
 
+## 0.6.1
+
+### Patch Changes
+
+- 1cb8365: Batch communication imports so hosted Gmail sync writes people, threads, messages, and relationships without one Lix commit per field.
+
 ## 0.6.0
 
 ### Minor Changes

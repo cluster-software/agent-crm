@@ -1,5 +1,13 @@
 # @agent-crm/cli
 
+## 0.18.3
+
+### Patch Changes
+
+- 92e2f52: Make the Gmail onboarding OAuth link copy clearer and clickable.
+- Updated dependencies [1cb8365]
+  - @agent-crm/sdk@0.6.1
+
 ## 0.18.2
 
 ### Patch Changes
