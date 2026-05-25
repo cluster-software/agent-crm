@@ -58,9 +58,20 @@ Run:
 acrm import gmail --json
 ```
 
-Extract `data.auth_url` from the JSON response and show it to the user as
-a clickable link. Tell the user to open the URL, choose their Google
-account, and click Allow.
+Extract `data.auth_url` from the JSON response. Show it as a Markdown
+link so it is clickable:
+
+```md
+Open this URL to connect Gmail:
+
+[<auth_url>](<auth_url>)
+
+Pick your Google account and click Allow.
+
+After you finish Google OAuth, Agent CRM's hosted sync engine will start
+importing Gmail in the background. The Agent CRM app will then pull
+people, threads, and messages into your local `.acrm` workspace.
+```
 
 What `acrm import gmail` does now:
 
@@ -102,10 +113,10 @@ Both require `APIFY_API_TOKEN` in `.env` next to the workspace. If missing, the 
 
 ### 4. Confirm + next step
 
-For Gmail, tell the user:
-
-> Gmail sync has started. It runs in the background and will keep updating
-> through Agent CRM's hosted sync engine.
+For Gmail, do not add a separate confirmation or next-step message after
+the OAuth link copy above. Do not suggest `/prep-call`,
+`/setup-transcripts`, or any other next step. The user still needs to
+finish OAuth first.
 
 For local imports, after the import succeeds, show a short summary tied to
 what they actually have:
