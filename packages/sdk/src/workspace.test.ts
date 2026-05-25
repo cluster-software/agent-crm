@@ -45,6 +45,8 @@ describe("Workspace", () => {
           "SELECT object_slug FROM acrm_object ORDER BY object_slug",
         );
         expect(objects.rows.map((r) => r.object_slug)).toEqual([
+          "communication_messages",
+          "communication_threads",
           "companies",
           "deals",
           "people",
