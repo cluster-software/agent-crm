@@ -1,5 +1,13 @@
 # @agent-crm/cli
 
+## 0.18.1
+
+### Patch Changes
+
+- 8d6f2c6: Add local communication import support for hosted Gmail sync.
+- Updated dependencies [8d6f2c6]
+  - @agent-crm/sdk@0.6.0
+
 ## 0.18.0
 
 ### Minor Changes
