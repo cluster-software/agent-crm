@@ -22,6 +22,13 @@ acrm execute "SELECT 1" --json
 ```
 
 - If that succeeds, you're already inside a workspace — skip to step 2.
+- If `acrm` is not found (`command not found`, `not found`, or exit code 127), stop. Do not search the filesystem, check brew, inspect npm globals, or ask follow-up questions. Tell the user to install the CLI with:
+
+  ```sh
+  npm i -g @agent-crm/cli
+  ```
+
+  Then ask them to rerun `/acrm-onboarding`.
 - If it fails with `ACRM_ERROR_NO_WORKSPACE`, ask the user what to name their workspace (default: `pipeline.acrm`) and run:
 
   ```sh
@@ -117,6 +124,7 @@ Keep the close short — one or two suggestions, not a feature dump.
 ## Hard rules
 
 - **Never** fabricate a workspace path or skip the `acrm init` step. If no workspace exists, the user must explicitly name one.
+- **If `acrm` is not installed, only show `npm i -g @agent-crm/cli` and stop.** Do not troubleshoot local install paths.
 - **Never** silently run a destructive command.
 - **Do not use `gws` for Gmail.** Gmail now goes through the hosted sync engine.
 - **Don't** fabricate OAuth credentials or paper over auth errors. The user owns the Google consent flow.
