@@ -7,6 +7,7 @@ import {
 import {
   encode,
   normalizeDomain as normalizeDomainValue,
+  normalizeLinkedinUrl,
   type AttributeConfig,
   type AttributeType,
   type ValueJson,
@@ -20,6 +21,7 @@ export type CommunicationImportPerson = {
   sourceKey: string;
   email?: string;
   displayName?: string;
+  linkedinUrl?: string;
   companySourceKey?: string;
 };
 
@@ -144,6 +146,8 @@ export async function importCommunicationBatch(
   const plannedSourceIndex = new Map(sourceIndex);
   const emailIndex = await loadPeopleByEmail(lix, batch.people);
   const plannedEmailIndex = new Map(emailIndex);
+  const linkedinIndex = await loadPeopleByLinkedInUrl(lix, batch.people);
+  const plannedLinkedinIndex = new Map(linkedinIndex);
   const companies = batch.companies ?? [];
   const domainIndex = await loadCompaniesByDomain(lix, companies);
   const plannedDomainIndex = new Map(domainIndex);
@@ -168,11 +172,14 @@ export async function importCommunicationBatch(
   for (const person of batch.people) {
     if (personPlans.has(person.sourceKey)) continue;
     const email = normalizeEmail(person.email);
+    const linkedinUrl = normalizeLinkedin(person.linkedinUrl);
     const existingRecordId = plannedSourceIndex.get(sourceIndexKey("people", person.sourceKey)) ??
-      (email ? plannedEmailIndex.get(email) : undefined);
+      (email ? plannedEmailIndex.get(email) : undefined) ??
+      (linkedinUrl ? plannedLinkedinIndex.get(linkedinUrl) : undefined);
     const plan = planRecord("people", person.sourceKey, existingRecordId, recordsToCreate, plannedSourceIndex);
     personPlans.set(person.sourceKey, plan);
     if (email) plannedEmailIndex.set(email, plan.recordId);
+    if (linkedinUrl) plannedLinkedinIndex.set(linkedinUrl, plan.recordId);
     if (plan.created) stats.people_created++;
   }
 
@@ -223,6 +230,10 @@ export async function importCommunicationBatch(
     }
     if (person.displayName) {
       enqueueSingle(writer, existingValues, plan, "name", "personal-name", person.displayName);
+    }
+    const linkedinUrl = normalizeLinkedin(person.linkedinUrl);
+    if (linkedinUrl) {
+      enqueueSingle(writer, existingValues, plan, "linkedin_url", "url", linkedinUrl);
     }
     if (person.companySourceKey) {
       const companyId = resolveRecordId("companies", person.companySourceKey, companyPlans, plannedSourceIndex);
@@ -437,6 +448,33 @@ async function loadPeopleByEmail(
        WHERE active_until IS NULL
          AND object_slug = 'people'
          AND attribute_slug = 'email_addresses'
+         AND normalized_key IN (${placeholders})`,
+      chunk,
+    );
+    for (const row of result.rows) {
+      if (typeof row.record_id === "string" && typeof row.normalized_key === "string") {
+        index.set(row.normalized_key, row.record_id);
+      }
+    }
+  }
+  return index;
+}
+
+async function loadPeopleByLinkedInUrl(
+  lix: Workspace["lix"],
+  people: CommunicationImportPerson[],
+): Promise<Map<string, string>> {
+  const linkedinUrls = unique(people.map((person) => normalizeLinkedin(person.linkedinUrl)).filter((url): url is string => Boolean(url)));
+  const index = new Map<string, string>();
+  for (const chunk of chunks(linkedinUrls, SELECT_CHUNK_SIZE)) {
+    const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
+    const result = await exec(
+      lix,
+      `SELECT record_id, normalized_key
+       FROM acrm_value
+       WHERE active_until IS NULL
+         AND object_slug = 'people'
+         AND attribute_slug = 'linkedin_url'
          AND normalized_key IN (${placeholders})`,
       chunk,
     );
@@ -859,6 +897,11 @@ function normalizeEmail(email: string | undefined): string | undefined {
 
 function normalizeDomain(domain: string | undefined): string | undefined {
   const normalized = domain ? normalizeDomainValue(domain) : undefined;
+  return normalized || undefined;
+}
+
+function normalizeLinkedin(url: string | undefined): string | undefined {
+  const normalized = url ? normalizeLinkedinUrl(url) : undefined;
   return normalized || undefined;
 }
 

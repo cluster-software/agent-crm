@@ -11,6 +11,7 @@ describe("importCommunicationBatch", () => {
         {
           sourceKey: "gmail:me@example.com:email:alice@example.com",
           email: "alice@example.com",
+          linkedinUrl: "https://www.linkedin.com/in/alice-lovelace/",
           displayName: "Alice",
           companySourceKey: "gmail:me@example.com:company_domain:example.com"
         },
@@ -89,6 +90,42 @@ describe("importCommunicationBatch", () => {
     await expect(countRefs(lix, "people", "company")).resolves.toBe(2);
     await expect(countRefs(lix, "companies", "team")).resolves.toBe(2);
     await expect(countRefs(lix, "communication_threads", "messages")).resolves.toBe(1);
+    await expect(singleValueFor(lix, "people", "linkedin_url")).resolves.toBe("linkedin.com/in/alice-lovelace");
+
+    await lix.close();
+  });
+
+  it("dedupes communication people by LinkedIn URL", async () => {
+    const lix = await openTestWorkspace();
+    const ws = Workspace.fromLix(lix);
+
+    const first = await importCommunicationBatch(ws, {
+      people: [
+        {
+          sourceKey: "linkedin_unipile:acct-1:profile:ACo123",
+          linkedinUrl: "https://www.linkedin.com/in/ada-lovelace/",
+          displayName: "Ada Lovelace"
+        }
+      ],
+      communicationThreads: [],
+      communicationMessages: []
+    });
+    const second = await importCommunicationBatch(ws, {
+      people: [
+        {
+          sourceKey: "linkedin_unipile:acct-2:profile:ACo456",
+          linkedinUrl: "linkedin.com/in/ada-lovelace",
+          displayName: "Ada L."
+        }
+      ],
+      communicationThreads: [],
+      communicationMessages: []
+    });
+
+    expect(first.stats.people_created).toBe(1);
+    expect(second.stats.people_created).toBe(0);
+    await expect(countRecords(lix, "people")).resolves.toBe(1);
+    await expect(singleValueFor(lix, "people", "linkedin_url")).resolves.toBe("linkedin.com/in/ada-lovelace");
 
     await lix.close();
   });
@@ -133,4 +170,30 @@ async function countRefs(
     [objectSlug, attributeSlug],
   );
   return Number(result.rows[0]?.n ?? 0);
+}
+
+async function singleValueFor(
+  lix: Awaited<ReturnType<typeof openTestWorkspace>>,
+  objectSlug: string,
+  attributeSlug: string,
+) {
+  const result = await exec(
+    lix,
+    `SELECT value_json FROM acrm_value
+     WHERE object_slug = $1
+       AND attribute_slug = $2
+       AND active_until IS NULL
+     LIMIT 1`,
+    [objectSlug, attributeSlug],
+  );
+  const value = result.rows[0]?.value_json;
+  if (typeof value === "string") {
+    const parsed = JSON.parse(value) as { value?: unknown };
+    return typeof parsed.value === "string" ? parsed.value : null;
+  }
+  if (value && typeof value === "object" && "value" in value) {
+    const item = value.value;
+    return typeof item === "string" ? item : null;
+  }
+  return null;
 }
