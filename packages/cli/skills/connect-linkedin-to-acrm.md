@@ -19,7 +19,7 @@ This is the hosted LinkedIn sync flow:
 
 ## Run
 
-First confirm the workspace path. If the user did not provide one, use the current directory and run:
+First resolve the workspace. Prefer the user's active/open `.acrm` workspace or the current working directory. If the workspace is unclear, run:
 
 ```sh
 find . -maxdepth 2 -name '*.acrm' -print
@@ -31,16 +31,14 @@ If no workspace is found, ask which `.acrm` file to use or initialize one:
 acrm init workspace.acrm
 ```
 
-Set the workspace path:
+Run commands from the directory containing the active `.acrm` file and omit `-w` when there is a single obvious workspace. If you must run from a different directory or there are multiple `.acrm` files, pass the absolute path directly with `-w /path/to/workspace.acrm`.
 
-```sh
-export WORKSPACE=/path/to/workspace.acrm
-```
+Do not set or re-export a `WORKSPACE` shell variable. Tool calls usually run in fresh shells, so repeated exports add noise without preserving useful state.
 
 Start the connect flow:
 
 ```sh
-CONNECT_JSON=$(acrm --json -w "$WORKSPACE" connect linkedin)
+CONNECT_JSON=$(acrm --json connect linkedin)
 echo "$CONNECT_JSON"
 open "$(echo "$CONNECT_JSON" | jq -r '.data.auth_url')"
 ```
@@ -62,13 +60,13 @@ If they choose `Future messages only`, stop after confirming LinkedIn is connect
 If they choose `All existing contacts`, run:
 
 ```sh
-acrm --json -w "$WORKSPACE" import linkedin
+acrm --json import linkedin
 ```
 
 If they choose `Recent connections`, ask for a cutoff date. Default to 30 days ago, but accept any `YYYY-MM-DD` date the user chooses. Then run:
 
 ```sh
-acrm --json -w "$WORKSPACE" import linkedin --cutoff-date <YYYY-MM-DD>
+acrm --json import linkedin --cutoff-date <YYYY-MM-DD>
 ```
 
 If `acrm import linkedin` says LinkedIn is not connected, send the user back to the connect flow above.
@@ -78,13 +76,13 @@ If `acrm import linkedin` says LinkedIn is not connected, send the user back to 
 After the browser flow completes, pull any available LinkedIn messages:
 
 ```sh
-acrm --json -w "$WORKSPACE" import linkedin --sync
+acrm --json import linkedin --sync
 ```
 
 Verify recent imported message bodies:
 
 ```sh
-acrm --json -w "$WORKSPACE" execute "
+acrm --json execute "
 SELECT value_json, active_from
 FROM acrm_value
 WHERE object_slug = 'communication_messages'

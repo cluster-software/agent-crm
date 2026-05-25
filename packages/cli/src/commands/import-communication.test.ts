@@ -92,7 +92,75 @@ describe("importCommunicationBatch", () => {
 
     await lix.close();
   });
+
+  it("imports LinkedIn communication people with linkedin_url and dedupes by it", async () => {
+    const lix = await openTestWorkspace();
+    const ws = Workspace.fromLix(lix);
+
+    const first = await importCommunicationBatch(ws, linkedinMessageBatch({
+      personSourceKey: "linkedin_unipile:acct-1:profile:https://www.linkedin.com/in/enrique-goudet",
+      threadSourceKey: "linkedin_unipile:acct-1:thread:thread-1",
+      messageSourceKey: "linkedin_unipile:acct-1:message:msg-1",
+      messageId: "msg-1",
+    }));
+    const second = await importCommunicationBatch(ws, linkedinMessageBatch({
+      personSourceKey: "linkedin_unipile:acct-1:profile:enrique-goudet",
+      threadSourceKey: "linkedin_unipile:acct-1:thread:thread-2",
+      messageSourceKey: "linkedin_unipile:acct-1:message:msg-2",
+      messageId: "msg-2",
+    }));
+
+    expect(first.stats.people_created).toBe(1);
+    expect(second.stats.people_created).toBe(0);
+    await expect(countRecords(lix, "people")).resolves.toBe(1);
+    await expect(singleValue(lix, "people", "linkedin_url")).resolves.toBe("linkedin.com/in/enrique-goudet");
+    await expect(countValuesFor(lix, "people", "linkedin_url")).resolves.toBe(1);
+    await expect(countValuesFor(lix, "people", "source_keys")).resolves.toBe(2);
+
+    await lix.close();
+  });
 });
+
+function linkedinMessageBatch(input: {
+  personSourceKey: string;
+  threadSourceKey: string;
+  messageSourceKey: string;
+  messageId: string;
+}) {
+  return {
+    people: [
+      {
+        sourceKey: input.personSourceKey,
+        displayName: "Enrique Goudet",
+        linkedinUrl: "https://www.linkedin.com/in/enrique-goudet/",
+      },
+    ],
+    communicationThreads: [
+      {
+        sourceKey: input.threadSourceKey,
+        provider: "linkedin_unipile",
+        channel: "linkedin" as const,
+        providerAccountId: "acct-1",
+        providerThreadId: input.threadSourceKey,
+        participantSourceKeys: [input.personSourceKey],
+      },
+    ],
+    communicationMessages: [
+      {
+        sourceKey: input.messageSourceKey,
+        provider: "linkedin_unipile",
+        channel: "linkedin" as const,
+        providerAccountId: "acct-1",
+        providerMessageId: input.messageId,
+        providerThreadId: input.threadSourceKey,
+        threadSourceKey: input.threadSourceKey,
+        bodyText: "yo",
+        direction: "inbound" as const,
+        participantSourceKeys: [input.personSourceKey],
+      },
+    ],
+  };
+}
 
 async function countRecords(lix: Awaited<ReturnType<typeof openTestWorkspace>>, objectSlug: string) {
   const result = await exec(
@@ -106,6 +174,46 @@ async function countRecords(lix: Awaited<ReturnType<typeof openTestWorkspace>>, 
 async function countValues(lix: Awaited<ReturnType<typeof openTestWorkspace>>) {
   const result = await exec(lix, "SELECT COUNT(*) AS n FROM acrm_value", []);
   return Number(result.rows[0]?.n ?? 0);
+}
+
+async function countValuesFor(
+  lix: Awaited<ReturnType<typeof openTestWorkspace>>,
+  objectSlug: string,
+  attributeSlug: string,
+) {
+  const result = await exec(
+    lix,
+    `SELECT COUNT(*) AS n
+     FROM acrm_value
+     WHERE object_slug = $1 AND attribute_slug = $2 AND active_until IS NULL`,
+    [objectSlug, attributeSlug],
+  );
+  return Number(result.rows[0]?.n ?? 0);
+}
+
+async function singleValue(
+  lix: Awaited<ReturnType<typeof openTestWorkspace>>,
+  objectSlug: string,
+  attributeSlug: string,
+) {
+  const result = await exec(
+    lix,
+    `SELECT value_json
+     FROM acrm_value
+     WHERE object_slug = $1 AND attribute_slug = $2 AND active_until IS NULL
+     LIMIT 1`,
+    [objectSlug, attributeSlug],
+  );
+  const value = result.rows[0]?.value_json;
+  if (typeof value === "string") {
+    const parsed = JSON.parse(value) as { value?: unknown };
+    return typeof parsed.value === "string" ? parsed.value : null;
+  }
+  if (value && typeof value === "object" && "value" in value) {
+    const raw = (value as { value?: unknown }).value;
+    return typeof raw === "string" ? raw : null;
+  }
+  return null;
 }
 
 async function hasAttribute(
