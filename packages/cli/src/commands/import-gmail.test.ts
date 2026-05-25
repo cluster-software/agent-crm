@@ -40,6 +40,21 @@ describe("importGoogleContacts", () => {
     );
   });
 
+  it("selects the platform browser opener command", () => {
+    expect(gmailCommandTest.browserOpenCommand("darwin", "https://example.com")).toEqual({
+      command: "open",
+      args: ["https://example.com"],
+    });
+    expect(gmailCommandTest.browserOpenCommand("win32", "https://example.com")).toEqual({
+      command: "cmd",
+      args: ["/c", "start", "", "https://example.com"],
+    });
+    expect(gmailCommandTest.browserOpenCommand("linux", "https://example.com")).toEqual({
+      command: "xdg-open",
+      args: ["https://example.com"],
+    });
+  });
+
   it("creates person + company from a connection with email + organization", async () => {
     const lix = await openTestWorkspace();
     const ws = Workspace.fromLix(lix);

@@ -58,13 +58,12 @@ Run:
 acrm import gmail --json
 ```
 
-Extract `data.auth_url` from the JSON response. Show it as a Markdown
-link so it is clickable:
+This opens the Google OAuth URL in the user's browser automatically. Do
+not print `data.auth_url` unless the command fails to open the browser and
+the user needs the fallback URL.
 
 ```md
-Open this URL to connect Gmail:
-
-[<auth_url>](<auth_url>)
+Your browser should now be open to connect Gmail.
 
 Pick your Google account and click Allow.
 
@@ -77,7 +76,8 @@ What `acrm import gmail` does now:
 
 1. Reads or creates `.agent-crm-cloud.json` next to the local workspace.
 2. Starts a hosted sync-engine OAuth attempt.
-3. Returns the Google OAuth URL immediately.
+3. Opens the Google OAuth URL in the user's browser and returns it as
+   `data.auth_url` for fallback/debugging.
 
 After OAuth, the sync engine redirects to a "Gmail sync started" page and
 imports Gmail in the background. Gmail data is written to the cloud
@@ -114,7 +114,7 @@ Both require `APIFY_API_TOKEN` in `.env` next to the workspace. If missing, the 
 ### 4. Confirm + next step
 
 For Gmail, do not add a separate confirmation or next-step message after
-the OAuth link copy above. Do not suggest `/prep-call`,
+the OAuth browser-open copy above. Do not suggest `/prep-call`,
 `/setup-transcripts`, or any other next step. The user still needs to
 finish OAuth first.
 
