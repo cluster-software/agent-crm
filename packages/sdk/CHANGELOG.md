@@ -1,5 +1,11 @@
 # @agent-crm/sdk
 
+## 0.6.2
+
+### Patch Changes
+
+- ee70bee: Import companies and person-company links from hosted communication batches.
+
 ## 0.6.1
 
 ### Patch Changes

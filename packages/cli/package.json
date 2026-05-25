@@ -1,6 +1,6 @@
 {
   "name": "@agent-crm/cli",
-  "version": "0.18.3",
+  "version": "0.18.4",
   "description": "The headless CRM for Claude",
   "homepage": "https://github.com/cluster-software/agent-crm#readme",
   "repository": {
@@ -30,7 +30,7 @@
     "postinstall": "node ./postinstall.cjs"
   },
   "dependencies": {
-    "@agent-crm/sdk": "0.6.1",
+    "@agent-crm/sdk": "0.6.2",
     "@lix-js/sdk": "0.6.0-preview.3",
     "better-sqlite3": "^12.9.0",
     "commander": "^12.1.0"

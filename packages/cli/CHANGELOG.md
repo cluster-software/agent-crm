@@ -1,5 +1,12 @@
 # @agent-crm/cli
 
+## 0.18.4
+
+### Patch Changes
+
+- Updated dependencies [ee70bee]
+  - @agent-crm/sdk@0.6.2
+
 ## 0.18.3
 
 ### Patch Changes
