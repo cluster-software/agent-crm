@@ -1,5 +1,11 @@
 # @agent-crm/cli
 
+## 0.18.0
+
+### Minor Changes
+
+- 8634ae7: Route Gmail onboarding through Agent CRM's hosted sync engine and remove the old GWS-backed Gmail import.
+
 ## 0.17.0
 
 ### Minor Changes
