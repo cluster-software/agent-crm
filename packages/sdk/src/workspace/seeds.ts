@@ -23,6 +23,8 @@ const OBJECTS: ObjectSeed[] = [
   { object_slug: "deals", singular_name: "Deal", plural_name: "Deals" },
   { object_slug: "posts", singular_name: "Post", plural_name: "Posts" },
   { object_slug: "transcripts", singular_name: "Transcript", plural_name: "Transcripts" },
+  { object_slug: "communication_threads", singular_name: "Communication thread", plural_name: "Communication threads" },
+  { object_slug: "communication_messages", singular_name: "Communication message", plural_name: "Communication messages" },
 ];
 
 const ATTRIBUTES: AttributeSeed[] = [
@@ -41,7 +43,10 @@ const ATTRIBUTES: AttributeSeed[] = [
   { object_slug: "people", attribute_slug: "job_title", title: "Job title", attribute_type: "text", is_multivalued: false, is_unique: false },
   { object_slug: "people", attribute_slug: "linkedin_url", title: "LinkedIn", attribute_type: "url", is_multivalued: false, is_unique: false },
   { object_slug: "people", attribute_slug: "twitter_url", title: "Twitter / X", attribute_type: "url", is_multivalued: false, is_unique: false },
+  { object_slug: "people", attribute_slug: "source_keys", title: "Source keys", attribute_type: "text", is_multivalued: true, is_unique: true },
   { object_slug: "people", attribute_slug: "company", title: "Company", attribute_type: "record-reference", is_multivalued: false, is_unique: false, config: { target_object: "companies", inverse: "team" } },
+  { object_slug: "people", attribute_slug: "communication_threads", title: "Communication threads", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "communication_threads", inverse: "participants" } },
+  { object_slug: "people", attribute_slug: "communication_messages", title: "Communication messages", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "communication_messages", inverse: "participants" } },
   { object_slug: "people", attribute_slug: "associated_deals", title: "Associated deals", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "deals", inverse: "associated_people" } },
   { object_slug: "people", attribute_slug: "associated_posts", title: "Associated posts", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "posts", inverse: "author" } },
   { object_slug: "people", attribute_slug: "associated_transcripts", title: "Associated transcripts", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "transcripts", inverse: "participants" } },
@@ -72,6 +77,38 @@ const ATTRIBUTES: AttributeSeed[] = [
   { object_slug: "transcripts", attribute_slug: "summary", title: "Summary", attribute_type: "text", is_multivalued: false, is_unique: false },
   { object_slug: "transcripts", attribute_slug: "content", title: "Content", attribute_type: "text", is_multivalued: false, is_unique: false },
   { object_slug: "transcripts", attribute_slug: "participants", title: "Participants", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "people", inverse: "associated_transcripts" } },
+
+  // communication threads
+  { object_slug: "communication_threads", attribute_slug: "source_keys", title: "Source keys", attribute_type: "text", is_multivalued: true, is_unique: true },
+  { object_slug: "communication_threads", attribute_slug: "channel", title: "Channel", attribute_type: "status", is_multivalued: false, is_unique: false, config: { options: [{ id: "email", title: "Email" }, { id: "linkedin", title: "LinkedIn" }] } },
+  { object_slug: "communication_threads", attribute_slug: "provider", title: "Provider", attribute_type: "text", is_multivalued: false, is_unique: false },
+  { object_slug: "communication_threads", attribute_slug: "provider_account_id", title: "Provider account ID", attribute_type: "text", is_multivalued: false, is_unique: false },
+  { object_slug: "communication_threads", attribute_slug: "provider_thread_id", title: "Provider thread ID", attribute_type: "text", is_multivalued: false, is_unique: false },
+  { object_slug: "communication_threads", attribute_slug: "subject", title: "Subject", attribute_type: "text", is_multivalued: false, is_unique: false },
+  { object_slug: "communication_threads", attribute_slug: "snippet", title: "Snippet", attribute_type: "text", is_multivalued: false, is_unique: false },
+  { object_slug: "communication_threads", attribute_slug: "first_message_at", title: "First message at", attribute_type: "timestamp", is_multivalued: false, is_unique: false },
+  { object_slug: "communication_threads", attribute_slug: "last_message_at", title: "Last message at", attribute_type: "timestamp", is_multivalued: false, is_unique: false },
+  { object_slug: "communication_threads", attribute_slug: "message_count", title: "Message count", attribute_type: "number", is_multivalued: false, is_unique: false },
+  { object_slug: "communication_threads", attribute_slug: "participants", title: "Participants", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "people", inverse: "communication_threads" } },
+  { object_slug: "communication_threads", attribute_slug: "messages", title: "Messages", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "communication_messages", inverse: "thread" } },
+
+  // communication messages
+  { object_slug: "communication_messages", attribute_slug: "source_keys", title: "Source keys", attribute_type: "text", is_multivalued: true, is_unique: true },
+  { object_slug: "communication_messages", attribute_slug: "channel", title: "Channel", attribute_type: "status", is_multivalued: false, is_unique: false, config: { options: [{ id: "email", title: "Email" }, { id: "linkedin", title: "LinkedIn" }] } },
+  { object_slug: "communication_messages", attribute_slug: "provider", title: "Provider", attribute_type: "text", is_multivalued: false, is_unique: false },
+  { object_slug: "communication_messages", attribute_slug: "provider_account_id", title: "Provider account ID", attribute_type: "text", is_multivalued: false, is_unique: false },
+  { object_slug: "communication_messages", attribute_slug: "provider_message_id", title: "Provider message ID", attribute_type: "text", is_multivalued: false, is_unique: false },
+  { object_slug: "communication_messages", attribute_slug: "provider_thread_id", title: "Provider thread ID", attribute_type: "text", is_multivalued: false, is_unique: false },
+  { object_slug: "communication_messages", attribute_slug: "thread", title: "Thread", attribute_type: "record-reference", is_multivalued: false, is_unique: false, config: { target_object: "communication_threads", inverse: "messages" } },
+  { object_slug: "communication_messages", attribute_slug: "sent_at", title: "Sent at", attribute_type: "timestamp", is_multivalued: false, is_unique: false },
+  { object_slug: "communication_messages", attribute_slug: "subject", title: "Subject", attribute_type: "text", is_multivalued: false, is_unique: false },
+  { object_slug: "communication_messages", attribute_slug: "snippet", title: "Snippet", attribute_type: "text", is_multivalued: false, is_unique: false },
+  { object_slug: "communication_messages", attribute_slug: "body_text", title: "Body text", attribute_type: "text", is_multivalued: false, is_unique: false },
+  { object_slug: "communication_messages", attribute_slug: "label_ids", title: "Labels", attribute_type: "text", is_multivalued: true, is_unique: false },
+  { object_slug: "communication_messages", attribute_slug: "direction", title: "Direction", attribute_type: "status", is_multivalued: false, is_unique: false, config: { options: [{ id: "inbound", title: "Inbound" }, { id: "outbound", title: "Outbound" }] } },
+  { object_slug: "communication_messages", attribute_slug: "sender", title: "Sender", attribute_type: "record-reference", is_multivalued: false, is_unique: false, config: { target_object: "people" } },
+  { object_slug: "communication_messages", attribute_slug: "recipients", title: "Recipients", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "people" } },
+  { object_slug: "communication_messages", attribute_slug: "participants", title: "Participants", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "people", inverse: "communication_messages" } },
 ];
 
 export async function seedObjects(lix: Lix): Promise<void> {

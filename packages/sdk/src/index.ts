@@ -35,6 +35,7 @@ export { Workspace } from "./workspace.js";
 
 export * from "./operations/execute.js";
 export * from "./operations/import-csv.js";
+export * from "./operations/import-communication.js";
 export * from "./operations/import-google.js";
 export * from "./operations/import-linkedin.js";
 export * from "./operations/import-post.js";

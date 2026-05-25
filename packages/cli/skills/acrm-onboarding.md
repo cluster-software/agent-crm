@@ -58,12 +58,12 @@ account, and click Allow.
 What `acrm import gmail` does now:
 
 1. Reads or creates `.agent-crm-cloud.json` next to the local workspace.
-2. Builds a hosted sync-engine OAuth URL.
-3. Returns immediately; it does not run a local Gmail import.
+2. Starts a hosted sync-engine OAuth attempt.
+3. Returns the Google OAuth URL immediately.
 
 After OAuth, the sync engine redirects to a "Gmail sync started" page and
 imports Gmail in the background. Gmail data is written to the cloud
-workspace as:
+workspace, then the Electron app pulls it into the local `.acrm` file as:
 
 ```text
 people
