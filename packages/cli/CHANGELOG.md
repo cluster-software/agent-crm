@@ -1,5 +1,11 @@
 # @agent-crm/cli
 
+## 0.18.5
+
+### Patch Changes
+
+- 2055a60: Publish LinkedIn hosted connect org inference.
+
 ## 0.18.4
 
 ### Patch Changes
