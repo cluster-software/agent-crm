@@ -7,6 +7,7 @@ import { registerRecords } from "../commands/records.js";
 import { registerSchema } from "../commands/schema.js";
 import { registerSignals } from "../commands/signals.js";
 import { registerImport, getOrCreateImportCommand } from "../commands/import.js";
+import { registerConnect } from "../commands/connect.js";
 import { attachLinkedinSubcommand } from "../commands/import-linkedin.js";
 import { attachXSubcommand } from "../commands/import-x.js";
 import { attachPostSubcommand } from "../commands/import-post.js";
@@ -59,9 +60,10 @@ Data model:
 
 Typical flow:
   acrm init <name>.acrm           create a workspace
+  acrm connect linkedin           connect LinkedIn through Agent CRM's hosted sync engine
   acrm import csv ./leads.csv     load people + companies (and deals if columns present)
   acrm import gmail               connect Gmail through Agent CRM's hosted sync engine
-  acrm import linkedin            connect LinkedIn through Agent CRM's hosted sync engine
+  acrm import linkedin            import existing LinkedIn contacts from the connected account
   acrm import linkedin <url>      add one person from a LinkedIn profile (creates person + company)
   acrm import x <handle>          add one person from an X/Twitter profile
   acrm import post <url>          add a LinkedIn or X **post** by URL — upserts the author as a person and stores the post (use when a user shares a post link they want to track)
@@ -112,6 +114,7 @@ JSON value shapes per attribute_type (key for lix_json_get_text):
   );
 
 registerInit(program);
+registerConnect(program);
 registerImport(program);
 attachLinkedinSubcommand(getOrCreateImportCommand(program));
 attachXSubcommand(getOrCreateImportCommand(program));
