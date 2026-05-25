@@ -1,5 +1,13 @@
 # @agent-crm/cli
 
+## 0.19.4
+
+### Patch Changes
+
+- 96d1ef1: Import companies from hosted LinkedIn relation imports and add a LinkedIn connection status command for polling hosted connect completion.
+- Updated dependencies [96d1ef1]
+  - @agent-crm/sdk@0.7.2
+
 ## 0.19.3
 
 ### Patch Changes
