@@ -1,5 +1,11 @@
 # @agent-crm/cli
 
+## 0.18.2
+
+### Patch Changes
+
+- aa37a61: Show the global install command when `/acrm-onboarding` cannot find the `acrm` CLI.
+
 ## 0.18.1
 
 ### Patch Changes
