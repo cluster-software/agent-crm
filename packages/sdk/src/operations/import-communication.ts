@@ -6,6 +6,7 @@ import {
 } from "../db/value-row.js";
 import {
   encode,
+  normalizeLinkedinUrl,
   normalizeDomain as normalizeDomainValue,
   type AttributeConfig,
   type AttributeType,
@@ -20,6 +21,7 @@ export type CommunicationImportPerson = {
   sourceKey: string;
   email?: string;
   displayName?: string;
+  linkedinUrl?: string;
   companySourceKey?: string;
 };
 
@@ -144,6 +146,8 @@ export async function importCommunicationBatch(
   const plannedSourceIndex = new Map(sourceIndex);
   const emailIndex = await loadPeopleByEmail(lix, batch.people);
   const plannedEmailIndex = new Map(emailIndex);
+  const linkedinIndex = await loadPeopleByLinkedinUrl(lix, batch.people);
+  const plannedLinkedinIndex = new Map(linkedinIndex);
   const companies = batch.companies ?? [];
   const domainIndex = await loadCompaniesByDomain(lix, companies);
   const plannedDomainIndex = new Map(domainIndex);
@@ -168,11 +172,14 @@ export async function importCommunicationBatch(
   for (const person of batch.people) {
     if (personPlans.has(person.sourceKey)) continue;
     const email = normalizeEmail(person.email);
+    const linkedinUrl = normalizeLinkedinUrlValue(person.linkedinUrl);
     const existingRecordId = plannedSourceIndex.get(sourceIndexKey("people", person.sourceKey)) ??
-      (email ? plannedEmailIndex.get(email) : undefined);
+      (email ? plannedEmailIndex.get(email) : undefined) ??
+      (linkedinUrl ? plannedLinkedinIndex.get(linkedinUrl) : undefined);
     const plan = planRecord("people", person.sourceKey, existingRecordId, recordsToCreate, plannedSourceIndex);
     personPlans.set(person.sourceKey, plan);
     if (email) plannedEmailIndex.set(email, plan.recordId);
+    if (linkedinUrl) plannedLinkedinIndex.set(linkedinUrl, plan.recordId);
     if (plan.created) stats.people_created++;
   }
 
@@ -220,6 +227,10 @@ export async function importCommunicationBatch(
     enqueueMulti(writer, existingValues, plan, "source_keys", "text", person.sourceKey);
     if (person.email) {
       enqueueMulti(writer, existingValues, plan, "email_addresses", "email-address", person.email);
+    }
+    const linkedinUrl = normalizeLinkedinUrlValue(person.linkedinUrl);
+    if (linkedinUrl) {
+      enqueueSingleIfMissing(writer, existingValues, plan, "linkedin_url", "url", linkedinUrl);
     }
     if (person.displayName) {
       enqueueSingle(writer, existingValues, plan, "name", "personal-name", person.displayName);
@@ -449,6 +460,33 @@ async function loadPeopleByEmail(
   return index;
 }
 
+async function loadPeopleByLinkedinUrl(
+  lix: Workspace["lix"],
+  people: CommunicationImportPerson[],
+): Promise<Map<string, string>> {
+  const urls = unique(people.map((person) => normalizeLinkedinUrlValue(person.linkedinUrl)).filter((url): url is string => Boolean(url)));
+  const index = new Map<string, string>();
+  for (const chunk of chunks(urls, SELECT_CHUNK_SIZE)) {
+    const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
+    const result = await exec(
+      lix,
+      `SELECT record_id, normalized_key
+       FROM acrm_value
+       WHERE active_until IS NULL
+         AND object_slug = 'people'
+         AND attribute_slug = 'linkedin_url'
+         AND normalized_key IN (${placeholders})`,
+      chunk,
+    );
+    for (const row of result.rows) {
+      if (typeof row.record_id === "string" && typeof row.normalized_key === "string") {
+        index.set(row.normalized_key, row.record_id);
+      }
+    }
+  }
+  return index;
+}
+
 async function loadCompaniesByDomain(
   lix: Workspace["lix"],
   companies: CommunicationImportCompany[],
@@ -588,6 +626,19 @@ function enqueueSingle(
   }
   existing.singleValues.set(key, valueJson);
   writer.enqueueValue(valueInput(plan.objectSlug, plan.recordId, attributeSlug, attributeType, valueJson));
+}
+
+function enqueueSingleIfMissing(
+  writer: CommunicationWriteBatcher,
+  existing: ExistingValues,
+  plan: RecordPlan,
+  attributeSlug: string,
+  attributeType: AttributeType,
+  rawValue: unknown,
+): void {
+  const key = singleValueKey(plan.objectSlug, plan.recordId, attributeSlug);
+  if (!plan.created && existing.singleValues.has(key)) return;
+  enqueueSingle(writer, existing, plan, attributeSlug, attributeType, rawValue);
 }
 
 function enqueueSingleReference(
@@ -860,6 +911,10 @@ function normalizeEmail(email: string | undefined): string | undefined {
 function normalizeDomain(domain: string | undefined): string | undefined {
   const normalized = domain ? normalizeDomainValue(domain) : undefined;
   return normalized || undefined;
+}
+
+function normalizeLinkedinUrlValue(url: string | undefined): string | undefined {
+  return url ? normalizeLinkedinUrl(url) ?? undefined : undefined;
 }
 
 function unique(values: string[]): string[] {
