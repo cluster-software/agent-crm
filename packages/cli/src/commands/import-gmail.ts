@@ -1,9 +1,14 @@
 import type { Command } from "commander";
+import { spawn } from "node:child_process";
 import { basename, dirname } from "node:path";
 import { AcrmError, ERR } from "@agent-crm/sdk";
 import { resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, isJson, ok, setJsonMode } from "../output/json.js";
 import { DEFAULT_SYNC_ENGINE_URL, ensureCloudWorkspaceMetadata } from "../lib/cloud-workspace.js";
+
+type Opts = {
+  open?: boolean;
+};
 
 export function attachGmailSubcommand(parent: Command): void {
   parent
@@ -11,7 +16,8 @@ export function attachGmailSubcommand(parent: Command): void {
     .description(
       "Connect Gmail through Agent CRM's hosted sync engine. Opens hosted Google OAuth and syncs people, email threads, and email messages into the cloud workspace.",
     )
-    .action(async () => {
+    .option("--no-open", "print the OAuth URL without opening it in a browser")
+    .action(async (opts: Opts) => {
       const root = parent.parent?.opts() as
         | { workspace?: string; json?: boolean }
         | undefined;
@@ -32,10 +38,14 @@ export function attachGmailSubcommand(parent: Command): void {
           workspaceName: basename(workspaceDir),
         });
 
+        if (opts.open !== false) openInBrowser(authUrl);
+
         if (!isJson()) {
           process.stdout.write(
             [
-              "Open this URL to connect Gmail:",
+              opts.open === false
+                ? "Open this URL to connect Gmail:"
+                : "Opening browser to connect Gmail. If it doesn't open, paste this URL:",
               authUrl,
               "",
               "After OAuth, Gmail sync runs in the background through Agent CRM's hosted sync engine.",
@@ -99,7 +109,30 @@ function gmailConnectUrl(input: {
   return url.toString();
 }
 
+function browserOpenCommand(
+  platform: NodeJS.Platform,
+  url: string,
+): { command: string; args: string[] } {
+  if (platform === "darwin") return { command: "open", args: [url] };
+  if (platform === "win32") {
+    return { command: "cmd", args: ["/c", "start", "", url] };
+  }
+  return { command: "xdg-open", args: [url] };
+}
+
+function openInBrowser(url: string): void {
+  const { command, args } = browserOpenCommand(process.platform, url);
+  try {
+    const child = spawn(command, args, { detached: true, stdio: "ignore" });
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    // The printed URL remains the fallback when the shell cannot open a browser.
+  }
+}
+
 export const __test = {
   createGmailConnectUrl,
-  gmailConnectUrl
+  browserOpenCommand,
+  gmailConnectUrl,
 };
