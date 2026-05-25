@@ -27,6 +27,7 @@ export type LinkedinRelation = {
   public_identifier?: string | null;
   public_profile_url?: string | null;
   profile_picture_url?: string | null;
+  [key: string]: unknown;
 };
 
 export type ImportLinkedinRelationsArgs = {
@@ -38,8 +39,18 @@ export type ImportLinkedinRelationsResult = {
     relations_seen: number;
     people_created: number;
     people_updated: number;
+    companies_created: number;
+    companies_updated: number;
     relations_skipped_no_key: number;
   };
+};
+
+type ObjectSlug = "people" | "companies";
+
+type NormalizedCompany = {
+  sourceKey: string;
+  name: string;
+  linkedinUrl: string | null;
 };
 
 type NormalizedRelation = {
@@ -49,9 +60,11 @@ type NormalizedRelation = {
   fullName: string | null;
   headline: string | null;
   connectedAt: string | null;
+  company: NormalizedCompany | null;
 };
 
 type RecordPlan = {
+  objectSlug: ObjectSlug;
   recordId: string;
   created: boolean;
 };
@@ -62,6 +75,7 @@ type ExistingValues = {
 };
 
 type ValueInput = {
+  object_slug: ObjectSlug;
   record_id: string;
   attribute_slug: string;
   attribute_type: AttributeType;
@@ -83,6 +97,8 @@ export async function importLinkedinRelations(
     relations_seen: 0,
     people_created: 0,
     people_updated: 0,
+    companies_created: 0,
+    companies_updated: 0,
     relations_skipped_no_key: 0,
   };
 
@@ -105,11 +121,45 @@ export async function importLinkedinRelations(
     relations.map((relation) => relation.linkedinUrl).filter((url): url is string => Boolean(url)),
   );
   const plannedLinkedinIndex = new Map(linkedinIndex);
+  const companies = uniqueCompanies(relations.map((relation) => relation.company).filter((company): company is NormalizedCompany => Boolean(company)));
+  const companySourceIndex = await loadCompaniesBySourceKeys(lix, companies.map((company) => company.sourceKey));
+  const plannedCompanySourceIndex = new Map(companySourceIndex);
+  const companyLinkedinIndex = await loadCompaniesByLinkedinUrl(
+    lix,
+    companies.map((company) => company.linkedinUrl).filter((url): url is string => Boolean(url)),
+  );
+  const plannedCompanyLinkedinIndex = new Map(companyLinkedinIndex);
+  const companyNameIndex = await loadCompaniesByName(lix, companies.map((company) => company.name));
+  const plannedCompanyNameIndex = new Map(companyNameIndex);
 
-  const recordsToCreate: Array<{ object_slug: "people"; record_id: string }> = [];
+  const recordsToCreate: Array<{ object_slug: ObjectSlug; record_id: string }> = [];
+  const companyPlans = new Map<string, { company: NormalizedCompany; plan: RecordPlan }>();
   const plans: Array<{ relation: NormalizedRelation; plan: RecordPlan }> = [];
   const touchedRecordIds = new Set<string>();
+  const touchedCompanyIds = new Set<string>();
   const createdRecordIds = new Set<string>();
+  const createdCompanyIds = new Set<string>();
+
+  for (const company of companies) {
+    const existingRecordId =
+      (company.linkedinUrl ? plannedCompanyLinkedinIndex.get(company.linkedinUrl) : undefined) ??
+      plannedCompanySourceIndex.get(company.sourceKey) ??
+      plannedCompanyNameIndex.get(company.name.toLowerCase());
+    const recordId = existingRecordId ?? uuidv7();
+    const created = existingRecordId == null;
+    if (created) {
+      recordsToCreate.push({ object_slug: "companies", record_id: recordId });
+      createdCompanyIds.add(recordId);
+    }
+    plannedCompanySourceIndex.set(company.sourceKey, recordId);
+    if (company.linkedinUrl) plannedCompanyLinkedinIndex.set(company.linkedinUrl, recordId);
+    plannedCompanyNameIndex.set(company.name.toLowerCase(), recordId);
+    touchedCompanyIds.add(recordId);
+    companyPlans.set(company.sourceKey, {
+      company,
+      plan: { objectSlug: "companies", recordId, created },
+    });
+  }
 
   for (const relation of relations) {
     const existingRecordId =
@@ -124,17 +174,35 @@ export async function importLinkedinRelations(
     plannedSourceIndex.set(relation.sourceKey, recordId);
     if (relation.linkedinUrl) plannedLinkedinIndex.set(relation.linkedinUrl, recordId);
     touchedRecordIds.add(recordId);
-    plans.push({ relation, plan: { recordId, created } });
+    plans.push({ relation, plan: { objectSlug: "people", recordId, created } });
   }
 
   stats.people_created = createdRecordIds.size;
+  stats.companies_created = createdCompanyIds.size;
 
-  const existingValues = await loadExistingValues(lix, [...touchedRecordIds]);
+  const existingValues = await loadExistingValues(lix, {
+    people: [...touchedRecordIds],
+    companies: [...touchedCompanyIds],
+  });
   const writer = new LinkedinRelationWriteBatcher(lix);
   const changedExistingRecordIds = new Set<string>();
+  const changedExistingCompanyIds = new Set<string>();
 
   for (const record of recordsToCreate) {
     writer.enqueueRecord(record);
+  }
+
+  for (const { company, plan } of companyPlans.values()) {
+    const provenance = companyProvenance(company);
+    let changed = false;
+    changed = enqueueMulti(writer, existingValues, plan, "source_keys", "text", company.sourceKey, provenance) || changed;
+    changed = enqueueSingleIfMissing(writer, existingValues, plan, "name", "text", company.name, provenance) || changed;
+    if (company.linkedinUrl) {
+      changed = enqueueSingleIfMissing(writer, existingValues, plan, "linkedin_url", "url", company.linkedinUrl, provenance) || changed;
+    }
+    if (!createdCompanyIds.has(plan.recordId) && changed) {
+      changedExistingCompanyIds.add(plan.recordId);
+    }
   }
 
   for (const { relation, plan } of plans) {
@@ -161,12 +229,39 @@ export async function importLinkedinRelations(
         provenance,
       ) || changed;
     }
+    if (relation.company) {
+      const companyPlan = companyPlans.get(relation.company.sourceKey)?.plan;
+      if (companyPlan) {
+        changed = enqueueSingleReferenceIfMissing(
+          writer,
+          existingValues,
+          plan,
+          "company",
+          "companies",
+          companyPlan.recordId,
+          provenance,
+        ) || changed;
+        const companyChanged = enqueueReference(
+          writer,
+          existingValues,
+          companyPlan,
+          "team",
+          "people",
+          plan.recordId,
+          provenance,
+        );
+        if (!createdCompanyIds.has(companyPlan.recordId) && companyChanged) {
+          changedExistingCompanyIds.add(companyPlan.recordId);
+        }
+      }
+    }
     if (!createdRecordIds.has(plan.recordId) && changed) {
       changedExistingRecordIds.add(plan.recordId);
     }
   }
 
   stats.people_updated = changedExistingRecordIds.size;
+  stats.companies_updated = changedExistingCompanyIds.size;
   await writer.flush();
   return { stats };
 }
@@ -186,6 +281,7 @@ function normalizeRelation(relation: LinkedinRelation): NormalizedRelation | nul
     fullName: relationFullName(relation),
     headline: cleanString(relation.headline),
     connectedAt: relationConnectedAt(relation.created_at),
+    company: relationCompany(relation),
   };
 }
 
@@ -231,6 +327,72 @@ function relationConnectedAt(value: LinkedinRelation["created_at"]): string | nu
   return new Date(millis).toISOString();
 }
 
+function relationCompany(relation: LinkedinRelation): NormalizedCompany | null {
+  const nested =
+    objectField(relation, ["company", "organization", "current_company", "currentCompany", "employer"]) ??
+    positionObject(relation);
+  const explicitName =
+    stringField(relation, ["company_name", "companyName", "organization_name", "organizationName", "employer_name", "employerName"]) ??
+    (typeof relation.company === "string" ? relation.company : null) ??
+    (typeof relation.organization === "string" ? relation.organization : null);
+  const name =
+    cleanString(explicitName) ??
+    stringField(nested, ["name", "company_name", "companyName", "organization_name", "organizationName", "title"]) ??
+    companyNameFromHeadline(relation.headline);
+  if (!name) return null;
+
+  const explicitLinkedinUrl = stringField(relation, [
+    "company_linkedin_url",
+    "companyLinkedinUrl",
+    "company_url",
+    "companyUrl",
+    "organization_url",
+    "organizationUrl",
+  ]);
+  const nestedLinkedinUrl = stringField(nested, [
+    "linkedin_url",
+    "linkedinUrl",
+    "company_linkedin_url",
+    "companyLinkedinUrl",
+    "public_profile_url",
+    "publicProfileUrl",
+    "url",
+  ]);
+  const publicIdentifier = stringField(nested, ["public_identifier", "publicIdentifier"]);
+  const linkedinUrl = normalizeLinkedinUrl(
+    explicitLinkedinUrl ??
+    nestedLinkedinUrl ??
+    (publicIdentifier ? `https://www.linkedin.com/company/${publicIdentifier}/` : ""),
+  );
+  const id = stringField(nested, ["id", "company_id", "companyId", "urn", "entity_urn", "entityUrn"]);
+  const sourceKey = id
+    ? `linkedin:company:${id}`
+    : linkedinUrl
+      ? `linkedin:company:${linkedinUrl}`
+      : `linkedin:company_name:${name.toLowerCase()}`;
+
+  return {
+    sourceKey,
+    name,
+    linkedinUrl,
+  };
+}
+
+function positionObject(relation: LinkedinRelation): Record<string, unknown> | null {
+  return objectField(relation, ["current_position", "currentPosition", "position"]) ??
+    firstObjectItem(relation.currentPosition) ??
+    firstObjectItem(relation.current_position) ??
+    firstObjectItem(relation.positions) ??
+    firstObjectItem(relation.experience);
+}
+
+function companyNameFromHeadline(headline: string | null | undefined): string | null {
+  const value = cleanString(headline);
+  if (!value) return null;
+  const match = value.match(/\b(?:at|@)\s+([^|,;()]+)/i);
+  return cleanString(match?.[1]);
+}
+
 function relationProvenance(relation: LinkedinRelation): Record<string, unknown> {
   return {
     provider: "unipile",
@@ -241,6 +403,14 @@ function relationProvenance(relation: LinkedinRelation): Record<string, unknown>
     public_identifier: relation.public_identifier ?? null,
     profile_picture_url: relation.profile_picture_url ?? null,
     raw_relation: relation,
+  };
+}
+
+function companyProvenance(company: NormalizedCompany): Record<string, unknown> {
+  return {
+    provider: "unipile",
+    imported_at: nowIso(),
+    source_key: company.sourceKey,
   };
 }
 
@@ -296,33 +466,119 @@ async function loadPeopleByLinkedinUrl(
   return index;
 }
 
+async function loadCompaniesBySourceKeys(
+  lix: Workspace["lix"],
+  sourceKeys: string[],
+): Promise<Map<string, string>> {
+  const index = new Map<string, string>();
+  for (const chunk of chunks(unique(sourceKeys), SELECT_CHUNK_SIZE)) {
+    const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
+    const result = await exec(
+      lix,
+      `SELECT record_id, normalized_key
+       FROM acrm_value
+       WHERE active_until IS NULL
+         AND object_slug = 'companies'
+         AND attribute_slug = 'source_keys'
+         AND normalized_key IN (${placeholders})`,
+      chunk,
+    );
+    for (const row of result.rows) {
+      if (typeof row.record_id === "string" && typeof row.normalized_key === "string") {
+        index.set(row.normalized_key, row.record_id);
+      }
+    }
+  }
+  return index;
+}
+
+async function loadCompaniesByLinkedinUrl(
+  lix: Workspace["lix"],
+  linkedinUrls: string[],
+): Promise<Map<string, string>> {
+  const index = new Map<string, string>();
+  for (const chunk of chunks(unique(linkedinUrls), SELECT_CHUNK_SIZE)) {
+    const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
+    const result = await exec(
+      lix,
+      `SELECT record_id, normalized_key
+       FROM acrm_value
+       WHERE active_until IS NULL
+         AND object_slug = 'companies'
+         AND attribute_slug = 'linkedin_url'
+         AND normalized_key IN (${placeholders})`,
+      chunk,
+    );
+    for (const row of result.rows) {
+      if (typeof row.record_id === "string" && typeof row.normalized_key === "string") {
+        index.set(row.normalized_key, row.record_id);
+      }
+    }
+  }
+  return index;
+}
+
+async function loadCompaniesByName(
+  lix: Workspace["lix"],
+  names: string[],
+): Promise<Map<string, string>> {
+  const index = new Map<string, string>();
+  for (const chunk of chunks(unique(names.map((name) => name.toLowerCase())), SELECT_CHUNK_SIZE)) {
+    const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
+    const result = await exec(
+      lix,
+      `SELECT record_id, LOWER(normalized_key) AS normalized_key
+       FROM acrm_value
+       WHERE active_until IS NULL
+         AND object_slug = 'companies'
+         AND attribute_slug = 'name'
+         AND LOWER(normalized_key) IN (${placeholders})`,
+      chunk,
+    );
+    for (const row of result.rows) {
+      if (typeof row.record_id === "string" && typeof row.normalized_key === "string") {
+        index.set(row.normalized_key, row.record_id);
+      }
+    }
+  }
+  return index;
+}
+
 async function loadExistingValues(
   lix: Workspace["lix"],
-  recordIds: string[],
+  records: Record<ObjectSlug, string[]>,
 ): Promise<ExistingValues> {
   const existing: ExistingValues = {
     singleValues: new Map(),
     multiValues: new Set(),
   };
-  for (const chunk of chunks(recordIds, SELECT_CHUNK_SIZE)) {
-    const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
-    const result = await exec(
-      lix,
-      `SELECT record_id, attribute_slug, value_json, normalized_key
-       FROM acrm_value
-       WHERE active_until IS NULL
-         AND object_slug = 'people'
-         AND record_id IN (${placeholders})`,
-      chunk,
-    );
-    for (const row of result.rows) {
-      if (typeof row.record_id !== "string" || typeof row.attribute_slug !== "string") continue;
-      const valueJson = parseValueJson(row.value_json);
-      if (valueJson) {
-        existing.singleValues.set(singleValueKey(row.record_id, row.attribute_slug), valueJson);
-      }
-      if (typeof row.normalized_key === "string") {
-        existing.multiValues.add(normalizedValueKey(row.record_id, row.attribute_slug, row.normalized_key));
+  for (const objectSlug of Object.keys(records) as ObjectSlug[]) {
+    for (const chunk of chunks(records[objectSlug], SELECT_CHUNK_SIZE)) {
+      const placeholders = chunk.map((_, index) => `$${index + 2}`).join(", ");
+      const result = await exec(
+        lix,
+        `SELECT object_slug, record_id, attribute_slug, value_json,
+                normalized_key, ref_object, ref_record_id
+         FROM acrm_value
+         WHERE active_until IS NULL
+           AND object_slug = $1
+           AND record_id IN (${placeholders})`,
+        [objectSlug, ...chunk],
+      );
+      for (const row of result.rows) {
+        if (typeof row.object_slug !== "string" || typeof row.record_id !== "string" || typeof row.attribute_slug !== "string") {
+          continue;
+        }
+        const valueJson = parseValueJson(row.value_json);
+        if (valueJson) {
+          existing.singleValues.set(singleValueKey(row.object_slug, row.record_id, row.attribute_slug), valueJson);
+        }
+        if (typeof row.normalized_key === "string") {
+          existing.multiValues.add(normalizedValueKey(row.object_slug, row.record_id, row.attribute_slug, row.normalized_key));
+        }
+        if (typeof row.ref_object === "string" && typeof row.ref_record_id === "string") {
+          existing.multiValues.add(referenceValueKey(row.object_slug, row.record_id, row.attribute_slug, row.ref_object, row.ref_record_id));
+        }
       }
     }
   }
@@ -338,12 +594,13 @@ function enqueueSingleIfMissing(
   rawValue: unknown,
   provenance: Record<string, unknown>,
 ): boolean {
-  const key = singleValueKey(plan.recordId, attributeSlug);
+  const key = singleValueKey(plan.objectSlug, plan.recordId, attributeSlug);
   if (!plan.created && existing.singleValues.has(key)) return false;
   if (existing.singleValues.has(key)) return false;
   const valueJson = encode(attributeType, rawValue);
   existing.singleValues.set(key, valueJson);
   writer.enqueueValue({
+    object_slug: plan.objectSlug,
     record_id: plan.recordId,
     attribute_slug: attributeSlug,
     attribute_type: attributeType,
@@ -351,6 +608,26 @@ function enqueueSingleIfMissing(
     provenance,
   });
   return true;
+}
+
+function enqueueSingleReferenceIfMissing(
+  writer: LinkedinRelationWriteBatcher,
+  existing: ExistingValues,
+  plan: RecordPlan,
+  attributeSlug: string,
+  targetObject: ObjectSlug,
+  targetRecordId: string,
+  provenance: Record<string, unknown>,
+): boolean {
+  return enqueueSingleIfMissing(
+    writer,
+    existing,
+    plan,
+    attributeSlug,
+    "record-reference",
+    { target_object: targetObject, target_record_id: targetRecordId },
+    provenance,
+  );
 }
 
 function enqueueMulti(
@@ -364,15 +641,14 @@ function enqueueMulti(
 ): boolean {
   const valueJson = encode(attributeType, rawValue);
   const prepared = writer.prepareValue({
+    object_slug: plan.objectSlug,
     record_id: plan.recordId,
     attribute_slug: attributeSlug,
     attribute_type: attributeType,
     value: valueJson,
     provenance,
   });
-  const key = prepared.normalized_key
-    ? normalizedValueKey(plan.recordId, attributeSlug, prepared.normalized_key)
-    : null;
+  const key = preparedValueKey(prepared);
   if (key) {
     if (existing.multiValues.has(key)) return false;
     existing.multiValues.add(key);
@@ -381,19 +657,39 @@ function enqueueMulti(
   return true;
 }
 
+function enqueueReference(
+  writer: LinkedinRelationWriteBatcher,
+  existing: ExistingValues,
+  plan: RecordPlan,
+  attributeSlug: string,
+  targetObject: ObjectSlug,
+  targetRecordId: string,
+  provenance: Record<string, unknown>,
+): boolean {
+  return enqueueMulti(
+    writer,
+    existing,
+    plan,
+    attributeSlug,
+    "record-reference",
+    { target_object: targetObject, target_record_id: targetRecordId },
+    provenance,
+  );
+}
+
 class LinkedinRelationWriteBatcher {
-  private records: Array<{ object_slug: "people"; record_id: string }> = [];
+  private records: Array<{ object_slug: ObjectSlug; record_id: string }> = [];
   private values: PreparedValueInsert[] = [];
 
   constructor(private readonly lix: Workspace["lix"]) {}
 
-  enqueueRecord(record: { object_slug: "people"; record_id: string }): void {
+  enqueueRecord(record: { object_slug: ObjectSlug; record_id: string }): void {
     this.records.push(record);
   }
 
   prepareValue(input: ValueInput): PreparedValueInsert {
     return prepareValueInsert(uuidv7(), {
-      object_slug: "people",
+      object_slug: input.object_slug,
       record_id: input.record_id,
       attribute_slug: input.attribute_slug,
       attribute_type: input.attribute_type,
@@ -465,17 +761,31 @@ class LinkedinRelationWriteBatcher {
   }
 }
 
+function preparedValueKey(value: PreparedValueInsert): string | null {
+  if (value.ref_object && value.ref_record_id) {
+    return referenceValueKey(value.object_slug, value.record_id, value.attribute_slug, value.ref_object, value.ref_record_id);
+  }
+  if (value.normalized_key) {
+    return normalizedValueKey(value.object_slug, value.record_id, value.attribute_slug, value.normalized_key);
+  }
+  return null;
+}
+
 function cleanString(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
 }
 
-function singleValueKey(recordId: string, attributeSlug: string): string {
-  return `${recordId}\0${attributeSlug}`;
+function singleValueKey(objectSlug: string, recordId: string, attributeSlug: string): string {
+  return `${objectSlug}\0${recordId}\0${attributeSlug}`;
 }
 
-function normalizedValueKey(recordId: string, attributeSlug: string, normalizedKey: string): string {
-  return `${singleValueKey(recordId, attributeSlug)}\0normalized\0${normalizedKey}`;
+function normalizedValueKey(objectSlug: string, recordId: string, attributeSlug: string, normalizedKey: string): string {
+  return `${singleValueKey(objectSlug, recordId, attributeSlug)}\0normalized\0${normalizedKey}`;
+}
+
+function referenceValueKey(objectSlug: string, recordId: string, attributeSlug: string, refObject: string, refRecordId: string): string {
+  return `${singleValueKey(objectSlug, recordId, attributeSlug)}\0ref\0${refObject}\0${refRecordId}`;
 }
 
 function parseValueJson(value: unknown): ValueJson | null {
@@ -492,6 +802,41 @@ function parseValueJson(value: unknown): ValueJson | null {
 
 function isObject(value: unknown): value is ValueJson {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function objectField(source: Record<string, unknown> | null | undefined, keys: string[]): Record<string, unknown> | null {
+  if (!source) return null;
+  for (const key of keys) {
+    const value = source[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+  }
+  return null;
+}
+
+function firstObjectItem(value: unknown): Record<string, unknown> | null {
+  if (!Array.isArray(value)) return null;
+  const first = value[0];
+  return first && typeof first === "object" && !Array.isArray(first)
+    ? first as Record<string, unknown>
+    : null;
+}
+
+function stringField(source: Record<string, unknown> | null | undefined, keys: string[]): string | null {
+  if (!source) return null;
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+  return null;
+}
+
+function uniqueCompanies(companies: NormalizedCompany[]): NormalizedCompany[] {
+  return [...new Map(companies.map((company) => [company.sourceKey, company])).values()];
 }
 
 function unique(values: string[]): string[] {

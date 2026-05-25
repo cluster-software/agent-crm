@@ -27,6 +27,29 @@ export type CloudMetadata = {
   createdAt?: string;
 };
 
+export type CloudIntegrationAccountStatus = {
+  id: string;
+  providerAccountId: string;
+  accountEmail?: string;
+  displayName?: string;
+  status: string;
+  lastSyncedAt?: string;
+};
+
+export type CloudIntegrationProviderStatus = {
+  connected: boolean;
+  accountEmail?: string;
+  displayName?: string;
+  providerAccountId?: string;
+  lastSyncedAt?: string;
+  accounts?: CloudIntegrationAccountStatus[];
+};
+
+export type CloudIntegrationStatus = {
+  gmail: CloudIntegrationProviderStatus;
+  linkedin: CloudIntegrationProviderStatus;
+};
+
 export function ensureCloudWorkspaceMetadata(
   workspaceDir: string,
   preferred: { workspaceId?: string; clientToken?: string; clusterOrgId?: string } = {},
@@ -125,6 +148,37 @@ export async function fetchCloudCommunicationExport(input: {
   return payload.data as CommunicationImportBatch;
 }
 
+export async function fetchCloudIntegrationStatus(input: {
+  syncEngineUrl: string;
+  workspaceId: string;
+  clientToken: string;
+}): Promise<CloudIntegrationStatus> {
+  const url = new URL(
+    `/workspaces/${encodeURIComponent(input.workspaceId)}/integrations/status`,
+    input.syncEngineUrl,
+  );
+  const response = await fetch(url.toString(), {
+    headers: {
+      authorization: `Bearer ${input.clientToken}`,
+    },
+  });
+  const payload = await response.json().catch(() => undefined) as
+    | { ok?: unknown; integrations?: unknown; error?: unknown }
+    | undefined;
+  if (!response.ok || payload?.ok !== true || !payload.integrations || typeof payload.integrations !== "object") {
+    throw new AcrmError(
+      "failed to fetch integration status",
+      ERR.IMPORT,
+      payloadError(payload) ?? `sync engine returned HTTP ${response.status}`,
+    );
+  }
+  const integrations = payload.integrations as { gmail?: unknown; linkedin?: unknown };
+  return {
+    gmail: parseProviderStatus(integrations.gmail),
+    linkedin: parseProviderStatus(integrations.linkedin),
+  };
+}
+
 export async function fetchCloudLinkedinRelationsExport(input: {
   syncEngineUrl: string;
   workspaceId: string;
@@ -169,6 +223,43 @@ export async function fetchCloudLinkedinRelationsExport(input: {
   return { relations: data.relations as LinkedinRelation[] };
 }
 
+function parseProviderStatus(value: unknown): CloudIntegrationProviderStatus {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { connected: false };
+  }
+  const status = value as Record<string, unknown>;
+  const accounts = Array.isArray(status.accounts)
+    ? status.accounts
+      .map(parseAccountStatus)
+      .filter((account): account is CloudIntegrationAccountStatus => Boolean(account))
+    : undefined;
+  return {
+    connected: status.connected === true,
+    ...(stringValue(status.accountEmail) ? { accountEmail: stringValue(status.accountEmail) } : {}),
+    ...(stringValue(status.displayName) ? { displayName: stringValue(status.displayName) } : {}),
+    ...(stringValue(status.providerAccountId) ? { providerAccountId: stringValue(status.providerAccountId) } : {}),
+    ...(stringValue(status.lastSyncedAt) ? { lastSyncedAt: stringValue(status.lastSyncedAt) } : {}),
+    ...(accounts && accounts.length > 0 ? { accounts } : {}),
+  };
+}
+
+function parseAccountStatus(value: unknown): CloudIntegrationAccountStatus | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const account = value as Record<string, unknown>;
+  const id = stringValue(account.id);
+  const providerAccountId = stringValue(account.providerAccountId);
+  const status = stringValue(account.status);
+  if (!id || !providerAccountId || !status) return null;
+  return {
+    id,
+    providerAccountId,
+    status,
+    ...(stringValue(account.accountEmail) ? { accountEmail: stringValue(account.accountEmail) } : {}),
+    ...(stringValue(account.displayName) ? { displayName: stringValue(account.displayName) } : {}),
+    ...(stringValue(account.lastSyncedAt) ? { lastSyncedAt: stringValue(account.lastSyncedAt) } : {}),
+  };
+}
+
 function isLinkedinNotConnected(payload: { error?: unknown; code?: unknown } | undefined): boolean {
   const candidates = [
     payload?.code,
@@ -186,6 +277,10 @@ function isLinkedinNotConnected(payload: { error?: unknown; code?: unknown } | u
       (normalized.includes("linkedin") && normalized.includes("not_connected"))
     );
   });
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function payloadError(payload: { error?: unknown } | undefined): string | undefined {

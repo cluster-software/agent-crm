@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ensureCloudWorkspaceMetadata,
   fetchCloudCommunicationExport,
+  fetchCloudIntegrationStatus,
   fetchCloudLinkedinRelationsExport,
   LINKEDIN_NOT_CONNECTED_HINT,
   LINKEDIN_NOT_CONNECTED_MESSAGE,
@@ -53,6 +54,42 @@ describe("cloud workspace metadata", () => {
       "https://sync.example.com/workspaces/workspace-1/register?workspace_name=pipeline",
       {
         method: "POST",
+        headers: {
+          authorization: "Bearer client-token-1",
+        },
+      },
+    );
+  });
+
+  it("fetches integration status", async () => {
+    const integrations = {
+      gmail: { connected: false },
+      linkedin: {
+        connected: true,
+        displayName: "Luis on LinkedIn",
+        providerAccountId: "unipile-account-1",
+        accounts: [
+          {
+            id: "acct-1",
+            providerAccountId: "unipile-account-1",
+            displayName: "Luis on LinkedIn",
+            status: "active",
+          },
+        ],
+      },
+    };
+    const fetchMock = vi.fn(async () => Response.json({ ok: true, integrations }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchCloudIntegrationStatus({
+      syncEngineUrl: "https://sync.example.com",
+      workspaceId: "workspace-1",
+      clientToken: "client-token-1",
+    })).resolves.toEqual(integrations);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://sync.example.com/workspaces/workspace-1/integrations/status",
+      {
         headers: {
           authorization: "Bearer client-token-1",
         },

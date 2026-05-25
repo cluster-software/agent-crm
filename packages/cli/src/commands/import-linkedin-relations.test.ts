@@ -30,11 +30,42 @@ describe("importLinkedinRelations", () => {
     });
 
     expect(result.stats.people_created).toBe(1);
-    await expect(valueFor(ws, "linkedin_url")).resolves.toBe("linkedin.com/in/ada-lovelace");
-    await expect(valueFor(ws, "name")).resolves.toBe("Ada Lovelace");
-    await expect(valueFor(ws, "job_title")).resolves.toBe("Founder at Analytical Engines");
-    await expect(valueFor(ws, "linkedin_connected_at")).resolves.toBe("2025-03-15T15:16:09.000Z");
+    await expect(valueFor(ws, "people", "linkedin_url")).resolves.toBe("linkedin.com/in/ada-lovelace");
+    await expect(valueFor(ws, "people", "name")).resolves.toBe("Ada Lovelace");
+    await expect(valueFor(ws, "people", "job_title")).resolves.toBe("Founder at Analytical Engines");
+    await expect(valueFor(ws, "people", "linkedin_connected_at")).resolves.toBe("2025-03-15T15:16:09.000Z");
     await expect(countValues(ws, "source_keys")).resolves.toBe(1);
+    await lix.close();
+  });
+
+  it("imports companies from LinkedIn relation rows and links people", async () => {
+    const lix = await openTestWorkspace();
+    const ws = Workspace.fromLix(lix);
+
+    const relations = [
+      relation({
+        member_id: "member-1",
+        first_name: "Ada",
+        last_name: "Lovelace",
+        company_name: "Analytical Engines",
+        company_linkedin_url: "https://www.linkedin.com/company/analytical-engines/",
+        public_profile_url: "https://www.linkedin.com/in/ada-lovelace/",
+      }),
+    ];
+
+    const result = await importLinkedinRelations(ws, { relations });
+    const second = await importLinkedinRelations(ws, { relations });
+
+    expect(result.stats.people_created).toBe(1);
+    expect(result.stats.companies_created).toBe(1);
+    expect(second.stats.people_created).toBe(0);
+    expect(second.stats.companies_created).toBe(0);
+    expect(second.stats.people_updated).toBe(0);
+    expect(second.stats.companies_updated).toBe(0);
+    await expect(valueFor(ws, "companies", "name")).resolves.toBe("Analytical Engines");
+    await expect(valueFor(ws, "companies", "linkedin_url")).resolves.toBe("linkedin.com/company/analytical-engines");
+    await expect(referenceCount(ws, "people", "company", "companies")).resolves.toBe(1);
+    await expect(referenceCount(ws, "companies", "team", "people")).resolves.toBe(1);
     await lix.close();
   });
 
@@ -142,9 +173,9 @@ describe("importLinkedinRelations", () => {
     });
 
     expect(result.stats.people_created).toBe(0);
-    await expect(valueFor(ws, "name")).resolves.toBe("Augusta Ada King");
-    await expect(valueFor(ws, "job_title")).resolves.toBe("Mathematician");
-    await expect(valueFor(ws, "linkedin_connected_at")).resolves.toBe("2025-03-15T15:16:09.000Z");
+    await expect(valueFor(ws, "people", "name")).resolves.toBe("Augusta Ada King");
+    await expect(valueFor(ws, "people", "job_title")).resolves.toBe("Mathematician");
+    await expect(valueFor(ws, "people", "linkedin_connected_at")).resolves.toBe("2025-03-15T15:16:09.000Z");
     await expect(countValues(ws, "source_keys")).resolves.toBe(2);
     await lix.close();
   });
@@ -160,23 +191,42 @@ function relation(overrides: Partial<LinkedinRelation>): LinkedinRelation {
   };
 }
 
-async function valueFor(ws: Workspace, attributeSlug: string): Promise<string | null> {
+async function valueFor(ws: Workspace, objectSlug: string, attributeSlug: string): Promise<string | null> {
   const result = await exec(
     ws.lix,
     `SELECT value_json
      FROM acrm_value
-     WHERE object_slug = 'people'
-       AND attribute_slug = $1
+     WHERE object_slug = $1
+       AND attribute_slug = $2
        AND active_until IS NULL
      ORDER BY active_from DESC
      LIMIT 1`,
-    [attributeSlug],
+    [objectSlug, attributeSlug],
   );
   const raw = result.rows[0]?.value_json;
   const parsed = typeof raw === "string"
     ? JSON.parse(raw) as { value?: string; full_name?: string; timestamp?: string }
     : raw as { value?: string; full_name?: string; timestamp?: string } | undefined;
   return parsed?.value ?? parsed?.full_name ?? parsed?.timestamp ?? null;
+}
+
+async function referenceCount(
+  ws: Workspace,
+  objectSlug: string,
+  attributeSlug: string,
+  refObject: string,
+): Promise<number> {
+  const result = await exec(
+    ws.lix,
+    `SELECT COUNT(*) AS n
+     FROM acrm_value
+     WHERE object_slug = $1
+       AND attribute_slug = $2
+       AND ref_object = $3
+       AND active_until IS NULL`,
+    [objectSlug, attributeSlug, refObject],
+  );
+  return Number(result.rows[0]?.n ?? 0);
 }
 
 async function countRecords(ws: Workspace): Promise<number> {
