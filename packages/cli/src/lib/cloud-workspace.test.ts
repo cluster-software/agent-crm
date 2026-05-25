@@ -5,8 +5,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ensureCloudWorkspaceMetadata,
   fetchCloudCommunicationExport,
+  fetchCloudLinkedinRelationsExport,
+  LINKEDIN_NOT_CONNECTED_HINT,
+  LINKEDIN_NOT_CONNECTED_MESSAGE,
   registerCloudWorkspace
 } from "./cloud-workspace.js";
+import { ERR } from "@agent-crm/sdk";
 
 describe("cloud workspace metadata", () => {
   afterEach(() => {
@@ -80,5 +84,51 @@ describe("cloud workspace metadata", () => {
         },
       },
     );
+  });
+
+  it("fetches LinkedIn relations export data with a cutoff date", async () => {
+    const relations = [
+      {
+        object: "UserRelation",
+        member_id: "member-1",
+        public_profile_url: "https://www.linkedin.com/in/member-1/",
+      },
+    ];
+    const fetchMock = vi.fn(async () => Response.json({ ok: true, data: { relations } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchCloudLinkedinRelationsExport({
+      syncEngineUrl: "https://sync.example.com",
+      workspaceId: "workspace-1",
+      clientToken: "client-token-1",
+      cutoffDate: "2026-04-25",
+    })).resolves.toEqual({ relations });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://sync.example.com/workspaces/workspace-1/integrations/linkedin/relations/export?cutoff_date=2026-04-25",
+      {
+        headers: {
+          authorization: "Bearer client-token-1",
+        },
+      },
+    );
+  });
+
+  it("turns LinkedIn not-connected export responses into an actionable error", async () => {
+    const fetchMock = vi.fn(async () => Response.json({
+      ok: false,
+      error: { code: "linkedin_not_connected" },
+    }, { status: 409 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchCloudLinkedinRelationsExport({
+      syncEngineUrl: "https://sync.example.com",
+      workspaceId: "workspace-1",
+      clientToken: "client-token-1",
+    })).rejects.toMatchObject({
+      message: LINKEDIN_NOT_CONNECTED_MESSAGE,
+      code: ERR.INVALID_INPUT,
+      hint: LINKEDIN_NOT_CONNECTED_HINT,
+    });
   });
 });

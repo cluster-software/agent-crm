@@ -5,18 +5,20 @@ import {
   ERR,
   Workspace,
   importCommunicationBatch,
+  importLinkedinRelations,
   importLinkedinProfile,
   type CommunicationImportResult,
+  type ImportLinkedinRelationsResult,
   type LinkedinImportResult,
 } from "@agent-crm/sdk";
 import { resolveWorkspacePath } from "../workspace-resolve.js";
-import { fail, isJson, ok, setJsonMode } from "../output/json.js";
+import { fail, ok, setJsonMode } from "../output/json.js";
 import { loadDotenv } from "../lib/dotenv.js";
 import {
   DEFAULT_SYNC_ENGINE_URL,
   ensureCloudWorkspaceMetadata,
   fetchCloudCommunicationExport,
-  registerCloudWorkspace,
+  fetchCloudLinkedinRelationsExport,
 } from "../lib/cloud-workspace.js";
 import { type BackgroundSignalRun, startMissingSignalsForRecords } from "../signals.js";
 
@@ -24,18 +26,18 @@ type Opts = {
   refresh?: boolean;
   cache?: boolean; // commander negation: --no-cache → cache=false
   signals?: boolean;
-  orgId?: string;
   sync?: boolean;
+  cutoffDate?: string;
 };
 
 export function attachLinkedinSubcommand(parent: Command): void {
   parent
     .command("linkedin [url-or-slug]")
     .description(
-      "With no URL, connect LinkedIn through Agent CRM's hosted sync engine. With a LinkedIn profile URL (or `/in/<slug>`), import one person locally via Apify. For a LinkedIn post URL instead, use `acrm import post`.",
+      "With no URL, import existing LinkedIn contacts from the connected account. With a LinkedIn profile URL (or `/in/<slug>`), import one person locally via Apify. For a LinkedIn post URL instead, use `acrm import post`.",
     )
-    .option("--org-id <org-id>", "Cluster organization id for hosted LinkedIn sync")
     .option("--sync", "pull LinkedIn messages from Agent CRM's hosted sync engine into this workspace")
+    .option("--cutoff-date <YYYY-MM-DD>", "only import LinkedIn contacts connected on or after this date")
     .option("--refresh", "bypass cache and re-fetch from Apify")
     .option("--no-cache", "do not write the response to cache")
     .option("--no-signals", "skip local signals after importing records")
@@ -49,6 +51,9 @@ export function attachLinkedinSubcommand(parent: Command): void {
           if (urlOrSlug) {
             throw new AcrmError("--sync does not accept a LinkedIn profile URL", ERR.INVALID_INPUT);
           }
+          if (opts.cutoffDate) {
+            throw new AcrmError("--sync does not accept --cutoff-date", ERR.INVALID_INPUT);
+          }
           const result = await runSyncLinkedin({
             workspace: root?.workspace,
           });
@@ -56,24 +61,15 @@ export function attachLinkedinSubcommand(parent: Command): void {
           return;
         }
         if (!urlOrSlug) {
-          const result = await runConnectLinkedin({
+          const result = await runImportLinkedinNetwork({
             workspace: root?.workspace,
-            orgId: opts.orgId,
+            cutoffDate: opts.cutoffDate,
           });
-          if (!isJson()) {
-            process.stdout.write(
-              [
-                "Open this URL to connect LinkedIn:",
-                result.auth_url,
-                "",
-                "After login, LinkedIn sync runs in the background through Agent CRM's hosted sync engine.",
-                "",
-              ].join("\n")
-            );
-            return;
-          }
           ok(result);
           return;
+        }
+        if (opts.cutoffDate) {
+          throw new AcrmError("--cutoff-date does not accept a LinkedIn profile URL", ERR.INVALID_INPUT);
         }
         const result = await runImportLinkedin(urlOrSlug, {
           workspace: root?.workspace,
@@ -99,11 +95,10 @@ export function attachLinkedinSubcommand(parent: Command): void {
     });
 }
 
-async function runConnectLinkedin(opts: { workspace?: string; orgId?: string }): Promise<{
-  auth_url: string;
+async function runImportLinkedinNetwork(opts: { workspace?: string; cutoffDate?: string }): Promise<{
   workspace_id: string;
-  cluster_org_id: string | null;
   sync_engine_url: string;
+  stats: ImportLinkedinRelationsResult["stats"];
 }> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
   const workspaceDir = path.dirname(workspaceFile);
@@ -113,26 +108,26 @@ async function runConnectLinkedin(opts: { workspace?: string; orgId?: string }):
   const metadata = ensureCloudWorkspaceMetadata(workspaceDir, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
-    clusterOrgId: opts.orgId ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
+    clusterOrgId: process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
   });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
-  await registerCloudWorkspace({
+  const { relations } = await fetchCloudLinkedinRelationsExport({
     syncEngineUrl,
     workspaceId: metadata.workspaceId,
     clientToken: metadata.clientToken,
-    workspaceName: path.basename(workspaceDir),
+    cutoffDate: opts.cutoffDate,
   });
-  return {
-    auth_url: linkedinConnectUrl({
-      syncEngineUrl,
-      workspaceId: metadata.workspaceId,
-      clusterOrgId: metadata.clusterOrgId,
-      workspaceName: path.basename(workspaceDir),
-    }),
-    workspace_id: metadata.workspaceId,
-    cluster_org_id: metadata.clusterOrgId ?? null,
-    sync_engine_url: syncEngineUrl,
-  };
+  const ws = await Workspace.open(workspaceFile);
+  try {
+    const result = await importLinkedinRelations(ws, { relations });
+    return {
+      workspace_id: metadata.workspaceId,
+      sync_engine_url: syncEngineUrl,
+      stats: result.stats,
+    };
+  } finally {
+    await ws.close();
+  }
 }
 
 async function runSyncLinkedin(opts: { workspace?: string }): Promise<{
@@ -223,19 +218,6 @@ async function runImportLinkedin(
   };
 }
 
-function linkedinConnectUrl(input: {
-  syncEngineUrl: string;
-  workspaceId: string;
-  clusterOrgId?: string;
-  workspaceName: string;
-}): string {
-  const url = new URL("/integrations/linkedin/connect", input.syncEngineUrl);
-  url.searchParams.set("workspace_id", input.workspaceId);
-  if (input.clusterOrgId) url.searchParams.set("cluster_org_id", input.clusterOrgId);
-  url.searchParams.set("workspace_name", input.workspaceName || "Agent CRM workspace");
-  return url.toString();
-}
-
 export const __test = {
-  linkedinConnectUrl,
+  runImportLinkedinNetwork,
 };

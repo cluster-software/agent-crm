@@ -38,6 +38,7 @@ export * from "./operations/import-csv.js";
 export * from "./operations/import-communication.js";
 export * from "./operations/import-google.js";
 export * from "./operations/import-linkedin.js";
+export * from "./operations/import-linkedin-relations.js";
 export * from "./operations/import-post.js";
 export * from "./operations/import-transcript.js";
 export * from "./operations/import-x.js";
