@@ -1,5 +1,11 @@
 # @agent-crm/cli
 
+## 0.19.1
+
+### Patch Changes
+
+- 125ba95: Open the Gmail OAuth URL automatically from `acrm import gmail`, with `--no-open` available for scripts that only need the URL.
+
 ## 0.19.0
 
 ### Minor Changes
