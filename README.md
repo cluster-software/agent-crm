@@ -67,7 +67,7 @@ Then import your CSVs
 ## Why Agent CRM
 - **🧩 Headless:** Ships as a CLI.
 - **⚒️ Skills based:** Claude writes skills against the CLI (transcript ingestion, stale-deal sweeps, weekly reports) as `.md` files.
-- **🧱 Modeled:** uses Attio's data model out of the box — `people`, `companies`, `deals`, `posts`, `transcripts`. Typed, related, queryable with plain SQL. Fixed schema = predictable agent edits.
+- **🧱 Modeled:** uses Attio's data model out of the box — `people`, `companies`, `deals`, `posts`, `transcripts`, and communication records. Typed, related, queryable with plain SQL. Fixed schema = predictable agent edits.
 - **🔀 Version controlled:** every change is a checkpoint on a branch. Diff, merge, revert, time-travel.
 - **🔌 Pluggable transcript providers:** `transcripts` are vendor-agnostic. Drop a `transcript-provider-<vendor>` skill into `~/.claude/skills/` to plug in Granola, Otter, Fireflies, Fathom, Zoom, manual paste, or anything else.
 
@@ -83,6 +83,8 @@ A grab-bag of jobs Agent CRM handles today. Each is a skill or a CLI command —
 **Draft follow-ups in your voice.** [`/follow-up`](packages/cli/skills/follow-up.md) finds leads with stale activity, reads the prior thread plus any past-call transcripts, and drafts the next message. You review and send.
 
 **Import a scraped list.** `acrm import csv ./leads.csv` ingests a CSV with auto-derived attributes. New columns become typed attributes on the right object — no schema setup.
+
+**Sync Gmail.** `/acrm-onboarding` starts hosted Google OAuth. The sync engine imports Gmail in the background, and the Electron app pulls people, threads, and messages back into your local `.acrm` file.
 
 **Sweep stale deals.** Ask Claude to query your `.acrm` for deals untouched in N days and surface them. It's just SQL underneath, so any filter you can describe, Claude can run.
 

@@ -11,6 +11,7 @@ const CLOUD_METADATA_FILENAME = ".agent-crm-cloud.json";
 
 type CloudMetadata = {
   workspaceId?: string;
+  clientToken?: string;
   createdAt?: string;
 };
 
@@ -29,14 +30,15 @@ export function attachGmailSubcommand(parent: Command): void {
       try {
         const workspaceFile = resolveWorkspacePath(root?.workspace);
         const workspaceDir = dirname(workspaceFile);
-        const workspaceId = ensureCloudWorkspaceId(
-          workspaceDir,
-          process.env.ACRM_CLOUD_WORKSPACE_ID,
-        );
+        const metadata = ensureCloudWorkspaceMetadata(workspaceDir, {
+          workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
+          clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
+        });
         const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
-        const authUrl = gmailConnectUrl({
+        const authUrl = await createGmailConnectUrl({
           syncEngineUrl,
-          workspaceId,
+          workspaceId: metadata.workspaceId,
+          clientToken: metadata.clientToken,
           workspaceName: basename(workspaceDir),
         });
 
@@ -55,7 +57,7 @@ export function attachGmailSubcommand(parent: Command): void {
 
         ok({
           auth_url: authUrl,
-          workspace_id: workspaceId,
+          workspace_id: metadata.workspaceId,
           sync_engine_url: syncEngineUrl,
         });
       } catch (error) {
@@ -66,25 +68,29 @@ export function attachGmailSubcommand(parent: Command): void {
     });
 }
 
-function ensureCloudWorkspaceId(
+function ensureCloudWorkspaceMetadata(
   workspaceDir: string,
-  preferredWorkspaceId?: string,
-): string {
+  preferred: { workspaceId?: string; clientToken?: string } = {},
+): { workspaceId: string; clientToken: string } {
   const metadataPath = join(workspaceDir, CLOUD_METADATA_FILENAME);
   const existing = readCloudMetadata(metadataPath);
-  if (existing.workspaceId) return existing.workspaceId;
+  const workspaceId = existing.workspaceId || preferred.workspaceId || randomUUID();
+  const clientToken = existing.clientToken || preferred.clientToken || randomUUID();
 
-  const workspaceId = preferredWorkspaceId || randomUUID();
-  writeFileSync(
-    metadataPath,
-    `${JSON.stringify({
-      ...existing,
-      workspaceId,
-      createdAt: existing.createdAt ?? new Date().toISOString(),
-    }, null, 2)}\n`,
-    "utf8"
-  );
-  return workspaceId;
+  if (workspaceId !== existing.workspaceId || clientToken !== existing.clientToken) {
+    writeFileSync(
+      metadataPath,
+      `${JSON.stringify({
+        ...existing,
+        workspaceId,
+        clientToken,
+        createdAt: existing.createdAt ?? new Date().toISOString(),
+      }, null, 2)}\n`,
+      "utf8"
+    );
+  }
+
+  return { workspaceId, clientToken };
 }
 
 function readCloudMetadata(metadataPath: string): CloudMetadata {
@@ -94,6 +100,36 @@ function readCloudMetadata(metadataPath: string): CloudMetadata {
   } catch {
     return {};
   }
+}
+
+async function createGmailConnectUrl(input: {
+  syncEngineUrl: string;
+  workspaceId: string;
+  clientToken: string;
+  workspaceName: string;
+}): Promise<string> {
+  const url = gmailConnectUrl({
+    syncEngineUrl: input.syncEngineUrl,
+    workspaceId: input.workspaceId,
+    workspaceName: input.workspaceName,
+  });
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${input.clientToken}`,
+    },
+  });
+  const payload = await response.json().catch(() => undefined) as
+    | { authUrl?: unknown; error?: unknown }
+    | undefined;
+  if (!response.ok || typeof payload?.authUrl !== "string") {
+    throw new AcrmError(
+      "failed to start hosted Gmail OAuth",
+      ERR.IMPORT,
+      typeof payload?.error === "string" ? payload.error : `sync engine returned HTTP ${response.status}`,
+    );
+  }
+  return payload.authUrl;
 }
 
 function gmailConnectUrl(input: {
@@ -108,5 +144,6 @@ function gmailConnectUrl(input: {
 }
 
 export const __test = {
+  createGmailConnectUrl,
   gmailConnectUrl
 };
