@@ -11,12 +11,21 @@ describe("importCommunicationBatch", () => {
         {
           sourceKey: "gmail:me@example.com:email:alice@example.com",
           email: "alice@example.com",
-          displayName: "Alice"
+          displayName: "Alice",
+          companySourceKey: "gmail:me@example.com:company_domain:example.com"
         },
         {
           sourceKey: "gmail:me@example.com:email:bob@example.com",
           email: "bob@example.com",
-          displayName: "Bob"
+          displayName: "Bob",
+          companySourceKey: "gmail:me@example.com:company_domain:example.com"
+        }
+      ],
+      companies: [
+        {
+          sourceKey: "gmail:me@example.com:company_domain:example.com",
+          domain: "example.com",
+          name: "Example"
         }
       ],
       communicationThreads: [
@@ -60,20 +69,25 @@ describe("importCommunicationBatch", () => {
     const second = await importCommunicationBatch(ws, batch);
 
     expect(first.stats.people_created).toBe(2);
+    expect(first.stats.companies_created).toBe(1);
     expect(first.stats.communication_threads_created).toBe(1);
     expect(first.stats.communication_messages_created).toBe(1);
     expect(second.stats.people_created).toBe(0);
+    expect(second.stats.companies_created).toBe(0);
     expect(second.stats.communication_threads_created).toBe(0);
     expect(second.stats.communication_messages_created).toBe(0);
     await expect(countValues(lix)).resolves.toBe(valuesAfterFirstImport);
 
     await expect(countRecords(lix, "people")).resolves.toBe(2);
+    await expect(countRecords(lix, "companies")).resolves.toBe(1);
     await expect(countRecords(lix, "communication_threads")).resolves.toBe(1);
     await expect(countRecords(lix, "communication_messages")).resolves.toBe(1);
     await expect(hasAttribute(lix, "people", "communication_threads")).resolves.toBe(true);
     await expect(hasAttribute(lix, "people", "communication_messages")).resolves.toBe(true);
     await expect(countRefs(lix, "people", "communication_threads")).resolves.toBe(2);
     await expect(countRefs(lix, "people", "communication_messages")).resolves.toBe(2);
+    await expect(countRefs(lix, "people", "company")).resolves.toBe(2);
+    await expect(countRefs(lix, "companies", "team")).resolves.toBe(2);
     await expect(countRefs(lix, "communication_threads", "messages")).resolves.toBe(1);
 
     await lix.close();

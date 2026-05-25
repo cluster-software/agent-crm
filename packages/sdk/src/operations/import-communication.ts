@@ -6,6 +6,7 @@ import {
 } from "../db/value-row.js";
 import {
   encode,
+  normalizeDomain as normalizeDomainValue,
   type AttributeConfig,
   type AttributeType,
   type ValueJson,
@@ -19,6 +20,13 @@ export type CommunicationImportPerson = {
   sourceKey: string;
   email?: string;
   displayName?: string;
+  companySourceKey?: string;
+};
+
+export type CommunicationImportCompany = {
+  sourceKey: string;
+  domain?: string;
+  name?: string;
 };
 
 export type CommunicationImportThread = {
@@ -56,6 +64,7 @@ export type CommunicationImportMessage = {
 
 export type CommunicationImportBatch = {
   people: CommunicationImportPerson[];
+  companies?: CommunicationImportCompany[];
   communicationThreads: CommunicationImportThread[];
   communicationMessages: CommunicationImportMessage[];
 };
@@ -64,6 +73,8 @@ export type CommunicationImportResult = {
   stats: {
     people_seen: number;
     people_created: number;
+    companies_seen: number;
+    companies_created: number;
     communication_threads_seen: number;
     communication_threads_created: number;
     communication_messages_seen: number;
@@ -72,7 +83,7 @@ export type CommunicationImportResult = {
 };
 
 type RecordPlan = {
-  objectSlug: "people" | "communication_threads" | "communication_messages";
+  objectSlug: "people" | "companies" | "communication_threads" | "communication_messages";
   recordId: string;
   created: boolean;
 };
@@ -120,6 +131,8 @@ export async function importCommunicationBatch(
   const stats: CommunicationImportResult["stats"] = {
     people_seen: batch.people.length,
     people_created: 0,
+    companies_seen: batch.companies?.length ?? 0,
+    companies_created: 0,
     communication_threads_seen: batch.communicationThreads.length,
     communication_threads_created: 0,
     communication_messages_seen: batch.communicationMessages.length,
@@ -131,11 +144,26 @@ export async function importCommunicationBatch(
   const plannedSourceIndex = new Map(sourceIndex);
   const emailIndex = await loadPeopleByEmail(lix, batch.people);
   const plannedEmailIndex = new Map(emailIndex);
+  const companies = batch.companies ?? [];
+  const domainIndex = await loadCompaniesByDomain(lix, companies);
+  const plannedDomainIndex = new Map(domainIndex);
 
   const personPlans = new Map<string, RecordPlan>();
+  const companyPlans = new Map<string, RecordPlan>();
   const threadPlans = new Map<string, RecordPlan>();
   const messagePlans = new Map<string, RecordPlan>();
   const recordsToCreate: RecordPlan[] = [];
+
+  for (const company of companies) {
+    if (companyPlans.has(company.sourceKey)) continue;
+    const domain = normalizeDomain(company.domain);
+    const existingRecordId = plannedSourceIndex.get(sourceIndexKey("companies", company.sourceKey)) ??
+      (domain ? plannedDomainIndex.get(domain) : undefined);
+    const plan = planRecord("companies", company.sourceKey, existingRecordId, recordsToCreate, plannedSourceIndex);
+    companyPlans.set(company.sourceKey, plan);
+    if (domain) plannedDomainIndex.set(domain, plan.recordId);
+    if (plan.created) stats.companies_created++;
+  }
 
   for (const person of batch.people) {
     if (personPlans.has(person.sourceKey)) continue;
@@ -167,7 +195,15 @@ export async function importCommunicationBatch(
   const threadSourceByProviderId = new Map(
     batch.communicationThreads.map((thread) => [thread.providerThreadId, thread.sourceKey]),
   );
-  const touchedRecords = collectTouchedRecords(batch, personPlans, threadPlans, messagePlans, plannedSourceIndex, threadSourceByProviderId);
+  const touchedRecords = collectTouchedRecords(
+    batch,
+    personPlans,
+    companyPlans,
+    threadPlans,
+    messagePlans,
+    plannedSourceIndex,
+    threadSourceByProviderId,
+  );
   const existingValues = await loadExistingValues(lix, touchedRecords);
   const writer = new CommunicationWriteBatcher(lix);
 
@@ -187,6 +223,29 @@ export async function importCommunicationBatch(
     }
     if (person.displayName) {
       enqueueSingle(writer, existingValues, plan, "name", "personal-name", person.displayName);
+    }
+    if (person.companySourceKey) {
+      const companyId = resolveRecordId("companies", person.companySourceKey, companyPlans, plannedSourceIndex);
+      if (companyId) {
+        enqueueSingleReference(writer, existingValues, plan, "company", "companies", companyId);
+        enqueueReference(writer, existingValues, {
+          objectSlug: "companies",
+          recordId: companyId,
+          created: isCreatedRecord(recordsToCreate, "companies", companyId),
+        }, "team", "people", plan.recordId);
+      }
+    }
+  }
+
+  for (const company of companies) {
+    const plan = companyPlans.get(company.sourceKey);
+    if (!plan) continue;
+    enqueueMulti(writer, existingValues, plan, "source_keys", "text", company.sourceKey);
+    if (company.domain) {
+      enqueueMulti(writer, existingValues, plan, "domains", "domain", company.domain);
+    }
+    if (company.name) {
+      enqueueSingle(writer, existingValues, plan, "name", "text", company.name);
     }
   }
 
@@ -318,7 +377,11 @@ function planRecord(
 
 function collectSourceKeys(batch: CommunicationImportBatch): string[] {
   const keys = new Set<string>();
-  for (const person of batch.people) keys.add(person.sourceKey);
+  for (const company of batch.companies ?? []) keys.add(company.sourceKey);
+  for (const person of batch.people) {
+    keys.add(person.sourceKey);
+    if (person.companySourceKey) keys.add(person.companySourceKey);
+  }
   for (const thread of batch.communicationThreads) {
     keys.add(thread.sourceKey);
     for (const participant of thread.participantSourceKeys ?? []) keys.add(participant);
@@ -386,9 +449,37 @@ async function loadPeopleByEmail(
   return index;
 }
 
+async function loadCompaniesByDomain(
+  lix: Workspace["lix"],
+  companies: CommunicationImportCompany[],
+): Promise<Map<string, string>> {
+  const domains = unique(companies.map((company) => normalizeDomain(company.domain)).filter((domain): domain is string => Boolean(domain)));
+  const index = new Map<string, string>();
+  for (const chunk of chunks(domains, SELECT_CHUNK_SIZE)) {
+    const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
+    const result = await exec(
+      lix,
+      `SELECT record_id, normalized_key
+       FROM acrm_value
+       WHERE active_until IS NULL
+         AND object_slug = 'companies'
+         AND attribute_slug = 'domains'
+         AND normalized_key IN (${placeholders})`,
+      chunk,
+    );
+    for (const row of result.rows) {
+      if (typeof row.record_id === "string" && typeof row.normalized_key === "string") {
+        index.set(row.normalized_key, row.record_id);
+      }
+    }
+  }
+  return index;
+}
+
 function collectTouchedRecords(
   batch: CommunicationImportBatch,
   personPlans: Map<string, RecordPlan>,
+  companyPlans: Map<string, RecordPlan>,
   threadPlans: Map<string, RecordPlan>,
   messagePlans: Map<string, RecordPlan>,
   plannedSourceIndex: Map<string, string>,
@@ -403,8 +494,14 @@ function collectTouchedRecords(
   };
 
   for (const plan of personPlans.values()) add(plan.objectSlug, plan.recordId);
+  for (const plan of companyPlans.values()) add(plan.objectSlug, plan.recordId);
   for (const plan of threadPlans.values()) add(plan.objectSlug, plan.recordId);
   for (const plan of messagePlans.values()) add(plan.objectSlug, plan.recordId);
+
+  for (const person of batch.people) {
+    if (!person.companySourceKey) continue;
+    add("companies", resolveRecordId("companies", person.companySourceKey, companyPlans, plannedSourceIndex));
+  }
 
   for (const thread of batch.communicationThreads) {
     for (const personSourceKey of thread.participantSourceKeys ?? []) {
@@ -757,6 +854,11 @@ function sameValueJson(left: ValueJson, right: ValueJson): boolean {
 
 function normalizeEmail(email: string | undefined): string | undefined {
   const normalized = email?.trim().toLowerCase();
+  return normalized || undefined;
+}
+
+function normalizeDomain(domain: string | undefined): string | undefined {
+  const normalized = domain ? normalizeDomainValue(domain) : undefined;
   return normalized || undefined;
 }
 

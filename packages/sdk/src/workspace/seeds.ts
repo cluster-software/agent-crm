@@ -29,6 +29,7 @@ const OBJECTS: ObjectSeed[] = [
 
 const ATTRIBUTES: AttributeSeed[] = [
   // companies
+  { object_slug: "companies", attribute_slug: "source_keys", title: "Source keys", attribute_type: "text", is_multivalued: true, is_unique: true },
   { object_slug: "companies", attribute_slug: "name", title: "Name", attribute_type: "text", is_multivalued: false, is_unique: false },
   { object_slug: "companies", attribute_slug: "domains", title: "Domains", attribute_type: "domain", is_multivalued: true, is_unique: true },
   { object_slug: "companies", attribute_slug: "description", title: "Description", attribute_type: "text", is_multivalued: false, is_unique: false },
