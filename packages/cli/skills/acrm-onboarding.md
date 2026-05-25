@@ -1,6 +1,6 @@
 ---
 name: acrm-onboarding
-description: Onboard a new Agent CRM user — initialize a `.acrm` workspace (if needed), then walk them through picking a first data source (Gmail / CSV / LinkedIn or X profile) and importing it. Trigger phrasings — "onboard me", "set up agent crm", "get started with acrm", "I'm new to acrm", or a bare `/acrm-onboarding`.
+description: Onboard a new Agent CRM user — initialize a `.acrm` workspace (if needed), then walk them through picking a first data source (Gmail / LinkedIn sync / CSV / LinkedIn or X profile) and importing it. Trigger phrasings — "onboard me", "set up agent crm", "get started with acrm", "I'm new to acrm", or a bare `/acrm-onboarding`.
 ---
 
 # acrm-onboarding
@@ -42,8 +42,9 @@ Use `AskUserQuestion` with this exact question and options (single-select, multi
 - **Question**: `What data source do you want to plug into?`
 - **Options**:
   1. `Sync from Gmail` — connects Gmail through Agent CRM's hosted sync engine
-  2. `Import a leads CSV` — load a file of leads
-  3. `Import a LinkedIn or X profile` — add one person at a time from a profile URL
+  2. `Sync from LinkedIn` — connects LinkedIn through Agent CRM's hosted sync engine
+  3. `Import a leads CSV` — load a file of leads
+  4. `Import a LinkedIn or X profile` — add one person at a time from a profile URL
 
 ### 3. Run the branch they chose
 
@@ -60,7 +61,8 @@ acrm import gmail --json
 
 This opens the Google OAuth URL in the user's browser automatically. Do
 not print `data.auth_url` unless the command fails to open the browser and
-the user needs the fallback URL.
+the user needs the fallback URL. If you do need to show the fallback URL,
+print it as a bare URL on its own line, not as a Markdown link.
 
 ```md
 Your browser should now be open to connect Gmail.
@@ -92,7 +94,12 @@ communication_messages
 Do not wait for a local CLI import to finish; there is no local Gmail
 import process anymore.
 
-#### 3b. CSV
+#### 3b. LinkedIn
+
+Use the `connect-linkedin-to-acrm` skill now and follow it end-to-end. Do
+not duplicate the LinkedIn connect/import flow in this onboarding skill.
+
+#### 3c. CSV
 
 Ask the user for the path to the CSV. Then run:
 
@@ -102,7 +109,7 @@ acrm import csv <path>
 
 If the user is in another country, pass `--default-country=<ISO>` (e.g. `GB`, `DE`) so locally-formatted phone numbers parse correctly. See `acrm import csv --help` for the full list of recognized column names.
 
-#### 3c. LinkedIn or X profile
+#### 3d. LinkedIn or X profile
 
 Ask the user for the URL (or `@handle` for X). Sniff the platform from the URL and run the right command:
 
