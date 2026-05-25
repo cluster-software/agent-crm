@@ -38,24 +38,15 @@ Set the workspace path:
 export WORKSPACE=/path/to/workspace.acrm
 ```
 
-Find the Cluster org id from existing workspace config or env. This id comes from Cluster after the user creates or joins an organization; do not invent it.
+Start the connect flow:
 
 ```sh
-WORKSPACE_DIR="$(dirname "$WORKSPACE")"
-ORG_ID="${ACRM_CLOUD_CLUSTER_ORG_ID:-$(jq -r '.clusterOrgId // empty' "$WORKSPACE_DIR/.agent-crm-cloud.json" 2>/dev/null)}"
-```
-
-If `ORG_ID` is empty, stop and ask the user which Cluster organization to connect.
-
-Start the connect flow with the resolved org:
-
-```sh
-CONNECT_JSON=$(acrm --json -w "$WORKSPACE" import linkedin --org-id "$ORG_ID")
+CONNECT_JSON=$(acrm --json -w "$WORKSPACE" import linkedin)
 echo "$CONNECT_JSON"
 open "$(echo "$CONNECT_JSON" | jq -r '.data.auth_url')"
 ```
 
-Have the user finish Cluster auth and LinkedIn verification in the browser. LinkedIn may ask for an email, SMS, or authenticator-app code.
+Have the user finish Cluster auth and LinkedIn verification in the browser. If they belong to multiple Cluster organizations, the hosted page will ask which one to use. LinkedIn may ask for an email, SMS, or authenticator-app code.
 
 ## Sync now
 

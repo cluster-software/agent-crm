@@ -102,7 +102,7 @@ export function attachLinkedinSubcommand(parent: Command): void {
 async function runConnectLinkedin(opts: { workspace?: string; orgId?: string }): Promise<{
   auth_url: string;
   workspace_id: string;
-  cluster_org_id: string;
+  cluster_org_id: string | null;
   sync_engine_url: string;
 }> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
@@ -115,13 +115,6 @@ async function runConnectLinkedin(opts: { workspace?: string; orgId?: string }):
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
     clusterOrgId: opts.orgId ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
   });
-  if (!metadata.clusterOrgId) {
-    throw new AcrmError(
-      "Cluster organization is not configured",
-      ERR.INVALID_INPUT,
-      "pass --org-id <cluster-org-id> once or set ACRM_CLOUD_CLUSTER_ORG_ID",
-    );
-  }
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   await registerCloudWorkspace({
     syncEngineUrl,
@@ -137,7 +130,7 @@ async function runConnectLinkedin(opts: { workspace?: string; orgId?: string }):
       workspaceName: path.basename(workspaceDir),
     }),
     workspace_id: metadata.workspaceId,
-    cluster_org_id: metadata.clusterOrgId,
+    cluster_org_id: metadata.clusterOrgId ?? null,
     sync_engine_url: syncEngineUrl,
   };
 }
@@ -233,12 +226,12 @@ async function runImportLinkedin(
 function linkedinConnectUrl(input: {
   syncEngineUrl: string;
   workspaceId: string;
-  clusterOrgId: string;
+  clusterOrgId?: string;
   workspaceName: string;
 }): string {
   const url = new URL("/integrations/linkedin/connect", input.syncEngineUrl);
   url.searchParams.set("workspace_id", input.workspaceId);
-  url.searchParams.set("cluster_org_id", input.clusterOrgId);
+  if (input.clusterOrgId) url.searchParams.set("cluster_org_id", input.clusterOrgId);
   url.searchParams.set("workspace_name", input.workspaceName || "Agent CRM workspace");
   return url.toString();
 }
