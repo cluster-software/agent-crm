@@ -1,5 +1,16 @@
 # @agent-crm/cli
 
+## 0.19.0
+
+### Minor Changes
+
+- d70bdf3: Add explicit LinkedIn connect flow and lightweight LinkedIn network import.
+
+### Patch Changes
+
+- Updated dependencies [d70bdf3]
+  - @agent-crm/sdk@0.7.0
+
 ## 0.18.5
 
 ### Patch Changes
