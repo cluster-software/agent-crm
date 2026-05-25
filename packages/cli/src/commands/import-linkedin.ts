@@ -107,6 +107,9 @@ async function runConnectLinkedin(opts: { workspace?: string; orgId?: string }):
 }> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
   const workspaceDir = path.dirname(workspaceFile);
+  loadDotenv(workspaceDir);
+  loadDotenv(process.cwd());
+
   const metadata = ensureCloudWorkspaceMetadata(workspaceDir, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
@@ -146,6 +149,9 @@ async function runSyncLinkedin(opts: { workspace?: string }): Promise<{
 }> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
   const workspaceDir = path.dirname(workspaceFile);
+  loadDotenv(workspaceDir);
+  loadDotenv(process.cwd());
+
   const metadata = ensureCloudWorkspaceMetadata(workspaceDir, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
