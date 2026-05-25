@@ -1,5 +1,11 @@
 # @agent-crm/sdk
 
+## 0.7.1
+
+### Patch Changes
+
+- bc02704: Publish the LinkedIn message sync fix that imports and dedupes people by LinkedIn URL.
+
 ## 0.7.0
 
 ### Minor Changes
