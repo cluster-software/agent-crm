@@ -1,5 +1,11 @@
 # @agent-crm/cli
 
+## 0.19.3
+
+### Patch Changes
+
+- 4498cc2: Make the Gmail onboarding fallback URL instruction use a bare URL instead of Markdown link syntax, and add LinkedIn account sync as an onboarding option.
+
 ## 0.19.2
 
 ### Patch Changes
