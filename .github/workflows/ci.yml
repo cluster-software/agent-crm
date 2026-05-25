@@ -12,9 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Two parallel jobs (no `needs:` between them) so total wall clock is
-  # max(build-test, smoke-tarballs) instead of build-test + smoke-tarballs.
-  build-test:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,12 +35,61 @@ jobs:
         if: steps.nm.outputs.cache-hit != 'true'
         run: npm ci
       - run: npm run build
-      - run: npm test
+
+  test-cli:
+    name: CLI tests (${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Restore node_modules
+        id: nm
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+          key: nm-${{ runner.os }}-node20-${{ hashFiles('package-lock.json') }}
+      - name: Install
+        if: steps.nm.outputs.cache-hit != 'true'
+        run: npm ci
+      - name: Build SDK for CLI package imports
+        run: npm run build --workspace @agent-crm/sdk
+      - run: npm run test --workspace @agent-crm/cli -- --shard ${{ matrix.shard }}/3
+
+  test-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Restore node_modules
+        id: nm
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+          key: nm-${{ runner.os }}-node20-${{ hashFiles('package-lock.json') }}
+      - name: Install
+        if: steps.nm.outputs.cache-hit != 'true'
+        run: npm ci
+      - run: npm run build --workspace @agent-crm/sdk
+      - run: npm run test --workspace @agent-crm/sdk
 
   smoke-tarballs:
     # Pack the published-tarball shape of both packages and run the issue's
     # smoke-test gate (SDK alone exports its API; CLI+SDK install together
-    # and `acrm` works end to end). Runs in parallel with build-test.
+    # and `acrm` works end to end). Runs in parallel with build and tests.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
