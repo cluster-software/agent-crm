@@ -5,13 +5,16 @@ import { resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, isJson, ok, setJsonMode } from "../output/json.js";
 import { loadDotenv } from "../lib/dotenv.js";
 import {
+  type CloudIntegrationProviderStatus,
   DEFAULT_SYNC_ENGINE_URL,
   ensureCloudWorkspaceMetadata,
+  fetchCloudIntegrationStatus,
   registerCloudWorkspace,
 } from "../lib/cloud-workspace.js";
 
 type LinkedinConnectOpts = {
   orgId?: string;
+  status?: boolean;
 };
 
 export function registerConnect(program: Command): void {
@@ -20,10 +23,22 @@ export function registerConnect(program: Command): void {
     .command("linkedin")
     .description("connect LinkedIn through Agent CRM's hosted sync engine")
     .option("--org-id <org-id>", "Cluster organization id for hosted LinkedIn sync")
+    .option("--status", "show LinkedIn connection status without starting a new connect flow")
     .action(async (opts: LinkedinConnectOpts) => {
       const root = program.opts() as { workspace?: string; json?: boolean };
       setJsonMode(root.json);
       try {
+        if (opts.status) {
+          const result = await runConnectLinkedinStatus({
+            workspace: root.workspace,
+          });
+          if (!isJson()) {
+            process.stdout.write(linkedinStatusMessage(result.linkedin));
+            return;
+          }
+          ok(result);
+          return;
+        }
         const result = await runConnectLinkedin({
           workspace: root.workspace,
           orgId: opts.orgId,
@@ -93,6 +108,36 @@ async function runConnectLinkedin(opts: { workspace?: string; orgId?: string }):
   };
 }
 
+async function runConnectLinkedinStatus(opts: { workspace?: string }): Promise<{
+  workspace_id: string;
+  sync_engine_url: string;
+  linkedin: CliProviderStatus;
+}> {
+  const workspaceFile = resolveWorkspacePath(opts.workspace);
+  const workspaceDir = path.dirname(workspaceFile);
+  loadDotenv(workspaceDir);
+  loadDotenv(process.cwd());
+
+  const metadata = ensureCloudWorkspaceMetadata(workspaceDir, {
+    workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
+    clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
+    clusterOrgId: process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
+  });
+  const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
+  const status = await fetchCloudIntegrationStatus({
+    syncEngineUrl,
+    workspaceId: metadata.workspaceId,
+    clientToken: metadata.clientToken,
+  });
+  return {
+    workspace_id: metadata.workspaceId,
+    sync_engine_url: syncEngineUrl,
+    linkedin: toCliProviderStatus(status.linkedin, {
+      requireActiveAccount: true,
+    }),
+  };
+}
+
 function linkedinConnectUrl(input: {
   syncEngineUrl: string;
   workspaceId: string;
@@ -106,7 +151,56 @@ function linkedinConnectUrl(input: {
   return url.toString();
 }
 
+type CliProviderStatus = {
+  connected: boolean;
+  account_email?: string;
+  display_name?: string;
+  provider_account_id?: string;
+  last_synced_at?: string;
+  accounts?: Array<{
+    id: string;
+    provider_account_id: string;
+    account_email?: string;
+    display_name?: string;
+    status: string;
+    last_synced_at?: string;
+  }>;
+};
+
+function toCliProviderStatus(
+  provider: CloudIntegrationProviderStatus,
+  options: { requireActiveAccount?: boolean } = {},
+): CliProviderStatus {
+  const accounts = provider.accounts?.map((account) => ({
+    id: account.id,
+    provider_account_id: account.providerAccountId,
+    ...(account.accountEmail ? { account_email: account.accountEmail } : {}),
+    ...(account.displayName ? { display_name: account.displayName } : {}),
+    status: account.status,
+    ...(account.lastSyncedAt ? { last_synced_at: account.lastSyncedAt } : {}),
+  }));
+  const hasActiveAccount = accounts?.some((account) => account.status === "active") ?? false;
+  return {
+    connected: options.requireActiveAccount && accounts
+      ? hasActiveAccount
+      : provider.connected,
+    ...(provider.accountEmail ? { account_email: provider.accountEmail } : {}),
+    ...(provider.displayName ? { display_name: provider.displayName } : {}),
+    ...(provider.providerAccountId ? { provider_account_id: provider.providerAccountId } : {}),
+    ...(provider.lastSyncedAt ? { last_synced_at: provider.lastSyncedAt } : {}),
+    ...(accounts && accounts.length > 0 ? { accounts } : {}),
+  };
+}
+
+function linkedinStatusMessage(status: CliProviderStatus): string {
+  if (!status.connected) return "LinkedIn is not connected yet.\n";
+  const label = status.display_name ?? status.account_email ?? status.provider_account_id;
+  return label ? `LinkedIn is connected: ${label}\n` : "LinkedIn is connected.\n";
+}
+
 export const __test = {
   linkedinConnectUrl,
   runConnectLinkedin,
+  runConnectLinkedinStatus,
+  toCliProviderStatus,
 };

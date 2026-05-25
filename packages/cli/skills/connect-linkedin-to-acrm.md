@@ -15,7 +15,7 @@ This is the hosted LinkedIn sync flow:
 2. The user opens Agent CRM's hosted LinkedIn connect page.
 3. The sync engine can receive post-connection LinkedIn message events from Unipile.
 4. The user chooses whether to import existing 1st-degree LinkedIn relations.
-5. Existing relations import as lightweight `people` records without bulk profile enrichment.
+5. Existing relations import as lightweight `people` and `companies` records without bulk profile enrichment.
 
 ## Run
 
@@ -43,11 +43,24 @@ echo "$CONNECT_JSON"
 open "$(echo "$CONNECT_JSON" | jq -r '.data.auth_url')"
 ```
 
-Have the user finish Cluster auth and LinkedIn verification in the browser. If they belong to multiple Cluster organizations, the hosted page will ask which one to use. LinkedIn may ask for an email, SMS, or authenticator-app code.
+Have the user finish Cluster auth and LinkedIn verification in the browser. If they belong to multiple Cluster organizations, the hosted page will ask which one to use. LinkedIn may ask for an email, SMS, authenticator-app code, or in-app sign-in approval.
+
+After opening the browser, keep the agent turn active and poll for completion every 2 seconds. Do not surface import options until the status command verifies LinkedIn is connected:
+
+```sh
+while true; do
+  STATUS_JSON=$(acrm --json connect linkedin --status 2>/dev/null || true)
+  if echo "$STATUS_JSON" | jq -e '.ok == true and .data.linkedin.connected == true' >/dev/null; then
+    echo "$STATUS_JSON"
+    break
+  fi
+  sleep 2
+done
+```
 
 ## Choose import behavior
 
-After the browser flow completes, use `AskUserQuestion` with this exact question and options (single-select, multipleChoice off):
+After the polling loop verifies completion, use `AskUserQuestion` with this exact question and options (single-select, multipleChoice off):
 
 - **Question**: `How should Agent CRM import LinkedIn contacts?`
 - **Options**:
