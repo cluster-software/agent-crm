@@ -60,7 +60,7 @@ Data model:
 Typical flow:
   acrm init <name>.acrm           create a workspace
   acrm import csv ./leads.csv     load people + companies (and deals if columns present)
-  acrm import gmail               sync Google contacts via the gws CLI (https://github.com/googleworkspace/cli) — pulls People API connections + auto-created otherContacts
+  acrm import gmail               connect Gmail through Agent CRM's hosted sync engine
   acrm import linkedin <url>      add one person from a LinkedIn profile (creates person + company)
   acrm import x <handle>          add one person from an X/Twitter profile
   acrm import post <url>          add a LinkedIn or X **post** by URL — upserts the author as a person and stores the post (use when a user shares a post link they want to track)
