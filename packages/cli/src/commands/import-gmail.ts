@@ -1,128 +1,112 @@
 import type { Command } from "commander";
-import {
-  AcrmError,
-  ERR,
-  Workspace,
-  importGoogleContacts,
-} from "@agent-crm/sdk";
+import { randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { AcrmError, ERR } from "@agent-crm/sdk";
 import { resolveWorkspacePath } from "../workspace-resolve.js";
-import { isJson, fail, ok, setJsonMode } from "../output/json.js";
-import {
-  checkGwsInstalled,
-  checkGwsAuthed,
-  streamGoogleContacts,
-} from "../lib/gws-contacts.js";
-import {
-  ensureBundledClientSecret,
-  runGwsAuthLogin,
-} from "../lib/gws-bootstrap.js";
+import { fail, isJson, ok, setJsonMode } from "../output/json.js";
 
-type Opts = {
-  otherContacts?: boolean; // commander negation: --no-other-contacts → false
-  defaultCountry?: string;
+const DEFAULT_SYNC_ENGINE_URL = "https://agent-crm-sync-engine.onrender.com";
+const CLOUD_METADATA_FILENAME = ".agent-crm-cloud.json";
+
+type CloudMetadata = {
+  workspaceId?: string;
+  createdAt?: string;
 };
 
 export function attachGmailSubcommand(parent: Command): void {
   parent
     .command("gmail")
     .description(
-      "Sync Google contacts into the workspace via the `gws` CLI (https://github.com/googleworkspace/cli). Pulls People API connections by default, plus auto-created `otherContacts` (everyone you've ever emailed) unless --no-other-contacts is passed. Creates one person per primary email and one company per email domain (matching `import csv` dedup). Requires `gws` on PATH; handles OAuth bootstrap (writing the bundled client_secret.json and driving `gws auth login` if needed) on first run.",
+      "Connect Gmail through Agent CRM's hosted sync engine. Opens hosted Google OAuth and syncs people, email threads, and email messages into the cloud workspace.",
     )
-    .option(
-      "--no-other-contacts",
-      "skip the auto-created 'other contacts' bucket (My Contacts only)",
-    )
-    .option(
-      "--default-country <iso>",
-      "ISO country code (e.g. US, GB, DE) used to parse locally-formatted phone numbers into E.164",
-      "US",
-    )
-    .action(async (opts: Opts) => {
+    .action(async () => {
       const root = parent.parent?.opts() as
         | { workspace?: string; json?: boolean }
         | undefined;
       setJsonMode(root?.json);
-      let ws: Workspace | null = null;
+
       try {
         const workspaceFile = resolveWorkspacePath(root?.workspace);
-
-        // Step 1: gws binary must be on PATH.
-        const installed = await checkGwsInstalled();
-        if (!installed.ok) {
-          throw new AcrmError(
-            "the `gws` CLI is required to import from Gmail",
-            ERR.INVALID_INPUT,
-            "install it with:\n  npm install -g @googleworkspace/cli",
-          );
-        }
-
-        // Step 2: bundled OAuth client_secret.json — write it if missing so
-        // the user never has to create their own OAuth client.
-        const seeded = ensureBundledClientSecret();
-        if (seeded.wrote && !isJson()) {
-          process.stderr.write(
-            `wrote bundled OAuth client to ${seeded.path}\n`,
-          );
-        }
-
-        // Step 3: if not authed, drive `gws auth login -s people` ourselves
-        // so the user sees one browser pop-up rather than a CLI error.
-        const authed = await checkGwsAuthed();
-        if (!authed.ok) {
-          if (!isJson()) {
-            process.stderr.write(
-              `not authenticated with Google — opening browser for OAuth consent...\n`,
-            );
-          }
-          await runGwsAuthLogin();
-        }
-
-        ws = await Workspace.open(workspaceFile);
-
-        const includeOtherContacts = opts.otherContacts !== false;
-        const startedAt = Date.now();
-        const stderrTty = process.stderr.isTTY === true;
-        let lastTick = 0;
-
-        const stream = streamGoogleContacts({ includeOtherContacts });
-        const result = await importGoogleContacts(ws, {
-          contacts: stream,
-          default_country: opts.defaultCountry,
-          onProgress: ({ seen, stats }) => {
-            if (isJson()) return;
-            const now = Date.now();
-            if (now - lastTick < 250 && seen % 50 !== 0) return;
-            lastTick = now;
-            const line = `synced ${seen} contacts  (people: ${stats.people_created}, companies: ${stats.companies_created})`;
-            if (stderrTty) {
-              process.stderr.write(`\r${line}`);
-            } else {
-              process.stderr.write(`${line}\n`);
-            }
-          },
+        const workspaceDir = dirname(workspaceFile);
+        const workspaceId = ensureCloudWorkspaceId(
+          workspaceDir,
+          process.env.ACRM_CLOUD_WORKSPACE_ID,
+        );
+        const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
+        const authUrl = gmailConnectUrl({
+          syncEngineUrl,
+          workspaceId,
+          workspaceName: basename(workspaceDir),
         });
 
-        if (stderrTty && !isJson()) process.stderr.write("\n");
-
-        await ws.close();
-        ws = null;
+        if (!isJson()) {
+          process.stdout.write(
+            [
+              "Open this URL to connect Gmail:",
+              authUrl,
+              "",
+              "After OAuth, Gmail sync runs in the background through Agent CRM's hosted sync engine.",
+              "",
+            ].join("\n")
+          );
+          return;
+        }
 
         ok({
-          ...result.stats,
-          duration_ms: Date.now() - startedAt,
-          included_other_contacts: includeOtherContacts,
+          auth_url: authUrl,
+          workspace_id: workspaceId,
+          sync_engine_url: syncEngineUrl,
         });
-      } catch (e) {
-        if (ws) {
-          try {
-            await ws.close();
-          } catch {
-            // ignore
-          }
-        }
-        if (e instanceof AcrmError) fail(e.message, e.code, e.hint);
-        else fail(e instanceof Error ? e.message : String(e), ERR.IMPORT);
+      } catch (error) {
+        if (error instanceof AcrmError) fail(error.message, error.code, error.hint);
+        else fail(error instanceof Error ? error.message : String(error), ERR.IMPORT);
         process.exit(1);
       }
     });
 }
+
+function ensureCloudWorkspaceId(
+  workspaceDir: string,
+  preferredWorkspaceId?: string,
+): string {
+  const metadataPath = join(workspaceDir, CLOUD_METADATA_FILENAME);
+  const existing = readCloudMetadata(metadataPath);
+  if (existing.workspaceId) return existing.workspaceId;
+
+  const workspaceId = preferredWorkspaceId || randomUUID();
+  writeFileSync(
+    metadataPath,
+    `${JSON.stringify({
+      ...existing,
+      workspaceId,
+      createdAt: existing.createdAt ?? new Date().toISOString(),
+    }, null, 2)}\n`,
+    "utf8"
+  );
+  return workspaceId;
+}
+
+function readCloudMetadata(metadataPath: string): CloudMetadata {
+  try {
+    const parsed = JSON.parse(readFileSync(metadataPath, "utf8")) as CloudMetadata;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function gmailConnectUrl(input: {
+  syncEngineUrl: string;
+  workspaceId: string;
+  workspaceName: string;
+}): string {
+  const url = new URL("/integrations/gmail/connect", input.syncEngineUrl);
+  url.searchParams.set("workspace_id", input.workspaceId);
+  url.searchParams.set("workspace_name", input.workspaceName || "Agent CRM workspace");
+  return url.toString();
+}
+
+export const __test = {
+  gmailConnectUrl
+};

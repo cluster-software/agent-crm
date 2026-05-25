@@ -6,6 +6,7 @@ import {
   Workspace,
   type GoogleContact,
 } from "@agent-crm/sdk";
+import { __test as gmailCommandTest } from "./import-gmail.js";
 
 async function rowsFor(
   ws: Workspace,
@@ -27,6 +28,18 @@ async function rowsFor(
 }
 
 describe("importGoogleContacts", () => {
+  it("builds a hosted sync-engine Gmail OAuth URL", () => {
+    const url = gmailCommandTest.gmailConnectUrl({
+      syncEngineUrl: "https://sync.example.com",
+      workspaceId: "workspace-1",
+      workspaceName: "pipeline",
+    });
+
+    expect(url).toBe(
+      "https://sync.example.com/integrations/gmail/connect?workspace_id=workspace-1&workspace_name=pipeline",
+    );
+  });
+
   it("creates person + company from a connection with email + organization", async () => {
     const lix = await openTestWorkspace();
     const ws = Workspace.fromLix(lix);
