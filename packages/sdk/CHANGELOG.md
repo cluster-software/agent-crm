@@ -1,5 +1,11 @@
 # @agent-crm/sdk
 
+## 0.7.3
+
+### Patch Changes
+
+- 8ec0cc8: Stop inferring LinkedIn relation companies from free-text profile headlines, and run the hosted structured company enrichment pass after importing LinkedIn relation people.
+
 ## 0.7.2
 
 ### Patch Changes
