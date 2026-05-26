@@ -1,5 +1,11 @@
 # @agent-crm/sdk
 
+## 0.7.4
+
+### Patch Changes
+
+- 6127111: Move Agent CRM workspace agent instructions into the SDK and add CLI command-coverage tests to catch documentation drift.
+
 ## 0.7.3
 
 ### Patch Changes
