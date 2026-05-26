@@ -97,7 +97,10 @@ If `acrm import linkedin` says LinkedIn is not connected, send the user back to 
 Do not run `acrm --json import linkedin --sync` in the normal connect/import
 flow. Future LinkedIn messages and contacts sync automatically. Use `--sync`
 only for debugging or importing already-stored hosted message history into the
-local `.acrm` file. Check `communication_messages_seen` /
+local `.acrm` file. When the user asks to pull messages locally, run `--sync`
+for the resolved workspace by default; it imports stored messages for every
+active LinkedIn account enabled for that workspace, not just the most recently
+connected profile. Check `communication_messages_seen` /
 `communication_messages_created` before claiming messages were imported.
 
 ## Hard rules
