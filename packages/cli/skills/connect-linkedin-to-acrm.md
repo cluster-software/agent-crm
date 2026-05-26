@@ -35,11 +35,15 @@ Run commands from the directory containing the active `.acrm` file and omit `-w`
 
 Do not set or re-export a `WORKSPACE` shell variable. Tool calls usually run in fresh shells, so repeated exports add noise without preserving useful state.
 
-Start the connect flow:
+Start the connect flow. If the workspace is already connected, this command
+returns `data.connected: true` instead of an `auth_url`.
 
 ```sh
 CONNECT_JSON=$(acrm --json connect linkedin)
 echo "$CONNECT_JSON"
+if echo "$CONNECT_JSON" | jq -e '.data.connected == true' >/dev/null; then
+  exit 0
+fi
 open "$(echo "$CONNECT_JSON" | jq -r '.data.auth_url')"
 ```
 
