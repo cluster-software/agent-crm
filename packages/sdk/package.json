@@ -1,6 +1,6 @@
 {
   "name": "@agent-crm/sdk",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "description": "The headless CRM for Claude",
   "type": "module",
   "main": "dist/index.js",

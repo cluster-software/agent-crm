@@ -1,5 +1,14 @@
 # @agent-crm/cli
 
+## 0.19.7
+
+### Patch Changes
+
+- e30775d: Bind cloud workspace sidecars to durable local `.acrm` identities and dedupe communication imports by source key.
+- 367507d: Clarify in the LinkedIn connection skill that existing contact imports write people before the slower company enrichment pass finishes.
+- Updated dependencies [e30775d]
+  - @agent-crm/sdk@0.7.5
+
 ## 0.19.6
 
 ### Patch Changes

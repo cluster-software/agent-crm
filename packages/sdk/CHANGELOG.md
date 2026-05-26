@@ -1,5 +1,11 @@
 # @agent-crm/sdk
 
+## 0.7.5
+
+### Patch Changes
+
+- e30775d: Bind cloud workspace sidecars to durable local `.acrm` identities and dedupe communication imports by source key.
+
 ## 0.7.4
 
 ### Patch Changes
