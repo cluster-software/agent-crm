@@ -306,6 +306,46 @@ export async function fetchCloudLinkedinRelationsExport(input: {
   };
 }
 
+export async function startCloudLinkedinMessageBackfill(input: {
+  syncEngineUrl: string;
+  workspaceId: string;
+  clientToken: string;
+}): Promise<{ started: number; integration_account_ids: string[] }> {
+  const url = new URL(
+    `/workspaces/${encodeURIComponent(input.workspaceId)}/integrations/linkedin/messages/backfill`,
+    input.syncEngineUrl,
+  );
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${input.clientToken}`,
+    },
+  });
+  const payload = await response.json().catch(() => undefined) as
+    | { ok?: unknown; started?: unknown; integration_account_ids?: unknown; error?: unknown; code?: unknown }
+    | undefined;
+  if (isLinkedinNotConnected(payload)) {
+    throw new AcrmError(
+      LINKEDIN_NOT_CONNECTED_MESSAGE,
+      ERR.INVALID_INPUT,
+      LINKEDIN_NOT_CONNECTED_HINT,
+    );
+  }
+  if (!response.ok || payload?.ok !== true) {
+    throw new AcrmError(
+      "failed to start LinkedIn message backfill",
+      ERR.IMPORT,
+      payloadError(payload) ?? `sync engine returned HTTP ${response.status}`,
+    );
+  }
+  return {
+    started: typeof payload.started === "number" ? payload.started : 0,
+    integration_account_ids: Array.isArray(payload.integration_account_ids)
+      ? payload.integration_account_ids.filter((id): id is string => typeof id === "string")
+      : [],
+  };
+}
+
 function parseProviderStatus(value: unknown): CloudIntegrationProviderStatus {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { connected: false };

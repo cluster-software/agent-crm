@@ -9,7 +9,8 @@ import {
   fetchCloudLinkedinRelationsExport,
   LINKEDIN_NOT_CONNECTED_HINT,
   LINKEDIN_NOT_CONNECTED_MESSAGE,
-  registerCloudWorkspace
+  registerCloudWorkspace,
+  startCloudLinkedinMessageBackfill
 } from "./cloud-workspace.js";
 import { ERR } from "@agent-crm/sdk";
 
@@ -275,6 +276,34 @@ describe("cloud workspace metadata", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "https://sync.example.com/workspaces/workspace-1/integrations/linkedin/relations/export?cutoff_date=2026-04-25&enrich_companies=1",
       {
+        headers: {
+          authorization: "Bearer client-token-1",
+        },
+      },
+    );
+  });
+
+  it("starts LinkedIn message backfill", async () => {
+    const fetchMock = vi.fn(async () => Response.json({
+      ok: true,
+      started: 1,
+      integration_account_ids: ["acct-1"],
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(startCloudLinkedinMessageBackfill({
+      syncEngineUrl: "https://sync.example.com",
+      workspaceId: "workspace-1",
+      clientToken: "client-token-1",
+    })).resolves.toEqual({
+      started: 1,
+      integration_account_ids: ["acct-1"],
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://sync.example.com/workspaces/workspace-1/integrations/linkedin/messages/backfill",
+      {
+        method: "POST",
         headers: {
           authorization: "Bearer client-token-1",
         },

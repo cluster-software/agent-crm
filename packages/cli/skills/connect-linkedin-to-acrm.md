@@ -15,7 +15,7 @@ This is the hosted LinkedIn sync flow:
 2. The user opens Agent CRM's hosted LinkedIn connect page.
 3. Future LinkedIn messages and contacts sync automatically after connection.
 4. The user chooses whether to import existing 1st-degree LinkedIn relations.
-5. Existing relations import `people` first, then enrich structured company records from LinkedIn profile URLs.
+5. Existing relations import `people` first, start hosted message-history backfill, then enrich structured company records from LinkedIn profile URLs.
 
 ## Run
 
@@ -68,6 +68,8 @@ After the polling loop verifies completion, use `AskUserQuestion` with this exac
   2. `All existing contacts` — import every current 1st-degree connection
   3. `Recent connections` — import only after a cutoff date
 
+These options affect existing contacts only; future contacts and messages sync either way.
+
 If they choose `No existing contacts`, stop after confirming LinkedIn is connected.
 
 If they choose `All existing contacts`, run:
@@ -82,10 +84,11 @@ If they choose `Recent connections`, ask for a cutoff date. Default to 30 days a
 acrm --json import linkedin --cutoff-date <YYYY-MM-DD>
 ```
 
-Existing people are written before the company enrichment pass. For a few
-hundred contacts, the final JSON can take another 1-2 minutes while company
-LinkedIn URLs fill in; run this as a background/long-timeout command and do not
-cancel it just because the people already appeared.
+Existing people are written first. Message-history backfill then starts in the
+hosted engine without blocking local people import. For a few hundred contacts,
+the final JSON can still take another 1-2 minutes while company LinkedIn URLs
+fill in; run this as a background/long-timeout command and do not cancel it just
+because the people already appeared.
 
 If `acrm import linkedin` says LinkedIn is not connected, send the user back to the connect flow above.
 
@@ -93,9 +96,9 @@ If `acrm import linkedin` says LinkedIn is not connected, send the user back to 
 
 Do not run `acrm --json import linkedin --sync` in the normal connect/import
 flow. Future LinkedIn messages and contacts sync automatically. Use `--sync`
-only for debugging or backfilling already-stored hosted message events, and
-check `communication_messages_seen` / `communication_messages_created` before
-claiming messages were imported.
+only for debugging or importing already-stored hosted message history into the
+local `.acrm` file. Check `communication_messages_seen` /
+`communication_messages_created` before claiming messages were imported.
 
 ## Hard rules
 

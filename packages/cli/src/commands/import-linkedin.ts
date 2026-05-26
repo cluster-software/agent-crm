@@ -19,6 +19,7 @@ import {
   ensureCloudWorkspaceMetadataForWorkspace,
   fetchCloudCommunicationExport,
   fetchCloudLinkedinRelationsExport,
+  startCloudLinkedinMessageBackfill,
 } from "../lib/cloud-workspace.js";
 import { type BackgroundSignalRun, startMissingSignalsForRecords } from "../signals.js";
 
@@ -101,6 +102,11 @@ async function runImportLinkedinNetwork(opts: { workspace?: string; cutoffDate?:
   stats: ImportLinkedinRelationsResult["stats"];
   company_enrichment?: unknown;
   company_enrichment_warning?: string;
+  message_backfill?: {
+    started: number;
+    integration_account_ids: string[];
+  };
+  message_backfill_warning?: string;
 }> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
   const workspaceDir = path.dirname(workspaceFile);
@@ -125,7 +131,18 @@ async function runImportLinkedinNetwork(opts: { workspace?: string; cutoffDate?:
     let stats = result.stats;
     let companyEnrichment: unknown;
     let companyEnrichmentWarning: string | undefined;
+    let messageBackfill: { started: number; integration_account_ids: string[] } | undefined;
+    let messageBackfillWarning: string | undefined;
     if (relations.length > 0) {
+      try {
+        messageBackfill = await startCloudLinkedinMessageBackfill({
+          syncEngineUrl,
+          workspaceId: metadata.workspaceId,
+          clientToken: metadata.clientToken,
+        });
+      } catch (error) {
+        messageBackfillWarning = error instanceof Error ? error.message : String(error);
+      }
       try {
         const enriched = await fetchCloudLinkedinRelationsExport({
           syncEngineUrl,
@@ -147,6 +164,8 @@ async function runImportLinkedinNetwork(opts: { workspace?: string; cutoffDate?:
       stats,
       ...(companyEnrichment ? { company_enrichment: companyEnrichment } : {}),
       ...(companyEnrichmentWarning ? { company_enrichment_warning: companyEnrichmentWarning } : {}),
+      ...(messageBackfill ? { message_backfill: messageBackfill } : {}),
+      ...(messageBackfillWarning ? { message_backfill_warning: messageBackfillWarning } : {}),
     };
   } finally {
     await ws.close();
