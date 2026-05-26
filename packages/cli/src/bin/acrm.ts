@@ -1,5 +1,7 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { registerInit } from "../commands/init.js";
 import { registerExecute } from "../commands/execute.js";
@@ -27,6 +29,7 @@ const pkg = createRequire(import.meta.url)("../../package.json") as {
   version: string;
 };
 
+export function createAcrmProgram(): Command {
 const program = new Command();
 
 program
@@ -128,17 +131,32 @@ registerSignals(program);
 registerSkills(program);
 registerAuth(program);
 
-async function main() {
+return program;
+}
+
+export async function main(argv: string[] = process.argv): Promise<void> {
   // Interactive TTYs get a Codex-style update prompt; non-TTY callers (agents,
   // pipes, CI) get a plain stderr warning. Either way, kick off a detached
   // worker to refresh the version cache for next time. All update-check
   // failures are swallowed — see src/lib/update-check.ts.
   await promptIfOutdated(pkg.version);
   scheduleBackgroundRefreshIfStale(pkg.version);
-  await program.parseAsync(process.argv);
+  await createAcrmProgram().parseAsync(argv);
 }
 
-main().catch((err) => {
-  fail(err instanceof Error ? err.message : String(err), ERR.UNHANDLED);
-  process.exit(1);
-});
+function isDirectInvocation(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(entry);
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectInvocation()) {
+  main().catch((err) => {
+    fail(err instanceof Error ? err.message : String(err), ERR.UNHANDLED);
+    process.exit(1);
+  });
+}
