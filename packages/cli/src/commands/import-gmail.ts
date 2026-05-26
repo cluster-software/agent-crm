@@ -4,10 +4,16 @@ import { basename, dirname } from "node:path";
 import { AcrmError, ERR } from "@agent-crm/sdk";
 import { resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, isJson, ok, setJsonMode } from "../output/json.js";
-import { DEFAULT_SYNC_ENGINE_URL, ensureCloudWorkspaceMetadataForWorkspace } from "../lib/cloud-workspace.js";
+import { loadDotenv } from "../lib/dotenv.js";
+import {
+  DEFAULT_SYNC_ENGINE_URL,
+  ensureCloudWorkspaceMetadataForWorkspace,
+  registerCloudWorkspace,
+} from "../lib/cloud-workspace.js";
 
 type Opts = {
   open?: boolean;
+  orgId?: string;
 };
 
 export function attachGmailSubcommand(parent: Command): void {
@@ -17,6 +23,7 @@ export function attachGmailSubcommand(parent: Command): void {
       "Connect Gmail through Agent CRM's hosted sync engine. Opens hosted Google OAuth and syncs people, email threads, and email messages into the cloud workspace.",
     )
     .option("--no-open", "print the OAuth URL without opening it in a browser")
+    .option("--org-id <org-id>", "Cluster organization id for hosted Gmail sync")
     .action(async (opts: Opts) => {
       const root = parent.parent?.opts() as
         | { workspace?: string; json?: boolean }
@@ -24,21 +31,12 @@ export function attachGmailSubcommand(parent: Command): void {
       setJsonMode(root?.json);
 
       try {
-        const workspaceFile = resolveWorkspacePath(root?.workspace);
-        const workspaceDir = dirname(workspaceFile);
-        const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
-          workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
-          clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
-        });
-        const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
-        const authUrl = await createGmailConnectUrl({
-          syncEngineUrl,
-          workspaceId: metadata.workspaceId,
-          clientToken: metadata.clientToken,
-          workspaceName: basename(workspaceDir),
+        const result = await runImportGmail({
+          workspace: root?.workspace,
+          orgId: opts.orgId,
         });
 
-        if (opts.open !== false) openInBrowser(authUrl);
+        if (opts.open !== false) openInBrowser(result.auth_url);
 
         if (!isJson()) {
           process.stdout.write(
@@ -46,7 +44,7 @@ export function attachGmailSubcommand(parent: Command): void {
               opts.open === false
                 ? "Open this URL to connect Gmail:"
                 : "Opening browser to connect Gmail. If it doesn't open, paste this URL:",
-              authUrl,
+              result.auth_url,
               "",
               "After OAuth, Gmail sync runs in the background through Agent CRM's hosted sync engine.",
               "",
@@ -55,11 +53,7 @@ export function attachGmailSubcommand(parent: Command): void {
           return;
         }
 
-        ok({
-          auth_url: authUrl,
-          workspace_id: metadata.workspaceId,
-          sync_engine_url: syncEngineUrl,
-        });
+        ok(result);
       } catch (error) {
         if (error instanceof AcrmError) fail(error.message, error.code, error.hint);
         else fail(error instanceof Error ? error.message : String(error), ERR.IMPORT);
@@ -68,43 +62,51 @@ export function attachGmailSubcommand(parent: Command): void {
     });
 }
 
-async function createGmailConnectUrl(input: {
-  syncEngineUrl: string;
-  workspaceId: string;
-  clientToken: string;
-  workspaceName: string;
-}): Promise<string> {
-  const url = gmailConnectUrl({
-    syncEngineUrl: input.syncEngineUrl,
-    workspaceId: input.workspaceId,
-    workspaceName: input.workspaceName,
+async function runImportGmail(opts: { workspace?: string; orgId?: string }): Promise<{
+  auth_url: string;
+  workspace_id: string;
+  cluster_org_id: string | null;
+  sync_engine_url: string;
+}> {
+  const workspaceFile = resolveWorkspacePath(opts.workspace);
+  const workspaceDir = dirname(workspaceFile);
+  loadDotenv(workspaceDir);
+  loadDotenv(process.cwd());
+
+  const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
+    workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
+    clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
+    clusterOrgId: opts.orgId ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
   });
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${input.clientToken}`,
-    },
+  const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
+  await registerCloudWorkspace({
+    syncEngineUrl,
+    workspaceId: metadata.workspaceId,
+    clientToken: metadata.clientToken,
+    workspaceName: basename(workspaceDir),
   });
-  const payload = await response.json().catch(() => undefined) as
-    | { authUrl?: unknown; error?: unknown }
-    | undefined;
-  if (!response.ok || typeof payload?.authUrl !== "string") {
-    throw new AcrmError(
-      "failed to start hosted Gmail OAuth",
-      ERR.IMPORT,
-      typeof payload?.error === "string" ? payload.error : `sync engine returned HTTP ${response.status}`,
-    );
-  }
-  return payload.authUrl;
+  return {
+    auth_url: gmailConnectUrl({
+      syncEngineUrl,
+      workspaceId: metadata.workspaceId,
+      clusterOrgId: metadata.clusterOrgId,
+      workspaceName: basename(workspaceDir),
+    }),
+    workspace_id: metadata.workspaceId,
+    cluster_org_id: metadata.clusterOrgId ?? null,
+    sync_engine_url: syncEngineUrl,
+  };
 }
 
 function gmailConnectUrl(input: {
   syncEngineUrl: string;
   workspaceId: string;
+  clusterOrgId?: string;
   workspaceName: string;
 }): string {
   const url = new URL("/integrations/gmail/connect", input.syncEngineUrl);
   url.searchParams.set("workspace_id", input.workspaceId);
+  if (input.clusterOrgId) url.searchParams.set("cluster_org_id", input.clusterOrgId);
   url.searchParams.set("workspace_name", input.workspaceName || "Agent CRM workspace");
   return url.toString();
 }
@@ -132,7 +134,7 @@ function openInBrowser(url: string): void {
 }
 
 export const __test = {
-  createGmailConnectUrl,
+  runImportGmail,
   browserOpenCommand,
   gmailConnectUrl,
 };
