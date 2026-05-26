@@ -129,26 +129,33 @@ export async function importCommunicationBatch(
 ): Promise<CommunicationImportResult> {
   await ensureCommunicationSchema(workspace);
 
+  const normalizedBatch: CommunicationImportBatch = {
+    people: uniqueBySourceKey(batch.people),
+    companies: uniqueBySourceKey(batch.companies ?? []),
+    communicationThreads: uniqueBySourceKey(batch.communicationThreads),
+    communicationMessages: uniqueBySourceKey(batch.communicationMessages),
+  };
+
   const lix = workspace.lix;
   const stats: CommunicationImportResult["stats"] = {
-    people_seen: batch.people.length,
+    people_seen: normalizedBatch.people.length,
     people_created: 0,
-    companies_seen: batch.companies?.length ?? 0,
+    companies_seen: normalizedBatch.companies?.length ?? 0,
     companies_created: 0,
-    communication_threads_seen: batch.communicationThreads.length,
+    communication_threads_seen: normalizedBatch.communicationThreads.length,
     communication_threads_created: 0,
-    communication_messages_seen: batch.communicationMessages.length,
+    communication_messages_seen: normalizedBatch.communicationMessages.length,
     communication_messages_created: 0,
   };
 
-  const sourceKeys = collectSourceKeys(batch);
+  const sourceKeys = collectSourceKeys(normalizedBatch);
   const sourceIndex = await loadSourceKeyIndex(lix, sourceKeys);
   const plannedSourceIndex = new Map(sourceIndex);
-  const emailIndex = await loadPeopleByEmail(lix, batch.people);
+  const emailIndex = await loadPeopleByEmail(lix, normalizedBatch.people);
   const plannedEmailIndex = new Map(emailIndex);
-  const linkedinIndex = await loadPeopleByLinkedinUrl(lix, batch.people);
+  const linkedinIndex = await loadPeopleByLinkedinUrl(lix, normalizedBatch.people);
   const plannedLinkedinIndex = new Map(linkedinIndex);
-  const companies = batch.companies ?? [];
+  const companies = normalizedBatch.companies ?? [];
   const domainIndex = await loadCompaniesByDomain(lix, companies);
   const plannedDomainIndex = new Map(domainIndex);
 
@@ -169,7 +176,7 @@ export async function importCommunicationBatch(
     if (plan.created) stats.companies_created++;
   }
 
-  for (const person of batch.people) {
+  for (const person of normalizedBatch.people) {
     if (personPlans.has(person.sourceKey)) continue;
     const email = normalizeEmail(person.email);
     const linkedinUrl = normalizeLinkedinUrlValue(person.linkedinUrl);
@@ -183,7 +190,7 @@ export async function importCommunicationBatch(
     if (plan.created) stats.people_created++;
   }
 
-  for (const thread of batch.communicationThreads) {
+  for (const thread of normalizedBatch.communicationThreads) {
     if (threadPlans.has(thread.sourceKey)) continue;
     const existingRecordId = plannedSourceIndex.get(sourceIndexKey("communication_threads", thread.sourceKey));
     const plan = planRecord("communication_threads", thread.sourceKey, existingRecordId, recordsToCreate, plannedSourceIndex);
@@ -191,7 +198,7 @@ export async function importCommunicationBatch(
     if (plan.created) stats.communication_threads_created++;
   }
 
-  for (const message of batch.communicationMessages) {
+  for (const message of normalizedBatch.communicationMessages) {
     if (messagePlans.has(message.sourceKey)) continue;
     const existingRecordId = plannedSourceIndex.get(sourceIndexKey("communication_messages", message.sourceKey));
     const plan = planRecord("communication_messages", message.sourceKey, existingRecordId, recordsToCreate, plannedSourceIndex);
@@ -200,10 +207,10 @@ export async function importCommunicationBatch(
   }
 
   const threadSourceByProviderId = new Map(
-    batch.communicationThreads.map((thread) => [thread.providerThreadId, thread.sourceKey]),
+    normalizedBatch.communicationThreads.map((thread) => [thread.providerThreadId, thread.sourceKey]),
   );
   const touchedRecords = collectTouchedRecords(
-    batch,
+    normalizedBatch,
     personPlans,
     companyPlans,
     threadPlans,
@@ -221,7 +228,7 @@ export async function importCommunicationBatch(
     });
   }
 
-  for (const person of batch.people) {
+  for (const person of normalizedBatch.people) {
     const plan = personPlans.get(person.sourceKey);
     if (!plan) continue;
     enqueueMulti(writer, existingValues, plan, "source_keys", "text", person.sourceKey);
@@ -260,7 +267,7 @@ export async function importCommunicationBatch(
     }
   }
 
-  for (const thread of batch.communicationThreads) {
+  for (const thread of normalizedBatch.communicationThreads) {
     const plan = threadPlans.get(thread.sourceKey);
     if (!plan) continue;
     enqueueMulti(writer, existingValues, plan, "source_keys", "text", thread.sourceKey);
@@ -275,7 +282,7 @@ export async function importCommunicationBatch(
     if (thread.messageCount != null) enqueueSingle(writer, existingValues, plan, "message_count", "number", thread.messageCount);
   }
 
-  for (const message of batch.communicationMessages) {
+  for (const message of normalizedBatch.communicationMessages) {
     const plan = messagePlans.get(message.sourceKey);
     if (!plan) continue;
     enqueueMulti(writer, existingValues, plan, "source_keys", "text", message.sourceKey);
@@ -294,7 +301,7 @@ export async function importCommunicationBatch(
     }
   }
 
-  for (const thread of batch.communicationThreads) {
+  for (const thread of normalizedBatch.communicationThreads) {
     const threadPlan = threadPlans.get(thread.sourceKey);
     if (!threadPlan) continue;
     for (const personSourceKey of thread.participantSourceKeys ?? []) {
@@ -309,7 +316,7 @@ export async function importCommunicationBatch(
     }
   }
 
-  for (const message of batch.communicationMessages) {
+  for (const message of normalizedBatch.communicationMessages) {
     const messagePlan = messagePlans.get(message.sourceKey);
     if (!messagePlan) continue;
 
@@ -405,6 +412,12 @@ function collectSourceKeys(batch: CommunicationImportBatch): string[] {
     for (const participant of message.participantSourceKeys ?? []) keys.add(participant);
   }
   return [...keys];
+}
+
+function uniqueBySourceKey<T extends { sourceKey: string }>(items: T[]): T[] {
+  const bySourceKey = new Map<string, T>();
+  for (const item of items) bySourceKey.set(item.sourceKey, item);
+  return [...bySourceKey.values()];
 }
 
 async function loadSourceKeyIndex(

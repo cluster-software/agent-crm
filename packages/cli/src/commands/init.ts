@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 import type { Command } from "commander";
 import { AcrmError, ERR, Workspace, generateUuid } from "@agent-crm/sdk";
@@ -14,6 +15,10 @@ export function registerInit(program: Command): void {
         const workspacePath = path.resolve(
           name.endsWith(".acrm") ? name : name + ".acrm",
         );
+        const cloudMetadataPath = path.join(path.dirname(workspacePath), ".agent-crm-cloud.json");
+        const cloudBindingWarning = existsSync(cloudMetadataPath)
+          ? `Existing cloud binding found at ${cloudMetadataPath}; hosted integrations in that binding will still apply to this workspace. Delete it first if you want a fresh cloud workspace.`
+          : undefined;
         const workspace = await Workspace.create(workspacePath);
         const workspaceId = await generateUuid(workspace.lix);
         try {
@@ -21,6 +26,7 @@ export function registerInit(program: Command): void {
             initialized: true,
             workspace_id: workspaceId,
             workspace_path: workspacePath,
+            ...(cloudBindingWarning ? { cloud_binding_warning: cloudBindingWarning } : {}),
           });
           if (!isJson()) {
             const bold = process.env.NO_COLOR ? "" : "\x1b[1m";
@@ -28,6 +34,9 @@ export function registerInit(program: Command): void {
             process.stdout.write(
               `\nCreated ${workspacePath}\nNext steps:\n  ${bold}acrm import csv <path>${reset}     load your leads\n  ${bold}/setup-transcripts${reset}         connect a transcript provider to enable /post-call (optional)\n`,
             );
+            if (cloudBindingWarning) {
+              process.stdout.write(`\nNote: ${cloudBindingWarning}\n`);
+            }
           }
         } finally {
           await workspace.close();

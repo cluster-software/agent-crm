@@ -15,7 +15,7 @@ This is the hosted LinkedIn sync flow:
 2. The user opens Agent CRM's hosted LinkedIn connect page.
 3. Future LinkedIn messages and contacts sync automatically after connection.
 4. The user chooses whether to import existing 1st-degree LinkedIn relations.
-5. Existing relations import as lightweight `people` and `companies` records without bulk profile enrichment.
+5. Existing relations import `people` first, then enrich structured company records from LinkedIn profile URLs.
 
 ## Run
 
@@ -81,6 +81,11 @@ If they choose `Recent connections`, ask for a cutoff date. Default to 30 days a
 ```sh
 acrm --json import linkedin --cutoff-date <YYYY-MM-DD>
 ```
+
+Existing people are written before the company enrichment pass. For a few
+hundred contacts, the final JSON can take another 1-2 minutes while company
+LinkedIn URLs fill in; run this as a background/long-timeout command and do not
+cancel it just because the people already appeared.
 
 If `acrm import linkedin` says LinkedIn is not connected, send the user back to the connect flow above.
 

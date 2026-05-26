@@ -93,6 +93,49 @@ describe("importCommunicationBatch", () => {
     await lix.close();
   });
 
+  it("dedupes repeated communication source keys within one batch", async () => {
+    const lix = await openTestWorkspace();
+    const ws = Workspace.fromLix(lix);
+    const thread = {
+      sourceKey: "gmail:me@example.com:thread:thread-1",
+      provider: "gmail",
+      channel: "email" as const,
+      providerAccountId: "acct-1",
+      providerThreadId: "thread-1",
+      subject: "Hello",
+      messageCount: 1,
+      participantSourceKeys: []
+    };
+    const message = {
+      sourceKey: "gmail:me@example.com:message:msg-1",
+      provider: "gmail",
+      channel: "email" as const,
+      providerAccountId: "acct-1",
+      providerMessageId: "msg-1",
+      providerThreadId: "thread-1",
+      threadSourceKey: "gmail:me@example.com:thread:thread-1",
+      subject: "Hello",
+      direction: "inbound" as const,
+      participantSourceKeys: []
+    };
+
+    const result = await importCommunicationBatch(ws, {
+      people: [],
+      companies: [],
+      communicationThreads: [thread, thread],
+      communicationMessages: [message, message]
+    });
+
+    expect(result.stats.communication_threads_seen).toBe(1);
+    expect(result.stats.communication_messages_seen).toBe(1);
+    await expect(countRecords(lix, "communication_threads")).resolves.toBe(1);
+    await expect(countRecords(lix, "communication_messages")).resolves.toBe(1);
+    await expect(countValuesFor(lix, "communication_threads", "provider")).resolves.toBe(1);
+    await expect(countValuesFor(lix, "communication_messages", "provider")).resolves.toBe(1);
+
+    await lix.close();
+  });
+
   it("imports LinkedIn communication people with linkedin_url and dedupes by it", async () => {
     const lix = await openTestWorkspace();
     const ws = Workspace.fromLix(lix);
