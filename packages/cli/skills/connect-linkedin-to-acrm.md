@@ -13,7 +13,7 @@ This is the hosted LinkedIn sync flow:
 
 1. The local workspace gets a cloud workspace binding in `.agent-crm-cloud.json`.
 2. The user opens Agent CRM's hosted LinkedIn connect page.
-3. The sync engine can receive post-connection LinkedIn message events from Unipile.
+3. Future LinkedIn messages and contacts sync automatically after connection.
 4. The user chooses whether to import existing 1st-degree LinkedIn relations.
 5. Existing relations import as lightweight `people` and `companies` records without bulk profile enrichment.
 
@@ -62,13 +62,13 @@ done
 
 After the polling loop verifies completion, use `AskUserQuestion` with this exact question and options (single-select, multipleChoice off):
 
-- **Question**: `How should Agent CRM import LinkedIn contacts?`
+- **Question**: `Future LinkedIn messages and contacts sync automatically. Import existing contacts now?`
 - **Options**:
-  1. `Future messages only` — do not import existing contacts; only new message sync creates people later
-  2. `All existing contacts` — import all current 1st-degree LinkedIn connections
-  3. `Recent connections` — import connections after a cutoff date
+  1. `No existing contacts` — skip current connections
+  2. `All existing contacts` — import every current 1st-degree connection
+  3. `Recent connections` — import only after a cutoff date
 
-If they choose `Future messages only`, stop after confirming LinkedIn is connected.
+If they choose `No existing contacts`, stop after confirming LinkedIn is connected.
 
 If they choose `All existing contacts`, run:
 
@@ -84,27 +84,13 @@ acrm --json import linkedin --cutoff-date <YYYY-MM-DD>
 
 If `acrm import linkedin` says LinkedIn is not connected, send the user back to the connect flow above.
 
-## Sync messages
+## Message sync note
 
-After the browser flow completes, pull any available LinkedIn messages:
-
-```sh
-acrm --json import linkedin --sync
-```
-
-Verify recent imported message bodies:
-
-```sh
-acrm --json execute "
-SELECT value_json, active_from
-FROM acrm_value
-WHERE object_slug = 'communication_messages'
-  AND attribute_slug = 'body_text'
-  AND active_until IS NULL
-ORDER BY active_from DESC
-LIMIT 5
-"
-```
+Do not run `acrm --json import linkedin --sync` in the normal connect/import
+flow. Future LinkedIn messages and contacts sync automatically. Use `--sync`
+only for debugging or backfilling already-stored hosted message events, and
+check `communication_messages_seen` / `communication_messages_created` before
+claiming messages were imported.
 
 ## Hard rules
 

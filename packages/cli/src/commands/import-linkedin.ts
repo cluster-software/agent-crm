@@ -99,6 +99,8 @@ async function runImportLinkedinNetwork(opts: { workspace?: string; cutoffDate?:
   workspace_id: string;
   sync_engine_url: string;
   stats: ImportLinkedinRelationsResult["stats"];
+  company_enrichment?: unknown;
+  company_enrichment_warning?: string;
 }> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
   const workspaceDir = path.dirname(workspaceFile);
@@ -120,14 +122,49 @@ async function runImportLinkedinNetwork(opts: { workspace?: string; cutoffDate?:
   const ws = await Workspace.open(workspaceFile);
   try {
     const result = await importLinkedinRelations(ws, { relations });
+    let stats = result.stats;
+    let companyEnrichment: unknown;
+    let companyEnrichmentWarning: string | undefined;
+    if (relations.length > 0) {
+      try {
+        const enriched = await fetchCloudLinkedinRelationsExport({
+          syncEngineUrl,
+          workspaceId: metadata.workspaceId,
+          clientToken: metadata.clientToken,
+          cutoffDate: opts.cutoffDate,
+          enrichCompanies: true,
+        });
+        companyEnrichment = enriched.company_enrichment;
+        const enrichedResult = await importLinkedinRelations(ws, { relations: enriched.relations });
+        stats = mergeLinkedinRelationStats(stats, enrichedResult.stats);
+      } catch (error) {
+        companyEnrichmentWarning = error instanceof Error ? error.message : String(error);
+      }
+    }
     return {
       workspace_id: metadata.workspaceId,
       sync_engine_url: syncEngineUrl,
-      stats: result.stats,
+      stats,
+      ...(companyEnrichment ? { company_enrichment: companyEnrichment } : {}),
+      ...(companyEnrichmentWarning ? { company_enrichment_warning: companyEnrichmentWarning } : {}),
     };
   } finally {
     await ws.close();
   }
+}
+
+function mergeLinkedinRelationStats(
+  left: ImportLinkedinRelationsResult["stats"],
+  right: ImportLinkedinRelationsResult["stats"],
+): ImportLinkedinRelationsResult["stats"] {
+  return {
+    relations_seen: left.relations_seen,
+    people_created: left.people_created + right.people_created,
+    people_updated: left.people_updated + right.people_updated,
+    companies_created: left.companies_created + right.companies_created,
+    companies_updated: left.companies_updated + right.companies_updated,
+    relations_skipped_no_key: left.relations_skipped_no_key,
+  };
 }
 
 async function runSyncLinkedin(opts: { workspace?: string }): Promise<{

@@ -35,6 +35,8 @@ describe("importLinkedinRelations", () => {
     await expect(valueFor(ws, "people", "job_title")).resolves.toBe("Founder at Analytical Engines");
     await expect(valueFor(ws, "people", "linkedin_connected_at")).resolves.toBe("2025-03-15T15:16:09.000Z");
     await expect(countValues(ws, "source_keys")).resolves.toBe(1);
+    await expect(countRecords(ws, "companies")).resolves.toBe(0);
+    await expect(referenceCount(ws, "people", "company", "companies")).resolves.toBe(0);
     await lix.close();
   });
 
@@ -88,7 +90,7 @@ describe("importLinkedinRelations", () => {
     expect(first.stats.people_created).toBe(1);
     expect(second.stats.people_created).toBe(0);
     expect(second.stats.people_updated).toBe(0);
-    await expect(countRecords(ws)).resolves.toBe(1);
+    await expect(countRecords(ws, "people")).resolves.toBe(1);
     await expect(countAllValues(ws)).resolves.toBe(valuesAfterFirstImport);
     await lix.close();
   });
@@ -112,7 +114,7 @@ describe("importLinkedinRelations", () => {
       ],
     });
 
-    await expect(countRecords(ws)).resolves.toBe(1);
+    await expect(countRecords(ws, "people")).resolves.toBe(1);
     await expect(countValues(ws, "source_keys")).resolves.toBe(2);
     await lix.close();
   });
@@ -229,10 +231,11 @@ async function referenceCount(
   return Number(result.rows[0]?.n ?? 0);
 }
 
-async function countRecords(ws: Workspace): Promise<number> {
+async function countRecords(ws: Workspace, objectSlug: string): Promise<number> {
   const result = await exec(
     ws.lix,
-    "SELECT COUNT(*) AS n FROM acrm_record WHERE object_slug = 'people'",
+    "SELECT COUNT(*) AS n FROM acrm_record WHERE object_slug = $1",
+    [objectSlug],
   );
   return Number(result.rows[0]?.n ?? 0);
 }

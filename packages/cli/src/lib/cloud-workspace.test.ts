@@ -123,7 +123,7 @@ describe("cloud workspace metadata", () => {
     );
   });
 
-  it("fetches LinkedIn relations export data with a cutoff date", async () => {
+  it("fetches LinkedIn relations export data with a cutoff date and company enrichment", async () => {
     const relations = [
       {
         object: "UserRelation",
@@ -131,7 +131,8 @@ describe("cloud workspace metadata", () => {
         public_profile_url: "https://www.linkedin.com/in/member-1/",
       },
     ];
-    const fetchMock = vi.fn(async () => Response.json({ ok: true, data: { relations } }));
+    const company_enrichment = { requested: true, provider: "fiber" };
+    const fetchMock = vi.fn(async () => Response.json({ ok: true, data: { relations, company_enrichment } }));
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(fetchCloudLinkedinRelationsExport({
@@ -139,10 +140,11 @@ describe("cloud workspace metadata", () => {
       workspaceId: "workspace-1",
       clientToken: "client-token-1",
       cutoffDate: "2026-04-25",
-    })).resolves.toEqual({ relations });
+      enrichCompanies: true,
+    })).resolves.toEqual({ relations, company_enrichment });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://sync.example.com/workspaces/workspace-1/integrations/linkedin/relations/export?cutoff_date=2026-04-25",
+      "https://sync.example.com/workspaces/workspace-1/integrations/linkedin/relations/export?cutoff_date=2026-04-25&enrich_companies=1",
       {
         headers: {
           authorization: "Bearer client-token-1",

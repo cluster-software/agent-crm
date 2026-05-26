@@ -184,12 +184,14 @@ export async function fetchCloudLinkedinRelationsExport(input: {
   workspaceId: string;
   clientToken: string;
   cutoffDate?: string;
-}): Promise<{ relations: LinkedinRelation[] }> {
+  enrichCompanies?: boolean;
+}): Promise<{ relations: LinkedinRelation[]; company_enrichment?: unknown }> {
   const url = new URL(
     `/workspaces/${encodeURIComponent(input.workspaceId)}/integrations/linkedin/relations/export`,
     input.syncEngineUrl,
   );
   if (input.cutoffDate) url.searchParams.set("cutoff_date", input.cutoffDate);
+  if (input.enrichCompanies) url.searchParams.set("enrich_companies", "1");
   const response = await fetch(url.toString(), {
     headers: {
       authorization: `Bearer ${input.clientToken}`,
@@ -212,7 +214,7 @@ export async function fetchCloudLinkedinRelationsExport(input: {
       payloadError(payload) ?? `sync engine returned HTTP ${response.status}`,
     );
   }
-  const data = payload.data as { relations?: unknown };
+  const data = payload.data as { relations?: unknown; company_enrichment?: unknown };
   if (!Array.isArray(data.relations)) {
     throw new AcrmError(
       "failed to export LinkedIn relations",
@@ -220,7 +222,10 @@ export async function fetchCloudLinkedinRelationsExport(input: {
       "sync engine response did not include a relations array",
     );
   }
-  return { relations: data.relations as LinkedinRelation[] };
+  return {
+    relations: data.relations as LinkedinRelation[],
+    ...(data.company_enrichment ? { company_enrichment: data.company_enrichment } : {}),
+  };
 }
 
 function parseProviderStatus(value: unknown): CloudIntegrationProviderStatus {
