@@ -1,5 +1,13 @@
 # @agent-crm/cli
 
+## 0.19.11
+
+### Patch Changes
+
+- e03cd22: Have `acrm connect linkedin` report when the workspace is already connected instead of returning a hosted connect URL.
+- Updated dependencies [e03cd22]
+  - @agent-crm/sdk@0.7.7
+
 ## 0.19.10
 
 ### Patch Changes
