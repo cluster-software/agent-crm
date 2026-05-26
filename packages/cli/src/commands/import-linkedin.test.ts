@@ -24,23 +24,34 @@ describe("import linkedin command", () => {
     const ws = await Workspace.create(workspacePath);
     await ws.close();
     process.env.ACRM_SYNC_ENGINE_URL = "https://sync.example.com";
-    const fetchMock = vi.fn(async () => Response.json({
-      ok: true,
-      data: {
-        relations: [
-          {
-            object: "UserRelation",
-            member_id: "member-1",
-            created_at: 1742051769000,
-            first_name: "Ada",
-            last_name: "Lovelace",
-            headline: "Founder at Analytical Engines",
-            public_identifier: "ada-lovelace",
-            public_profile_url: "https://www.linkedin.com/in/ada-lovelace/",
-          },
-        ],
-      },
-    }));
+    const baseRelation = {
+      object: "UserRelation",
+      member_id: "member-1",
+      created_at: 1742051769000,
+      first_name: "Ada",
+      last_name: "Lovelace",
+      headline: "Founder at Analytical Engines",
+      public_identifier: "ada-lovelace",
+      public_profile_url: "https://www.linkedin.com/in/ada-lovelace/",
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      const enrichCompanies = new URL(url).searchParams.get("enrich_companies") === "1";
+      return Response.json({
+        ok: true,
+        data: {
+          relations: [
+            enrichCompanies
+              ? {
+                ...baseRelation,
+                company_name: "Analytical Engines",
+                company_linkedin_url: "https://www.linkedin.com/company/analytical-engines/",
+              }
+              : baseRelation,
+          ],
+          ...(enrichCompanies ? { company_enrichment: { requested: true, provider: "fiber" } } : {}),
+        },
+      });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     try {
@@ -49,13 +60,18 @@ describe("import linkedin command", () => {
       });
 
       expect(result.stats.people_created).toBe(1);
-      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(result.stats.companies_created).toBe(1);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
       const [url] = fetchMock.mock.calls[0] as [string];
+      const [enrichedUrl] = fetchMock.mock.calls[1] as [string];
       expect(url).toContain("/integrations/linkedin/relations/export");
+      expect(url).not.toContain("enrich_companies=1");
+      expect(enrichedUrl).toContain("enrich_companies=1");
       const reopened = await Workspace.open(workspacePath);
       try {
         await expect(singleValue(reopened, "linkedin_url")).resolves.toBe("linkedin.com/in/ada-lovelace");
         await expect(singleValue(reopened, "linkedin_connected_at")).resolves.toBe("2025-03-15T15:16:09.000Z");
+        await expect(singleValue(reopened, "linkedin_url", "companies")).resolves.toBe("linkedin.com/company/analytical-engines");
       } finally {
         await reopened.close();
       }
@@ -119,16 +135,20 @@ describe("import linkedin command", () => {
   });
 });
 
-async function singleValue(ws: Workspace, attributeSlug: string): Promise<string | null> {
+async function singleValue(
+  ws: Workspace,
+  attributeSlug: string,
+  objectSlug = "people",
+): Promise<string | null> {
   const result = await exec(
     ws.lix,
     `SELECT value_json
      FROM acrm_value
-     WHERE object_slug = 'people'
+     WHERE object_slug = $2
        AND attribute_slug = $1
        AND active_until IS NULL
      LIMIT 1`,
-    [attributeSlug],
+    [attributeSlug, objectSlug],
   );
   const raw = result.rows[0]?.value_json;
   const parsed = typeof raw === "string" ? JSON.parse(raw) as { value?: string; timestamp?: string } : raw as { value?: string; timestamp?: string } | undefined;

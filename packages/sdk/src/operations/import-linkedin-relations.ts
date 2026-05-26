@@ -337,8 +337,7 @@ function relationCompany(relation: LinkedinRelation): NormalizedCompany | null {
     (typeof relation.organization === "string" ? relation.organization : null);
   const name =
     cleanString(explicitName) ??
-    stringField(nested, ["name", "company_name", "companyName", "organization_name", "organizationName", "title"]) ??
-    companyNameFromHeadline(relation.headline);
+    stringField(nested, ["name", "company_name", "companyName", "organization_name", "organizationName"]);
   if (!name) return null;
 
   const explicitLinkedinUrl = stringField(relation, [
@@ -384,13 +383,6 @@ function positionObject(relation: LinkedinRelation): Record<string, unknown> | n
     firstObjectItem(relation.current_position) ??
     firstObjectItem(relation.positions) ??
     firstObjectItem(relation.experience);
-}
-
-function companyNameFromHeadline(headline: string | null | undefined): string | null {
-  const value = cleanString(headline);
-  if (!value) return null;
-  const match = value.match(/\b(?:at|@)\s+([^|,;()]+)/i);
-  return cleanString(match?.[1]);
 }
 
 function relationProvenance(relation: LinkedinRelation): Record<string, unknown> {
