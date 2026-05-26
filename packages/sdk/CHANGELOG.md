@@ -1,5 +1,11 @@
 # @agent-crm/sdk
 
+## 0.7.6
+
+### Patch Changes
+
+- d56f18a: Start hosted LinkedIn message-history backfill after importing existing contacts, and update the LinkedIn agent guidance for the background message and company enrichment flow.
+
 ## 0.7.5
 
 ### Patch Changes
