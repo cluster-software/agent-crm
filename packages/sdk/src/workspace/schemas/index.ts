@@ -102,11 +102,25 @@ export const SCHEMA_VALUE: LixSchema = {
   additionalProperties: false,
 };
 
+export const SCHEMA_METADATA: LixSchema = {
+  $schema: draft,
+  "x-lix-key": "acrm_metadata",
+  "x-lix-primary-key": ["/key"],
+  type: "object",
+  required: ["key", "value"],
+  properties: {
+    key: { type: "string" },
+    value: { type: "string" },
+  },
+  additionalProperties: false,
+};
+
 export const ALL_SCHEMAS: LixSchema[] = [
   SCHEMA_OBJECT,
   SCHEMA_ATTRIBUTE,
   SCHEMA_RECORD,
   SCHEMA_VALUE,
+  SCHEMA_METADATA,
 ];
 
 export async function registerAllSchemas(lix: Lix): Promise<void> {

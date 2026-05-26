@@ -4,7 +4,7 @@ import { basename, dirname } from "node:path";
 import { AcrmError, ERR } from "@agent-crm/sdk";
 import { resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, isJson, ok, setJsonMode } from "../output/json.js";
-import { DEFAULT_SYNC_ENGINE_URL, ensureCloudWorkspaceMetadata } from "../lib/cloud-workspace.js";
+import { DEFAULT_SYNC_ENGINE_URL, ensureCloudWorkspaceMetadataForWorkspace } from "../lib/cloud-workspace.js";
 
 type Opts = {
   open?: boolean;
@@ -26,7 +26,7 @@ export function attachGmailSubcommand(parent: Command): void {
       try {
         const workspaceFile = resolveWorkspacePath(root?.workspace);
         const workspaceDir = dirname(workspaceFile);
-        const metadata = ensureCloudWorkspaceMetadata(workspaceDir, {
+        const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
           workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
           clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
         });

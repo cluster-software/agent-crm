@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { exec } from "./db/execute.js";
 import { AcrmError, ERR } from "./lib/errors.js";
 import { Workspace } from "./workspace.js";
+import { ensureWorkspaceIdentity } from "./workspace/identity.js";
 
 describe("Workspace", () => {
   it("rejects relative paths before opening a workspace", async () => {
@@ -59,6 +60,9 @@ describe("Workspace", () => {
           "SELECT attribute_type FROM acrm_attribute WHERE object_slug = 'people' AND attribute_slug = 'email_addresses'",
         );
         expect(emailAttr.rows[0]?.attribute_type).toBe("email-address");
+
+        const identity = await ensureWorkspaceIdentity(workspace);
+        expect(identity).toMatch(/^[0-9a-f-]{36}$/);
       } finally {
         await workspace.close();
       }
@@ -78,6 +82,25 @@ describe("Workspace", () => {
         exec(owner.lix, "SELECT object_slug FROM acrm_object LIMIT 1"),
       ).resolves.toMatchObject({ rowsAffected: 0 });
       await owner.close();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the local workspace identity when reopening", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "acrm-sdk-workspace-"));
+    try {
+      const workspacePath = path.join(dir, "test.acrm");
+      const created = await Workspace.create(workspacePath);
+      const firstIdentity = await ensureWorkspaceIdentity(created);
+      await created.close();
+
+      const reopened = await Workspace.open(workspacePath);
+      try {
+        await expect(ensureWorkspaceIdentity(reopened)).resolves.toBe(firstIdentity);
+      } finally {
+        await reopened.close();
+      }
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
