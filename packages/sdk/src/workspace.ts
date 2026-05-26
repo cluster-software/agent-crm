@@ -4,6 +4,7 @@ import { isAbsolute } from "node:path";
 import { openLix, type Lix } from "@lix-js/sdk";
 import { createBetterSqlite3Backend } from "@lix-js/sdk/sqlite";
 import { AcrmError, ERR } from "./lib/errors.js";
+import { ensureWorkspaceIdentity } from "./workspace/identity.js";
 import { initializeWorkspace } from "./workspace/initialize.js";
 
 // Opaque handle wrapping a Lix. Workspaces created by open/create own the
@@ -31,7 +32,9 @@ export class Workspace {
         ERR.NO_WORKSPACE,
       );
     }
-    return new Workspace(await openWorkspaceLix(absolutePath), true);
+    const workspace = new Workspace(await openWorkspaceLix(absolutePath), true);
+    await ensureWorkspaceIdentity(workspace);
+    return workspace;
   }
 
   // Wrap an existing Lix in a Workspace handle without taking ownership by

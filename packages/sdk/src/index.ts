@@ -31,6 +31,7 @@ export * from "./lib/token-cache.js";
 export * from "./lib/uuidv7.js";
 
 export * from "./workspace/schemas/index.js";
+export * from "./workspace/identity.js";
 export { seedAttributes, seedObjects } from "./workspace/seeds.js";
 export { Workspace } from "./workspace.js";
 

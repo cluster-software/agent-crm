@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   AcrmError,
   ERR,
+  Workspace,
+  ensureWorkspaceIdentity,
   type CommunicationImportBatch,
   type LinkedinRelation,
 } from "@agent-crm/sdk";
@@ -24,6 +26,7 @@ export type CloudMetadata = {
   workspaceId?: string;
   clientToken?: string;
   clusterOrgId?: string;
+  localWorkspaceId?: string;
   createdAt?: string;
 };
 
@@ -52,18 +55,38 @@ export type CloudIntegrationStatus = {
 
 export function ensureCloudWorkspaceMetadata(
   workspaceDir: string,
-  preferred: { workspaceId?: string; clientToken?: string; clusterOrgId?: string } = {},
-): { workspaceId: string; clientToken: string; clusterOrgId?: string } {
+  preferred: {
+    workspaceId?: string;
+    clientToken?: string;
+    clusterOrgId?: string;
+    localWorkspaceId?: string;
+    workspacePath?: string;
+  } = {},
+): { workspaceId: string; clientToken: string; clusterOrgId?: string; localWorkspaceId?: string } {
   const metadataPath = join(workspaceDir, CLOUD_METADATA_FILENAME);
-  const existing = readCloudMetadata(metadataPath);
+  let existing = readCloudMetadata(metadataPath);
+  const localWorkspaceId = preferred.localWorkspaceId || existing.localWorkspaceId;
+
+  if (existing.workspaceId && existing.clientToken && localWorkspaceId) {
+    if (existing.localWorkspaceId && existing.localWorkspaceId !== localWorkspaceId) {
+      archiveCloudMetadata(metadataPath);
+      existing = {};
+    } else if (!existing.localWorkspaceId && shouldRotateLegacySidecar(existing, metadataPath, preferred.workspacePath)) {
+      archiveCloudMetadata(metadataPath);
+      existing = {};
+    }
+  }
+
   const workspaceId = existing.workspaceId || preferred.workspaceId || randomUUID();
   const clientToken = existing.clientToken || preferred.clientToken || randomUUID();
   const clusterOrgId = preferred.clusterOrgId || existing.clusterOrgId;
+  const nextLocalWorkspaceId = localWorkspaceId || existing.localWorkspaceId;
 
   if (
     workspaceId !== existing.workspaceId ||
     clientToken !== existing.clientToken ||
-    clusterOrgId !== existing.clusterOrgId
+    clusterOrgId !== existing.clusterOrgId ||
+    nextLocalWorkspaceId !== existing.localWorkspaceId
   ) {
     writeFileSync(
       metadataPath,
@@ -72,6 +95,7 @@ export function ensureCloudWorkspaceMetadata(
         workspaceId,
         clientToken,
         ...(clusterOrgId ? { clusterOrgId } : {}),
+        ...(nextLocalWorkspaceId ? { localWorkspaceId: nextLocalWorkspaceId } : {}),
         createdAt: existing.createdAt ?? new Date().toISOString(),
       }, null, 2)}\n`,
       "utf8"
@@ -82,7 +106,25 @@ export function ensureCloudWorkspaceMetadata(
     workspaceId,
     clientToken,
     ...(clusterOrgId ? { clusterOrgId } : {}),
+    ...(nextLocalWorkspaceId ? { localWorkspaceId: nextLocalWorkspaceId } : {}),
   };
+}
+
+export async function ensureCloudWorkspaceMetadataForWorkspace(
+  workspacePath: string,
+  preferred: { workspaceId?: string; clientToken?: string; clusterOrgId?: string } = {},
+): Promise<{ workspaceId: string; clientToken: string; clusterOrgId?: string; localWorkspaceId?: string }> {
+  const workspace = await Workspace.open(workspacePath);
+  try {
+    const localWorkspaceId = await ensureWorkspaceIdentity(workspace);
+    return ensureCloudWorkspaceMetadata(dirname(workspacePath), {
+      ...preferred,
+      localWorkspaceId,
+      workspacePath,
+    });
+  } finally {
+    await workspace.close();
+  }
 }
 
 function readCloudMetadata(metadataPath: string): CloudMetadata {
@@ -92,6 +134,42 @@ function readCloudMetadata(metadataPath: string): CloudMetadata {
   } catch {
     return {};
   }
+}
+
+function shouldRotateLegacySidecar(
+  existing: CloudMetadata,
+  metadataPath: string,
+  workspacePath: string | undefined,
+): boolean {
+  if (existing.localWorkspaceId || !workspacePath || !existsSync(metadataPath) || !existsSync(workspacePath)) {
+    return false;
+  }
+  const sidecarCreatedAt = sidecarTimestamp(existing, metadataPath);
+  if (sidecarCreatedAt == null) return false;
+  const workspaceStat = statSync(workspacePath);
+  const workspaceCreatedAt = Math.max(workspaceStat.birthtimeMs, workspaceStat.mtimeMs);
+  return workspaceCreatedAt > sidecarCreatedAt;
+}
+
+function sidecarTimestamp(existing: CloudMetadata, metadataPath: string): number | null {
+  const createdAt = Date.parse(existing.createdAt ?? "");
+  if (!Number.isNaN(createdAt)) return createdAt;
+  const stat = statSync(metadataPath);
+  const timestamp = Math.max(stat.birthtimeMs, stat.mtimeMs);
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
+}
+
+function archiveCloudMetadata(metadataPath: string): void {
+  if (!existsSync(metadataPath)) return;
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const base = `${metadataPath}.stale-${timestamp}`;
+  let target = base;
+  let suffix = 1;
+  while (existsSync(target)) {
+    target = `${base}-${suffix}`;
+    suffix++;
+  }
+  renameSync(metadataPath, target);
 }
 
 export async function registerCloudWorkspace(input: {
@@ -142,7 +220,7 @@ export async function fetchCloudCommunicationExport(input: {
     throw new AcrmError(
       `failed to export ${input.provider} communication data`,
       ERR.IMPORT,
-      typeof payload?.error === "string" ? payload.error : `sync engine returned HTTP ${response.status}`,
+      payloadError(payload) ?? `sync engine returned HTTP ${response.status}`,
     );
   }
   return payload.data as CommunicationImportBatch;

@@ -92,6 +92,7 @@ type RecordPlan = {
 
 type ExistingValues = {
   singleValues: Map<string, ValueJson>;
+  plannedSingleValues: Set<string>;
   multiValues: Set<string>;
 };
 
@@ -129,26 +130,27 @@ export async function importCommunicationBatch(
 ): Promise<CommunicationImportResult> {
   await ensureCommunicationSchema(workspace);
 
+  const normalizedBatch = normalizeCommunicationBatch(batch);
   const lix = workspace.lix;
   const stats: CommunicationImportResult["stats"] = {
-    people_seen: batch.people.length,
+    people_seen: normalizedBatch.people.length,
     people_created: 0,
-    companies_seen: batch.companies?.length ?? 0,
+    companies_seen: normalizedBatch.companies?.length ?? 0,
     companies_created: 0,
-    communication_threads_seen: batch.communicationThreads.length,
+    communication_threads_seen: normalizedBatch.communicationThreads.length,
     communication_threads_created: 0,
-    communication_messages_seen: batch.communicationMessages.length,
+    communication_messages_seen: normalizedBatch.communicationMessages.length,
     communication_messages_created: 0,
   };
 
-  const sourceKeys = collectSourceKeys(batch);
+  const sourceKeys = collectSourceKeys(normalizedBatch);
   const sourceIndex = await loadSourceKeyIndex(lix, sourceKeys);
   const plannedSourceIndex = new Map(sourceIndex);
-  const emailIndex = await loadPeopleByEmail(lix, batch.people);
+  const emailIndex = await loadPeopleByEmail(lix, normalizedBatch.people);
   const plannedEmailIndex = new Map(emailIndex);
-  const linkedinIndex = await loadPeopleByLinkedinUrl(lix, batch.people);
+  const linkedinIndex = await loadPeopleByLinkedinUrl(lix, normalizedBatch.people);
   const plannedLinkedinIndex = new Map(linkedinIndex);
-  const companies = batch.companies ?? [];
+  const companies = normalizedBatch.companies ?? [];
   const domainIndex = await loadCompaniesByDomain(lix, companies);
   const plannedDomainIndex = new Map(domainIndex);
 
@@ -169,7 +171,7 @@ export async function importCommunicationBatch(
     if (plan.created) stats.companies_created++;
   }
 
-  for (const person of batch.people) {
+  for (const person of normalizedBatch.people) {
     if (personPlans.has(person.sourceKey)) continue;
     const email = normalizeEmail(person.email);
     const linkedinUrl = normalizeLinkedinUrlValue(person.linkedinUrl);
@@ -183,7 +185,7 @@ export async function importCommunicationBatch(
     if (plan.created) stats.people_created++;
   }
 
-  for (const thread of batch.communicationThreads) {
+  for (const thread of normalizedBatch.communicationThreads) {
     if (threadPlans.has(thread.sourceKey)) continue;
     const existingRecordId = plannedSourceIndex.get(sourceIndexKey("communication_threads", thread.sourceKey));
     const plan = planRecord("communication_threads", thread.sourceKey, existingRecordId, recordsToCreate, plannedSourceIndex);
@@ -191,7 +193,7 @@ export async function importCommunicationBatch(
     if (plan.created) stats.communication_threads_created++;
   }
 
-  for (const message of batch.communicationMessages) {
+  for (const message of normalizedBatch.communicationMessages) {
     if (messagePlans.has(message.sourceKey)) continue;
     const existingRecordId = plannedSourceIndex.get(sourceIndexKey("communication_messages", message.sourceKey));
     const plan = planRecord("communication_messages", message.sourceKey, existingRecordId, recordsToCreate, plannedSourceIndex);
@@ -200,10 +202,10 @@ export async function importCommunicationBatch(
   }
 
   const threadSourceByProviderId = new Map(
-    batch.communicationThreads.map((thread) => [thread.providerThreadId, thread.sourceKey]),
+    normalizedBatch.communicationThreads.map((thread) => [thread.providerThreadId, thread.sourceKey]),
   );
   const touchedRecords = collectTouchedRecords(
-    batch,
+    normalizedBatch,
     personPlans,
     companyPlans,
     threadPlans,
@@ -221,7 +223,7 @@ export async function importCommunicationBatch(
     });
   }
 
-  for (const person of batch.people) {
+  for (const person of normalizedBatch.people) {
     const plan = personPlans.get(person.sourceKey);
     if (!plan) continue;
     enqueueMulti(writer, existingValues, plan, "source_keys", "text", person.sourceKey);
@@ -260,7 +262,7 @@ export async function importCommunicationBatch(
     }
   }
 
-  for (const thread of batch.communicationThreads) {
+  for (const thread of normalizedBatch.communicationThreads) {
     const plan = threadPlans.get(thread.sourceKey);
     if (!plan) continue;
     enqueueMulti(writer, existingValues, plan, "source_keys", "text", thread.sourceKey);
@@ -275,7 +277,7 @@ export async function importCommunicationBatch(
     if (thread.messageCount != null) enqueueSingle(writer, existingValues, plan, "message_count", "number", thread.messageCount);
   }
 
-  for (const message of batch.communicationMessages) {
+  for (const message of normalizedBatch.communicationMessages) {
     const plan = messagePlans.get(message.sourceKey);
     if (!plan) continue;
     enqueueMulti(writer, existingValues, plan, "source_keys", "text", message.sourceKey);
@@ -294,7 +296,7 @@ export async function importCommunicationBatch(
     }
   }
 
-  for (const thread of batch.communicationThreads) {
+  for (const thread of normalizedBatch.communicationThreads) {
     const threadPlan = threadPlans.get(thread.sourceKey);
     if (!threadPlan) continue;
     for (const personSourceKey of thread.participantSourceKeys ?? []) {
@@ -309,7 +311,7 @@ export async function importCommunicationBatch(
     }
   }
 
-  for (const message of batch.communicationMessages) {
+  for (const message of normalizedBatch.communicationMessages) {
     const messagePlan = messagePlans.get(message.sourceKey);
     if (!messagePlan) continue;
 
@@ -366,6 +368,25 @@ async function ensureCommunicationSchema(workspace: Workspace): Promise<void> {
 
   await seedObjects(workspace.lix);
   await seedAttributes(workspace.lix);
+}
+
+function normalizeCommunicationBatch(batch: CommunicationImportBatch): CommunicationImportBatch {
+  return {
+    people: uniqueBySourceKey(batch.people),
+    companies: uniqueBySourceKey(batch.companies ?? []),
+    communicationThreads: uniqueBySourceKey(batch.communicationThreads),
+    communicationMessages: uniqueBySourceKey(batch.communicationMessages),
+  };
+}
+
+function uniqueBySourceKey<Item extends { sourceKey: string }>(items: Item[]): Item[] {
+  const bySourceKey = new Map<string, Item>();
+  for (const item of items) {
+    if (!bySourceKey.has(item.sourceKey)) {
+      bySourceKey.set(item.sourceKey, item);
+    }
+  }
+  return [...bySourceKey.values()];
 }
 
 function planRecord(
@@ -571,6 +592,7 @@ async function loadExistingValues(
 ): Promise<ExistingValues> {
   const existing: ExistingValues = {
     singleValues: new Map(),
+    plannedSingleValues: new Set(),
     multiValues: new Set(),
   };
 
@@ -620,12 +642,14 @@ function enqueueSingle(
   const valueJson = encode(attributeType, rawValue, attributeConfig(plan.objectSlug, attributeSlug));
   const key = singleValueKey(plan.objectSlug, plan.recordId, attributeSlug);
   const current = existing.singleValues.get(key);
-  if (!plan.created && current && sameValueJson(current, valueJson)) return;
-  if (!plan.created && current) {
+  const planned = existing.plannedSingleValues.has(key);
+  if (current && sameValueJson(current, valueJson)) return;
+  if (!planned && !plan.created && current) {
     writer.retireSingle(plan.objectSlug, plan.recordId, attributeSlug);
   }
   existing.singleValues.set(key, valueJson);
-  writer.enqueueValue(valueInput(plan.objectSlug, plan.recordId, attributeSlug, attributeType, valueJson));
+  existing.plannedSingleValues.add(key);
+  writer.enqueueSingleValue(valueInput(plan.objectSlug, plan.recordId, attributeSlug, attributeType, valueJson));
 }
 
 function enqueueSingleIfMissing(
@@ -752,6 +776,27 @@ class CommunicationWriteBatcher {
       source: input.source,
       provenance: input.provenance,
     }));
+  }
+
+  enqueueSingleValue(input: ValueInput): void {
+    const prepared = prepareValueInsert(uuidv7(), {
+      object_slug: input.object_slug,
+      record_id: input.record_id,
+      attribute_slug: input.attribute_slug,
+      attribute_type: input.attribute_type,
+      value_json: input.value as ValueJson,
+      source: input.source,
+      provenance: input.provenance,
+    });
+    const key = singleValueKey(prepared.object_slug, prepared.record_id, prepared.attribute_slug);
+    const existingIndex = this.values.findIndex((value) =>
+      singleValueKey(value.object_slug, value.record_id, value.attribute_slug) === key
+    );
+    if (existingIndex >= 0) {
+      this.values[existingIndex] = prepared;
+      return;
+    }
+    this.values.push(prepared);
   }
 
   enqueueValueIfMissing(existing: ExistingValues, isFreshRecord: boolean, input: ValueInput): void {

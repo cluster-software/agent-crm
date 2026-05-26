@@ -7,7 +7,7 @@ import { loadDotenv } from "../lib/dotenv.js";
 import {
   type CloudIntegrationProviderStatus,
   DEFAULT_SYNC_ENGINE_URL,
-  ensureCloudWorkspaceMetadata,
+  ensureCloudWorkspaceMetadataForWorkspace,
   fetchCloudIntegrationStatus,
   registerCloudWorkspace,
 } from "../lib/cloud-workspace.js";
@@ -83,7 +83,7 @@ async function runConnectLinkedin(opts: { workspace?: string; orgId?: string }):
   loadDotenv(workspaceDir);
   loadDotenv(process.cwd());
 
-  const metadata = ensureCloudWorkspaceMetadata(workspaceDir, {
+  const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
     clusterOrgId: opts.orgId ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
@@ -118,7 +118,7 @@ async function runConnectLinkedinStatus(opts: { workspace?: string }): Promise<{
   loadDotenv(workspaceDir);
   loadDotenv(process.cwd());
 
-  const metadata = ensureCloudWorkspaceMetadata(workspaceDir, {
+  const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
     clusterOrgId: process.env.ACRM_CLOUD_CLUSTER_ORG_ID,

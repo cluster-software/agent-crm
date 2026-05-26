@@ -1,4 +1,5 @@
 import type { Lix } from "@lix-js/sdk";
+import { ensureWorkspaceIdentityForLix } from "./identity.js";
 import { registerAllSchemas } from "./schemas/index.js";
 import { seedAttributes, seedObjects } from "./seeds.js";
 
@@ -8,4 +9,5 @@ export async function initializeWorkspace(lix: Lix): Promise<void> {
   await registerAllSchemas(lix);
   await seedObjects(lix);
   await seedAttributes(lix);
+  await ensureWorkspaceIdentityForLix(lix);
 }
