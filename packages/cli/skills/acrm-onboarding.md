@@ -53,6 +53,13 @@ Use `AskUserQuestion` with this exact question and options (single-select, multi
 Powered by Agent CRM's hosted sync engine. Do **not** run a local Gmail
 contacts import.
 
+Gmail uses the same browser-side Cluster auth gate as LinkedIn. Do not
+ask the user for a Cluster org id before starting. The hosted connect page
+will infer the org from the user's Cluster browser session, or ask them to
+choose one if the session belongs to multiple orgs. Only pass
+`--org-id <org-id>` when the user explicitly provides an org id or the
+workspace already has one configured.
+
 Run:
 
 ```sh
@@ -77,9 +84,10 @@ people, threads, and messages into your local `.acrm` workspace.
 What `acrm import gmail` does now:
 
 1. Reads or creates `.agent-crm-cloud.json` next to the local workspace.
-2. Starts a hosted sync-engine OAuth attempt.
-3. Opens the Google OAuth URL in the user's browser and returns it as
-   `data.auth_url` for fallback/debugging.
+2. Registers the cloud workspace with the hosted sync engine.
+3. Opens the hosted Gmail connect page in the user's browser. That page
+   checks Cluster auth, chooses the org, then starts Google OAuth.
+4. Returns the hosted connect URL as `data.auth_url` for fallback/debugging.
 
 After OAuth, the sync engine redirects to a "Gmail sync started" page and
 imports Gmail in the background. Gmail data is written to the cloud

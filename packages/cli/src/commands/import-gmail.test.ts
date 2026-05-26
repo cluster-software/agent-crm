@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { openTestWorkspace } from "../test/open-test-lix.js";
 import {
   exec,
@@ -28,7 +31,25 @@ async function rowsFor(
 }
 
 describe("importGoogleContacts", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
   it("builds a hosted sync-engine Gmail OAuth URL", () => {
+    const url = gmailCommandTest.gmailConnectUrl({
+      syncEngineUrl: "https://sync.example.com",
+      workspaceId: "workspace-1",
+      clusterOrgId: "org-1",
+      workspaceName: "pipeline",
+    });
+
+    expect(url).toBe(
+      "https://sync.example.com/integrations/gmail/connect?workspace_id=workspace-1&cluster_org_id=org-1&workspace_name=pipeline",
+    );
+  });
+
+  it("omits Cluster org id when browser auth should infer it", () => {
     const url = gmailCommandTest.gmailConnectUrl({
       syncEngineUrl: "https://sync.example.com",
       workspaceId: "workspace-1",
@@ -53,6 +74,47 @@ describe("importGoogleContacts", () => {
       command: "xdg-open",
       args: ["https://example.com"],
     });
+  });
+
+  it("registers the cloud workspace and returns a hosted Gmail browser URL", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "acrm-gmail-import-"));
+    const workspacePath = join(dir, "pipeline.acrm");
+    const ws = await Workspace.create(workspacePath);
+    await ws.close();
+    vi.stubEnv("ACRM_SYNC_ENGINE_URL", "https://sync.example.com");
+    vi.stubEnv("ACRM_CLOUD_WORKSPACE_ID", "workspace-1");
+    vi.stubEnv("ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN", "client-token-1");
+    const fetchMock = vi.fn(async () => Response.json({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const result = await gmailCommandTest.runImportGmail({
+        workspace: workspacePath,
+        orgId: "org-1",
+      });
+      const authUrl = new URL(result.auth_url);
+
+      expect(result.workspace_id).toBe("workspace-1");
+      expect(result.cluster_org_id).toBe("org-1");
+      expect(result.sync_engine_url).toBe("https://sync.example.com");
+      expect(authUrl.origin + authUrl.pathname).toBe("https://sync.example.com/integrations/gmail/connect");
+      expect(authUrl.searchParams.get("workspace_id")).toBe("workspace-1");
+      expect(authUrl.searchParams.get("cluster_org_id")).toBe("org-1");
+      expect(authUrl.searchParams.get("workspace_name")).toBe(basename(dir));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [registerUrl, registerInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const parsedRegisterUrl = new URL(registerUrl);
+      expect(parsedRegisterUrl.origin + parsedRegisterUrl.pathname).toBe("https://sync.example.com/workspaces/workspace-1/register");
+      expect(parsedRegisterUrl.searchParams.get("workspace_name")).toBe(basename(dir));
+      expect(registerInit).toEqual({
+        method: "POST",
+        headers: {
+          authorization: "Bearer client-token-1",
+        },
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("creates person + company from a connection with email + organization", async () => {
