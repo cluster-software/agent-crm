@@ -66,6 +66,17 @@ implementation rather than after mistakes.
 
 ## Agent CRM Principles
 
+### Agent workspace instructions
+
+Generated workspace guidance for Claude/Codex lives in
+`packages/sdk/src/agent-instructions.ts`.
+
+When changing CLI commands, SDK workspace schema/objects, import behavior,
+skills, or SQL guidance, update that file in the same PR and run
+`npm run check:agent-instructions --workspace @agent-crm/cli`. CI catches new
+CLI command paths that are not covered; this reminder is the backstop for
+behavior/prose changes that command coverage cannot detect.
+
 ### Release process
 
 Agent CRM packages are released with Changesets, not conventional commits.

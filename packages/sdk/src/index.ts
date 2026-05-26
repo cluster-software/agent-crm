@@ -9,6 +9,7 @@ export * from "./db/execute.js";
 export * from "./db/upsert.js";
 export * from "./domain/resolve-person.js";
 export * from "./domain/values.js";
+export * from "./agent-instructions.js";
 
 // integrations: apify-linkedin / apify-x / linkedin-mapping / x-mapping have
 // overlapping symbol names — import them via subpath, e.g.

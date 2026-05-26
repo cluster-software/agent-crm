@@ -24,6 +24,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/bin/acrm.ts",
+    "check:agent-instructions": "vitest run src/bin/agent-instructions.test.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "prepublishOnly": "npm run build",
