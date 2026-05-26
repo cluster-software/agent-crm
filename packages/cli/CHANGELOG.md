@@ -1,5 +1,11 @@
 # @agent-crm/cli
 
+## 0.19.8
+
+### Patch Changes
+
+- 39cce72: Route `acrm import gmail` through the hosted browser Cluster-auth bridge, matching LinkedIn org inference and selection, and update the onboarding skill instructions for the gated flow.
+
 ## 0.19.7
 
 ### Patch Changes
