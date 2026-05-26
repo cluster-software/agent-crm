@@ -52,7 +52,7 @@ export const AGENT_INSTRUCTIONS_BLOCK = [
   "- Prefer first-class CLI commands for common writes. Use `acrm execute` for inspection, reporting, or custom SQL when the CLI does not expose the exact operation.",
   "",
   "Common commands:",
-  "- `acrm connect linkedin` connects LinkedIn through Agent CRM's hosted sync engine; `acrm connect linkedin --status` checks whether the workspace is connected.",
+  "- `acrm connect linkedin` connects LinkedIn through Agent CRM's hosted sync engine, or reports when the workspace is already connected. `acrm connect linkedin --status` checks status without starting a connect flow.",
   "- `acrm import csv ./leads.csv` imports people and companies from a CSV. It creates deals only when deal columns such as `deal_name` or `deal` are present.",
   "- `acrm import gmail` connects Gmail through Agent CRM's hosted sync engine and syncs people, email threads, and email messages.",
   "- `acrm import linkedin` imports existing contacts from the connected LinkedIn account, then starts hosted LinkedIn message-history backfill in the background. `acrm import linkedin --sync` imports already-stored LinkedIn messages from the hosted sync engine into the local workspace.",

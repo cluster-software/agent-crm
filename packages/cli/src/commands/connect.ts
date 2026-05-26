@@ -44,15 +44,19 @@ export function registerConnect(program: Command): void {
           orgId: opts.orgId,
         });
         if (!isJson()) {
-          process.stdout.write(
-            [
-              "Open this URL to connect LinkedIn:",
-              result.auth_url,
-              "",
-              "After login, LinkedIn sync runs in the background through Agent CRM's hosted sync engine.",
-              "",
-            ].join("\n")
-          );
+          if (result.connected) {
+            process.stdout.write(`${result.message}\n`);
+          } else {
+            process.stdout.write(
+              [
+                "Open this URL to connect LinkedIn:",
+                result.auth_url,
+                "",
+                "After login, LinkedIn sync runs in the background through Agent CRM's hosted sync engine.",
+                "",
+              ].join("\n")
+            );
+          }
           return;
         }
         ok(result);
@@ -72,12 +76,23 @@ function getOrCreateConnectCommand(program: Command): Command {
     .description("connect external accounts to this .acrm workspace");
 }
 
-async function runConnectLinkedin(opts: { workspace?: string; orgId?: string }): Promise<{
+type LinkedinConnectResult = {
+  connected: false;
   auth_url: string;
   workspace_id: string;
   cluster_org_id: string | null;
   sync_engine_url: string;
-}> {
+  linkedin: CliProviderStatus;
+} | {
+  connected: true;
+  message: string;
+  workspace_id: string;
+  cluster_org_id: string | null;
+  sync_engine_url: string;
+  linkedin: CliProviderStatus;
+};
+
+async function runConnectLinkedin(opts: { workspace?: string; orgId?: string }): Promise<LinkedinConnectResult> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
   const workspaceDir = path.dirname(workspaceFile);
   loadDotenv(workspaceDir);
@@ -95,7 +110,26 @@ async function runConnectLinkedin(opts: { workspace?: string; orgId?: string }):
     clientToken: metadata.clientToken,
     workspaceName: path.basename(workspaceDir),
   });
+  const status = await fetchCloudIntegrationStatus({
+    syncEngineUrl,
+    workspaceId: metadata.workspaceId,
+    clientToken: metadata.clientToken,
+  });
+  const linkedin = toCliProviderStatus(status.linkedin, {
+    requireActiveAccount: true,
+  });
+  if (linkedin.connected) {
+    return {
+      connected: true,
+      message: linkedinAlreadyConnectedMessage(linkedin),
+      workspace_id: metadata.workspaceId,
+      cluster_org_id: metadata.clusterOrgId ?? null,
+      sync_engine_url: syncEngineUrl,
+      linkedin,
+    };
+  }
   return {
+    connected: false,
     auth_url: linkedinConnectUrl({
       syncEngineUrl,
       workspaceId: metadata.workspaceId,
@@ -105,6 +139,7 @@ async function runConnectLinkedin(opts: { workspace?: string; orgId?: string }):
     workspace_id: metadata.workspaceId,
     cluster_org_id: metadata.clusterOrgId ?? null,
     sync_engine_url: syncEngineUrl,
+    linkedin,
   };
 }
 
@@ -196,6 +231,13 @@ function linkedinStatusMessage(status: CliProviderStatus): string {
   if (!status.connected) return "LinkedIn is not connected yet.\n";
   const label = status.display_name ?? status.account_email ?? status.provider_account_id;
   return label ? `LinkedIn is connected: ${label}\n` : "LinkedIn is connected.\n";
+}
+
+function linkedinAlreadyConnectedMessage(status: CliProviderStatus): string {
+  const label = status.display_name ?? status.account_email ?? status.provider_account_id;
+  return label
+    ? `This workspace is already connected with LinkedIn: ${label}`
+    : "This workspace is already connected with LinkedIn.";
 }
 
 export const __test = {
