@@ -1,5 +1,11 @@
 # @agent-crm/cli
 
+## 0.19.9
+
+### Patch Changes
+
+- 24de881: Require the bundled `acrm-onboarding` skill to run `acrm --version` before any other `acrm` command, matching generated workspace instructions.
+
 ## 0.19.8
 
 ### Patch Changes
