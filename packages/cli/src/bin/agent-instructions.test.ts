@@ -36,10 +36,13 @@ describe("agent workspace instructions", () => {
     );
     expect(AGENT_WORKSPACE_INSTRUCTIONS.coveredCommands).toContain("execute");
     expect(AGENT_WORKSPACE_INSTRUCTIONS.block).toContain(
+      "Use the installed `acrm` directly",
+    );
+    expect(AGENT_WORKSPACE_INSTRUCTIONS.block).not.toContain(
       "npm view @agent-crm/cli version",
     );
-    expect(AGENT_WORKSPACE_INSTRUCTIONS.block).toContain(
-      "cached `acrm --version` update notifier",
+    expect(AGENT_WORKSPACE_INSTRUCTIONS.block).not.toContain(
+      "npm install -g @agent-crm/cli@latest",
     );
   });
 });
