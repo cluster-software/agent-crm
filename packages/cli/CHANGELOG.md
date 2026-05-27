@@ -1,5 +1,11 @@
 # @agent-crm/cli
 
+## 0.20.0
+
+### Minor Changes
+
+- cf9f0a8: Use Agent CRM's in-app auth opener for hosted Gmail and LinkedIn auth flows when available.
+
 ## 0.19.13
 
 ### Patch Changes
