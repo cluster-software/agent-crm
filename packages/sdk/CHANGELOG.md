@@ -1,5 +1,11 @@
 # @agent-crm/sdk
 
+## 0.7.9
+
+### Patch Changes
+
+- 33c1161: Make Agent CRM onboarding and workspace preflights check the live npm registry before deciding whether the CLI is current.
+
 ## 0.7.8
 
 ### Patch Changes
