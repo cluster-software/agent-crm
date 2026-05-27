@@ -61,6 +61,53 @@ describe("importGoogleContacts", () => {
     );
   });
 
+  it("adds Gmail sync preferences to the hosted OAuth URL", () => {
+    const url = gmailCommandTest.gmailConnectUrl({
+      syncEngineUrl: "https://sync.example.com",
+      workspaceId: "workspace-1",
+      clusterOrgId: "org-1",
+      workspaceName: "pipeline",
+      backfillDays: 30,
+      excludeNewsletters: true,
+    });
+
+    expect(url).toBe(
+      "https://sync.example.com/integrations/gmail/connect?workspace_id=workspace-1&cluster_org_id=org-1&workspace_name=pipeline&backfill_days=30&exclude_newsletters=true",
+    );
+  });
+
+  it("validates Gmail sync preference flags", () => {
+    expect(gmailCommandTest.parseGmailSyncPreferences({
+      backfillDays: "90",
+      includeNewsletters: true,
+    })).toEqual({
+      backfillDays: 90,
+      excludeNewsletters: false,
+    });
+    expect(gmailCommandTest.parseGmailSyncPreferences({
+      backfillSince: "2026-01-01",
+      excludeNewsletters: true,
+    })).toEqual({
+      backfillSince: "2026-01-01",
+      excludeNewsletters: true,
+    });
+
+    expect(() => gmailCommandTest.parseGmailSyncPreferences({
+      backfillDays: "30",
+      backfillSince: "2026-01-01",
+    })).toThrow(/cannot be used together/);
+    expect(() => gmailCommandTest.parseGmailSyncPreferences({
+      backfillDays: "60",
+    })).toThrow(/must be 30 or 90/);
+    expect(() => gmailCommandTest.parseGmailSyncPreferences({
+      backfillSince: "2026-02-31",
+    })).toThrow(/valid calendar date/);
+    expect(() => gmailCommandTest.parseGmailSyncPreferences({
+      excludeNewsletters: true,
+      includeNewsletters: true,
+    })).toThrow(/cannot be used together/);
+  });
+
   it("selects the platform browser opener command", () => {
     expect(gmailCommandTest.browserOpenCommand("darwin", "https://example.com")).toEqual({
       command: "open",
