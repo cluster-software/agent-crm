@@ -84,10 +84,9 @@ Use `AskUserQuestion` with this exact question and options (single-select, multi
 Powered by Agent CRM's hosted sync engine. Do **not** run a local Gmail
 contacts import.
 
-Gmail uses the same browser-side Cluster auth gate as LinkedIn. Do not
+Gmail uses the same hosted Cluster auth gate as LinkedIn. Do not
 ask the user for a Cluster org id before starting. The hosted connect page
-will infer the org from the user's Cluster browser session, or ask them to
-choose one if the session belongs to multiple orgs. Only pass
+will infer or create the org from the user's signed-in email domain. Only pass
 `--org-id <org-id>` when the user explicitly provides an org id or the
 workspace already has one configured.
 
@@ -127,13 +126,14 @@ acrm --json import gmail --backfill-since <YYYY-MM-DD> --exclude-newsletters
 Use `--include-newsletters` instead of `--exclude-newsletters` when the user
 chooses to include newsletters and marketing emails.
 
-This opens the Google OAuth URL in the user's browser automatically. Do
-not print `data.auth_url` unless the command fails to open the browser and
-the user needs the fallback URL. If you do need to show the fallback URL,
+When running inside the Agent CRM Electron app, this opens the hosted auth
+flow in the app. Outside the app, it falls back to the system browser. Do
+not print `data.auth_url` unless the command fails to open the auth window
+and the user needs the fallback URL. If you do need to show the fallback URL,
 print it as a bare URL on its own line, not as a Markdown link.
 
 ```md
-Your browser should now be open to connect Gmail.
+The Agent CRM auth window should now be open to connect Gmail.
 
 Pick your Google account and click Allow.
 
@@ -146,8 +146,9 @@ What `acrm import gmail` does now:
 
 1. Reads or creates `.agent-crm-cloud.json` next to the local workspace.
 2. Registers the cloud workspace with the hosted sync engine.
-3. Opens the hosted Gmail connect page in the user's browser. That page
-   checks Cluster auth, chooses the org, then starts Google OAuth.
+3. Opens the hosted Gmail connect page in Agent CRM when available, falling
+   back to the system browser. That page checks Cluster auth, resolves the
+   org from the signed-in email domain, then starts Google OAuth.
 4. Passes the selected Gmail backfill and newsletter filtering preferences
    to the hosted sync engine.
 5. Returns the hosted connect URL as `data.auth_url` for fallback/debugging.
@@ -192,7 +193,7 @@ Both require `APIFY_API_TOKEN` in `.env` next to the workspace. If missing, the 
 ### 4. Confirm + next step
 
 For Gmail, do not add a separate confirmation or next-step message after
-the OAuth browser-open copy above. Do not suggest `/prep-call`,
+the OAuth auth-window copy above. Do not suggest `/prep-call`,
 `/setup-transcripts`, or any other next step. The user still needs to
 finish OAuth first.
 

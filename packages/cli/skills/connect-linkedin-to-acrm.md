@@ -44,12 +44,21 @@ echo "$CONNECT_JSON"
 if echo "$CONNECT_JSON" | jq -e '.data.connected == true' >/dev/null; then
   exit 0
 fi
-open "$(echo "$CONNECT_JSON" | jq -r '.data.auth_url')"
+AUTH_URL=$(echo "$CONNECT_JSON" | jq -r '.data.auth_url')
+if command -v agent-crm-open-url >/dev/null 2>&1; then
+  agent-crm-open-url "$AUTH_URL"
+elif command -v open >/dev/null 2>&1; then
+  open "$AUTH_URL"
+elif command -v xdg-open >/dev/null 2>&1; then
+  xdg-open "$AUTH_URL"
+else
+  echo "$AUTH_URL"
+fi
 ```
 
-Have the user finish Cluster auth and LinkedIn verification in the browser. If they belong to multiple Cluster organizations, the hosted page will ask which one to use. LinkedIn may ask for an email, SMS, authenticator-app code, or in-app sign-in approval.
+Have the user finish Cluster auth and LinkedIn verification in the Agent CRM auth window. Outside the Electron app this falls back to the system browser. The hosted page resolves the Cluster org from the signed-in email domain. LinkedIn may ask for an email, SMS, authenticator-app code, or in-app sign-in approval.
 
-After opening the browser, keep the agent turn active and poll for completion every 2 seconds. Do not surface import options until the status command verifies LinkedIn is connected:
+After opening the auth window, keep the agent turn active and poll for completion every 2 seconds. Do not surface import options until the status command verifies LinkedIn is connected:
 
 ```sh
 while true; do
