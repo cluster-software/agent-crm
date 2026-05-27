@@ -55,6 +55,7 @@ export const AGENT_INSTRUCTIONS_BLOCK = [
   "- `acrm connect linkedin` connects LinkedIn through Agent CRM's hosted sync engine, or reports when the workspace is already connected. `acrm connect linkedin --status` checks status without starting a connect flow.",
   "- `acrm import csv ./leads.csv` imports people and companies from a CSV. It creates deals only when deal columns such as `deal_name` or `deal` are present.",
   "- `acrm import gmail` connects Gmail through Agent CRM's hosted sync engine and syncs people, email threads, and email messages.",
+  "- For Gmail CRM imports, ask for a backfill window and newsletter filtering before OAuth. Use `acrm import gmail --backfill-days 30 --exclude-newsletters`, `--backfill-days 90`, or `--backfill-since YYYY-MM-DD`; use `--include-newsletters` only when the user wants marketing/newsletter mail in the CRM.",
   "- `acrm import linkedin` imports existing contacts from the connected LinkedIn account, then starts hosted LinkedIn message-history backfill in the background. `acrm import linkedin --sync` imports already-stored LinkedIn messages from the hosted sync engine into the local workspace.",
   "- `acrm import linkedin <profile-url-or-slug>` imports one LinkedIn profile, upserts the person, and links their current employer as a company. Requires `APIFY_API_TOKEN` in `.env`.",
   "- `acrm import x <handle-or-url>` imports one X/Twitter profile. Requires `APIFY_API_TOKEN` in `.env`; if the result says `needs_enrichment`, run the `enrich-x-bio` skill.",
