@@ -25,7 +25,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@lix-js/sdk": "0.6.0-preview.3",
+    "@lix-js/sdk": "0.6.0-preview.5",
     "better-sqlite3": "^12.9.0",
     "libphonenumber-js": "^1.13.2"
   },

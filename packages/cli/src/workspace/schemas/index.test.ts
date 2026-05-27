@@ -9,7 +9,7 @@ describe("registerAllSchemas", () => {
 
     const result = await exec(
       lix,
-      "SELECT value FROM lix_registered_schema ORDER BY lixcol_entity_id",
+      "SELECT value FROM lix_registered_schema ORDER BY lixcol_entity_pk",
     );
     const registeredKeys = result.rows
       .map((row) => {
