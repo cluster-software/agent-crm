@@ -74,11 +74,41 @@ choose one if the session belongs to multiple orgs. Only pass
 `--org-id <org-id>` when the user explicitly provides an org id or the
 workspace already has one configured.
 
-Run:
+Before starting OAuth, ask how much Gmail history to import. Use
+`AskUserQuestion` with this exact question and options (single-select,
+multipleChoice off):
+
+- **Question**: `How much Gmail history should Agent CRM import?`
+- **Options**:
+  1. `Last 30 days` — quickest backfill for recent conversations
+  2. `Last 90 days` — broader backfill for recent pipeline context
+  3. `Custom date` — import messages since a specific date
+
+If they choose `Custom date`, ask for a cutoff date in `YYYY-MM-DD` format.
+Do not continue until the user provides a valid-looking date.
+
+Then ask whether to filter newsletters and marketing emails. Use
+`AskUserQuestion` with this exact question and options (single-select,
+multipleChoice off):
+
+- **Question**: `Filter newsletters and marketing emails out of Gmail sync?`
+- **Options**:
+  1. `Yes, filter them` — recommended for CRM-quality contacts and conversations
+  2. `No, include them` — import all matching Gmail history
+
+These choices affect the initial Gmail backfill and future Gmail syncs for
+this account.
+
+Run the command with explicit flags:
 
 ```sh
-acrm import gmail --json
+acrm --json import gmail --backfill-days 30 --exclude-newsletters
+acrm --json import gmail --backfill-days 90 --exclude-newsletters
+acrm --json import gmail --backfill-since <YYYY-MM-DD> --exclude-newsletters
 ```
+
+Use `--include-newsletters` instead of `--exclude-newsletters` when the user
+chooses to include newsletters and marketing emails.
 
 This opens the Google OAuth URL in the user's browser automatically. Do
 not print `data.auth_url` unless the command fails to open the browser and
@@ -101,7 +131,9 @@ What `acrm import gmail` does now:
 2. Registers the cloud workspace with the hosted sync engine.
 3. Opens the hosted Gmail connect page in the user's browser. That page
    checks Cluster auth, chooses the org, then starts Google OAuth.
-4. Returns the hosted connect URL as `data.auth_url` for fallback/debugging.
+4. Passes the selected Gmail backfill and newsletter filtering preferences
+   to the hosted sync engine.
+5. Returns the hosted connect URL as `data.auth_url` for fallback/debugging.
 
 After OAuth, the sync engine redirects to a "Gmail sync started" page and
 imports Gmail in the background. Gmail data is written to the cloud
