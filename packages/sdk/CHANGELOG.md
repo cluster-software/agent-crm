@@ -1,5 +1,11 @@
 # @agent-crm/sdk
 
+## 0.7.8
+
+### Patch Changes
+
+- a459850: Add Gmail import backfill and newsletter filtering preferences to onboarding, CLI import flags, and workspace agent instructions.
+
 ## 0.7.7
 
 ### Patch Changes
