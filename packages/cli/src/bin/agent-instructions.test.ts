@@ -35,5 +35,11 @@ describe("agent workspace instructions", () => {
       AGENT_WORKSPACE_INSTRUCTIONS.endMarker,
     );
     expect(AGENT_WORKSPACE_INSTRUCTIONS.coveredCommands).toContain("execute");
+    expect(AGENT_WORKSPACE_INSTRUCTIONS.block).toContain(
+      "npm view @agent-crm/cli version",
+    );
+    expect(AGENT_WORKSPACE_INSTRUCTIONS.block).toContain(
+      "cached `acrm --version` update notifier",
+    );
   });
 });

@@ -15,7 +15,7 @@ Say:
 
 > Welcome to Agent CRM — the headless CRM for Claude. Let's get you set up.
 
-Before any other `acrm` command, verify the CLI version:
+Before any other `acrm` command, verify the installed CLI version:
 
 ```sh
 acrm --version
@@ -28,7 +28,24 @@ acrm --version
   ```
 
   Then ask them to rerun `/acrm-onboarding`.
-- If the command reports that a newer `@agent-crm/cli` is available, run:
+- If `acrm --version` reports that a newer `@agent-crm/cli` is available, run:
+
+  ```sh
+  npm install -g @agent-crm/cli@latest
+  ```
+
+  Then run `acrm --version` again before continuing. Only ask the user to update manually if npm requires credentials or permissions you cannot satisfy.
+
+Then run a fresh registry check. Do not rely only on `acrm --version` for
+latest-version detection; its update notifier is cached.
+
+```sh
+npm view @agent-crm/cli version
+```
+
+- If the registry check fails because npm or the network is unavailable, say you could not verify the latest published CLI and continue with the installed version.
+- Compare normal semver versions numerically (`major.minor.patch`), not as strings.
+- If the published version is newer than the installed version, run:
 
   ```sh
   npm install -g @agent-crm/cli@latest
@@ -196,7 +213,7 @@ Keep the close short — one or two suggestions, not a feature dump.
 ## Hard rules
 
 - **Never** fabricate a workspace path or skip the `acrm init` step. If no workspace exists, the user must explicitly name one.
-- **Always** run `acrm --version` before any other `acrm` command, including `acrm execute`.
+- **Always** run `acrm --version` and `npm view @agent-crm/cli version` before any other `acrm` command, including `acrm execute`.
 - **If `acrm` is not installed, only show `npm i -g @agent-crm/cli` and stop.** Do not troubleshoot local install paths.
 - **Never** silently run a destructive command.
 - **Do not use `gws` for Gmail.** Gmail now goes through the hosted sync engine.
