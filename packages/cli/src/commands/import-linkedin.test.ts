@@ -35,13 +35,14 @@ describe("import linkedin command", () => {
       public_profile_url: "https://www.linkedin.com/in/ada-lovelace/",
       profile_picture_url: "https://media.example.com/ada.jpg",
     };
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
       const parsed = new URL(url);
       if (parsed.pathname.endsWith("/integrations/linkedin/messages/backfill")) {
         return Response.json({
           ok: true,
           started: 1,
           integration_account_ids: ["acct-1"],
+          scoped: true,
         });
       }
       const enrichCompanies = parsed.searchParams.get("enrich_companies") === "1";
@@ -73,14 +74,22 @@ describe("import linkedin command", () => {
       expect(result.message_backfill).toEqual({
         started: 1,
         integration_account_ids: ["acct-1"],
+        scoped: true,
       });
       expect(fetchMock).toHaveBeenCalledTimes(3);
       const [url] = fetchMock.mock.calls[0] as [string];
-      const [backfillUrl] = fetchMock.mock.calls[1] as [string];
+      const [backfillUrl, backfillInit] = fetchMock.mock.calls[1] as [string, RequestInit];
       const [enrichedUrl] = fetchMock.mock.calls[2] as [string];
       expect(url).toContain("/integrations/linkedin/relations/export");
       expect(url).not.toContain("enrich_companies=1");
       expect(backfillUrl).toContain("/integrations/linkedin/messages/backfill");
+      expect(JSON.parse(String(backfillInit.body))).toEqual({
+        scope: {
+          providerPersonIds: ["member-1"],
+          linkedinUrls: ["linkedin.com/in/ada-lovelace"],
+          publicIdentifiers: ["ada-lovelace"],
+        },
+      });
       expect(enrichedUrl).toContain("enrich_companies=1");
       const reopened = await Workspace.open(workspacePath);
       try {

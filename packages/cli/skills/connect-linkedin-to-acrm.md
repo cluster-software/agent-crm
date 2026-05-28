@@ -102,9 +102,11 @@ connected, stop the background command and send the user back to the connect
 flow above.
 
 Existing people are written first. Message-history backfill then starts in the
-hosted engine without blocking local people import. For a few hundred contacts,
-the final JSON can still take another 1-2 minutes while company LinkedIn URLs
-fill in; do not cancel it just because the people already appeared.
+hosted engine for the imported people without blocking local people import. The
+desktop app pulls stored LinkedIn message chunks into the local `.acrm`
+workspace automatically. For a few hundred contacts, the final JSON can still
+take another 1-2 minutes while company LinkedIn URLs fill in; do not cancel it
+just because the people already appeared.
 
 If `acrm import linkedin` says LinkedIn is not connected, send the user back to the connect flow above.
 

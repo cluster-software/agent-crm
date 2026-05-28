@@ -6,6 +6,7 @@ import {
 } from "../db/value-row.js";
 import {
   encode,
+  normalizeDomain,
   normalizeLinkedinUrl,
   type AttributeType,
   type ValueJson,
@@ -50,6 +51,7 @@ type ObjectSlug = "people" | "companies";
 type NormalizedCompany = {
   sourceKey: string;
   name: string;
+  domain: string | null;
   linkedinUrl: string | null;
 };
 
@@ -130,6 +132,11 @@ export async function importLinkedinRelations(
     companies.map((company) => company.linkedinUrl).filter((url): url is string => Boolean(url)),
   );
   const plannedCompanyLinkedinIndex = new Map(companyLinkedinIndex);
+  const companyDomainIndex = await loadCompaniesByDomain(
+    lix,
+    companies.map((company) => company.domain).filter((domain): domain is string => Boolean(domain)),
+  );
+  const plannedCompanyDomainIndex = new Map(companyDomainIndex);
   const companyNameIndex = await loadCompaniesByName(lix, companies.map((company) => company.name));
   const plannedCompanyNameIndex = new Map(companyNameIndex);
 
@@ -144,6 +151,7 @@ export async function importLinkedinRelations(
   for (const company of companies) {
     const existingRecordId =
       (company.linkedinUrl ? plannedCompanyLinkedinIndex.get(company.linkedinUrl) : undefined) ??
+      (company.domain ? plannedCompanyDomainIndex.get(company.domain) : undefined) ??
       plannedCompanySourceIndex.get(company.sourceKey) ??
       plannedCompanyNameIndex.get(company.name.toLowerCase());
     const recordId = existingRecordId ?? uuidv7();
@@ -154,6 +162,7 @@ export async function importLinkedinRelations(
     }
     plannedCompanySourceIndex.set(company.sourceKey, recordId);
     if (company.linkedinUrl) plannedCompanyLinkedinIndex.set(company.linkedinUrl, recordId);
+    if (company.domain) plannedCompanyDomainIndex.set(company.domain, recordId);
     plannedCompanyNameIndex.set(company.name.toLowerCase(), recordId);
     touchedCompanyIds.add(recordId);
     companyPlans.set(company.sourceKey, {
@@ -198,6 +207,9 @@ export async function importLinkedinRelations(
     let changed = false;
     changed = enqueueMulti(writer, existingValues, plan, "source_keys", "text", company.sourceKey, provenance) || changed;
     changed = enqueueSingleIfMissing(writer, existingValues, plan, "name", "text", company.name, provenance) || changed;
+    if (company.domain) {
+      changed = enqueueMulti(writer, existingValues, plan, "domains", "domain", company.domain, provenance) || changed;
+    }
     if (company.linkedinUrl) {
       changed = enqueueSingleIfMissing(writer, existingValues, plan, "linkedin_url", "url", company.linkedinUrl, provenance) || changed;
     }
@@ -381,18 +393,54 @@ function relationCompany(relation: LinkedinRelation): NormalizedCompany | null {
     nestedLinkedinUrl ??
     (publicIdentifier ? `https://www.linkedin.com/company/${publicIdentifier}/` : ""),
   );
+  const domain = relationCompanyDomain(relation, nested);
   const id = stringField(nested, ["id", "company_id", "companyId", "urn", "entity_urn", "entityUrn"]);
   const sourceKey = id
     ? `linkedin:company:${id}`
     : linkedinUrl
       ? `linkedin:company:${linkedinUrl}`
+      : domain
+        ? `linkedin:company_domain:${domain}`
       : `linkedin:company_name:${name.toLowerCase()}`;
 
   return {
     sourceKey,
     name,
+    domain,
     linkedinUrl,
   };
+}
+
+function relationCompanyDomain(
+  relation: LinkedinRelation,
+  nested: Record<string, unknown> | null,
+): string | null {
+  const raw = stringField(relation, [
+    "company_domain",
+    "companyDomain",
+    "company_website",
+    "companyWebsite",
+    "organization_domain",
+    "organizationDomain",
+    "organization_website",
+    "organizationWebsite",
+    "website",
+  ]) ?? stringField(nested, [
+    "domain",
+    "website",
+    "company_domain",
+    "companyDomain",
+    "company_website",
+    "companyWebsite",
+    "organization_domain",
+    "organizationDomain",
+    "organization_website",
+    "organizationWebsite",
+  ]);
+  if (!raw) return null;
+  const domain = normalizeDomain(raw);
+  if (domain === "linkedin.com" || domain.endsWith(".linkedin.com")) return null;
+  return domain.includes(".") && !domain.includes("@") ? domain : null;
 }
 
 function positionObject(relation: LinkedinRelation): Record<string, unknown> | null {
@@ -516,6 +564,32 @@ async function loadCompaniesByLinkedinUrl(
        WHERE active_until IS NULL
          AND object_slug = 'companies'
          AND attribute_slug = 'linkedin_url'
+         AND normalized_key IN (${placeholders})`,
+      chunk,
+    );
+    for (const row of result.rows) {
+      if (typeof row.record_id === "string" && typeof row.normalized_key === "string") {
+        index.set(row.normalized_key, row.record_id);
+      }
+    }
+  }
+  return index;
+}
+
+async function loadCompaniesByDomain(
+  lix: Workspace["lix"],
+  domains: string[],
+): Promise<Map<string, string>> {
+  const index = new Map<string, string>();
+  for (const chunk of chunks(unique(domains), SELECT_CHUNK_SIZE)) {
+    const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
+    const result = await exec(
+      lix,
+      `SELECT record_id, normalized_key
+       FROM acrm_value
+       WHERE active_until IS NULL
+         AND object_slug = 'companies'
+         AND attribute_slug = 'domains'
          AND normalized_key IN (${placeholders})`,
       chunk,
     );

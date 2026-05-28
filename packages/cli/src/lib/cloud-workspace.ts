@@ -450,19 +450,24 @@ export async function startCloudLinkedinMessageBackfill(input: {
   syncEngineUrl: string;
   workspaceId: string;
   clientToken: string;
-}): Promise<{ started: number; integration_account_ids: string[] }> {
+  scope?: CloudLinkedinMessageBackfillScope;
+}): Promise<{ started: number; integration_account_ids: string[]; scoped?: boolean }> {
   const url = new URL(
     `/workspaces/${encodeURIComponent(input.workspaceId)}/integrations/linkedin/messages/backfill`,
     input.syncEngineUrl,
   );
-  const response = await fetch(url.toString(), {
+  const body = input.scope ? JSON.stringify({ scope: input.scope }) : undefined;
+  const init: RequestInit = {
     method: "POST",
     headers: {
       authorization: `Bearer ${input.clientToken}`,
+      ...(body ? { "content-type": "application/json" } : {}),
     },
-  });
+  };
+  if (body) init.body = body;
+  const response = await fetch(url.toString(), init);
   const payload = await response.json().catch(() => undefined) as
-    | { ok?: unknown; started?: unknown; integration_account_ids?: unknown; error?: unknown; code?: unknown }
+    | { ok?: unknown; started?: unknown; integration_account_ids?: unknown; scoped?: unknown; error?: unknown; code?: unknown }
     | undefined;
   if (isLinkedinNotConnected(payload)) {
     throw new AcrmError(
@@ -483,8 +488,15 @@ export async function startCloudLinkedinMessageBackfill(input: {
     integration_account_ids: Array.isArray(payload.integration_account_ids)
       ? payload.integration_account_ids.filter((id): id is string => typeof id === "string")
       : [],
+    ...(typeof payload.scoped === "boolean" ? { scoped: payload.scoped } : {}),
   };
 }
+
+export type CloudLinkedinMessageBackfillScope = {
+  providerPersonIds?: string[];
+  linkedinUrls?: string[];
+  publicIdentifiers?: string[];
+};
 
 function parseProviderStatus(value: unknown): CloudIntegrationProviderStatus {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
