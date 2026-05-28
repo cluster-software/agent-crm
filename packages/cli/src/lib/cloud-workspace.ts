@@ -45,6 +45,8 @@ export type CloudIntegrationAccountStatus = {
   accountEmail?: string;
   displayName?: string;
   status: string;
+  providerStatus?: string;
+  syncStatus?: string;
   lastSyncedAt?: string;
 };
 
@@ -55,6 +57,7 @@ export type CloudIntegrationProviderStatus = {
   providerAccountId?: string;
   lastSyncedAt?: string;
   accounts?: CloudIntegrationAccountStatus[];
+  sync?: Record<string, unknown>;
 };
 
 export type CloudIntegrationStatus = {
@@ -500,6 +503,7 @@ function parseProviderStatus(value: unknown): CloudIntegrationProviderStatus {
     ...(stringValue(status.providerAccountId) ? { providerAccountId: stringValue(status.providerAccountId) } : {}),
     ...(stringValue(status.lastSyncedAt) ? { lastSyncedAt: stringValue(status.lastSyncedAt) } : {}),
     ...(accounts && accounts.length > 0 ? { accounts } : {}),
+    ...(recordValue(status.sync) ? { sync: recordValue(status.sync) } : {}),
   };
 }
 
@@ -510,12 +514,16 @@ function parseAccountStatus(value: unknown): CloudIntegrationAccountStatus | nul
   const providerAccountId = stringValue(account.providerAccountId);
   const status = stringValue(account.status);
   if (!id || !providerAccountId || !status) return null;
+  const providerStatus = stringValue(account.providerStatus) ?? stringValue(account.provider_status);
+  const syncStatus = stringValue(account.syncStatus) ?? stringValue(account.sync_status);
   return {
     id,
     providerAccountId,
     status,
     ...(stringValue(account.accountEmail) ? { accountEmail: stringValue(account.accountEmail) } : {}),
     ...(stringValue(account.displayName) ? { displayName: stringValue(account.displayName) } : {}),
+    ...(providerStatus ? { providerStatus } : {}),
+    ...(syncStatus ? { syncStatus } : {}),
     ...(stringValue(account.lastSyncedAt) ? { lastSyncedAt: stringValue(account.lastSyncedAt) } : {}),
   };
 }
@@ -560,6 +568,12 @@ function isGranolaNotConnected(payload: { error?: unknown; code?: unknown } | un
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 function payloadError(payload: { error?: unknown } | undefined): string | undefined {

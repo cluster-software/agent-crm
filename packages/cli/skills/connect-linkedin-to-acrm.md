@@ -95,11 +95,16 @@ If they choose `Recent connections`, ask for a cutoff date. Default to 30 days a
 acrm --json import linkedin --cutoff-date <YYYY-MM-DD>
 ```
 
+Run either import command with the Bash tool in the background
+(`run_in_background=true`) and monitor output with `BashOutput` instead of
+blocking the conversation. If the import fails because LinkedIn is not
+connected, stop the background command and send the user back to the connect
+flow above.
+
 Existing people are written first. Message-history backfill then starts in the
 hosted engine without blocking local people import. For a few hundred contacts,
 the final JSON can still take another 1-2 minutes while company LinkedIn URLs
-fill in; run this as a background/long-timeout command and do not cancel it just
-because the people already appeared.
+fill in; do not cancel it just because the people already appeared.
 
 If `acrm import linkedin` says LinkedIn is not connected, send the user back to the connect flow above.
 
@@ -114,6 +119,12 @@ that case, run `--sync` for the resolved workspace by default; it imports stored
 messages for every active LinkedIn account enabled for that workspace, not just
 the most recently connected profile. Check `communication_messages_seen` /
 `communication_messages_created` before claiming messages were imported.
+
+If `--sync` returns zero messages, do not assume history is still backfilling.
+Run `acrm --json connect linkedin --status` and inspect `data.linkedin.sync`.
+If `sync.state` is `failed`, report that hosted message backfill failed and
+include `sync.errorMessage`. If the state is `pending` or `running`, say it is
+still backfilling and try again later.
 
 ## Hard rules
 

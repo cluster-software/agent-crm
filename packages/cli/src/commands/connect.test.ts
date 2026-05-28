@@ -124,6 +124,73 @@ describe("connect linkedin command", () => {
     }
   });
 
+  it("uses LinkedIn provider health when sync status is stale or errored", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "acrm-linkedin-provider-status-"));
+    const workspacePath = join(dir, "workspace.acrm");
+    const ws = await Workspace.create(workspacePath);
+    await ws.close();
+    process.env.ACRM_SYNC_ENGINE_URL = "https://sync.example.com";
+    const fetchMock = vi.fn(async () => Response.json({
+      ok: true,
+      integrations: {
+        gmail: { connected: false },
+        linkedin: {
+          connected: true,
+          displayName: "Luis on LinkedIn",
+          providerAccountId: "unipile-account-1",
+          sync: {
+            state: "failed",
+            errorMessage: "bad historical message payload",
+          },
+          accounts: [
+            {
+              id: "acct-1",
+              providerAccountId: "unipile-account-1",
+              displayName: "Luis on LinkedIn",
+              status: "error",
+              providerStatus: "ok",
+            },
+          ],
+        },
+      },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const result = await connectCommandTest.runConnectLinkedinStatus({
+        workspace: workspacePath,
+      });
+
+      expect(result.linkedin.connected).toBe(true);
+      expect(result.linkedin.sync).toEqual({
+        state: "failed",
+        errorMessage: "bad historical message payload",
+      });
+      expect(result.linkedin.accounts?.[0]?.status).toBe("error");
+      expect(result.linkedin.accounts?.[0]?.provider_status).toBe("ok");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("lets provider health override active sync status", () => {
+    const result = connectCommandTest.toCliProviderStatus({
+      connected: true,
+      accounts: [
+        {
+          id: "acct-1",
+          providerAccountId: "unipile-account-1",
+          status: "active",
+          providerStatus: "credentials",
+        },
+      ],
+    }, { requireActiveAccount: true });
+
+    expect(result.connected).toBe(false);
+    expect(result.accounts?.[0]?.status).toBe("active");
+    expect(result.accounts?.[0]?.provider_status).toBe("credentials");
+  });
+
   it("builds a Granola connect URL with the local workspace token", () => {
     const url = connectCommandTest.granolaConnectUrl({
       syncEngineUrl: "https://sync.example.com",
