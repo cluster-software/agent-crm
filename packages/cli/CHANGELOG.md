@@ -1,5 +1,19 @@
 # @agent-crm/cli
 
+## 0.21.0
+
+### Minor Changes
+
+- 803542d: Replace the legacy Granola transcript provider auth path with hosted REST API
+  sync. Adds `acrm connect granola` and `acrm import granola`, updates bundled
+  skills and workspace instructions, and removes the old provider OAuth/MCP
+  registry exports.
+
+### Patch Changes
+
+- Updated dependencies [803542d]
+  - @agent-crm/sdk@0.8.0
+
 ## 0.20.1
 
 ### Patch Changes
