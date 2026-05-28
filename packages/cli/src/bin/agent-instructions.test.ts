@@ -38,6 +38,7 @@ describe("agent workspace instructions", () => {
     expect(AGENT_WORKSPACE_INSTRUCTIONS.block).toContain(
       "Use the installed `acrm` directly",
     );
+    expect(AGENT_WORKSPACE_INSTRUCTIONS.block).not.toContain("acrm --version");
     expect(AGENT_WORKSPACE_INSTRUCTIONS.block).not.toContain(
       "npm view @agent-crm/cli version",
     );
