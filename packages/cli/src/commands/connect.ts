@@ -14,6 +14,14 @@ import {
   registerCloudWorkspace,
 } from "../lib/cloud-workspace.js";
 
+const CONNECTED_PROVIDER_ACCOUNT_STATUSES = new Set([
+  "active",
+  "creation_success",
+  "ok",
+  "reconnected",
+  "sync_success",
+]);
+
 type LinkedinConnectOpts = {
   orgId?: string;
   status?: boolean;
@@ -361,12 +369,15 @@ type CliProviderStatus = {
   display_name?: string;
   provider_account_id?: string;
   last_synced_at?: string;
+  sync?: Record<string, unknown>;
   accounts?: Array<{
     id: string;
     provider_account_id: string;
     account_email?: string;
     display_name?: string;
     status: string;
+    provider_status?: string;
+    sync_status?: string;
     last_synced_at?: string;
   }>;
 };
@@ -381,17 +392,23 @@ function toCliProviderStatus(
     ...(account.accountEmail ? { account_email: account.accountEmail } : {}),
     ...(account.displayName ? { display_name: account.displayName } : {}),
     status: account.status,
+    ...(account.providerStatus ? { provider_status: account.providerStatus } : {}),
+    ...(account.syncStatus ? { sync_status: account.syncStatus } : {}),
     ...(account.lastSyncedAt ? { last_synced_at: account.lastSyncedAt } : {}),
   }));
-  const hasActiveAccount = accounts?.some((account) => account.status === "active") ?? false;
+  const hasConnectedAccount = accounts?.some((account) => {
+    const status = (account.provider_status ?? account.status).toLowerCase();
+    return CONNECTED_PROVIDER_ACCOUNT_STATUSES.has(status);
+  }) ?? false;
   return {
     connected: options.requireActiveAccount && accounts
-      ? hasActiveAccount
+      ? hasConnectedAccount
       : provider.connected,
     ...(provider.accountEmail ? { account_email: provider.accountEmail } : {}),
     ...(provider.displayName ? { display_name: provider.displayName } : {}),
     ...(provider.providerAccountId ? { provider_account_id: provider.providerAccountId } : {}),
     ...(provider.lastSyncedAt ? { last_synced_at: provider.lastSyncedAt } : {}),
+    ...(provider.sync ? { sync: provider.sync } : {}),
     ...(accounts && accounts.length > 0 ? { accounts } : {}),
   };
 }
