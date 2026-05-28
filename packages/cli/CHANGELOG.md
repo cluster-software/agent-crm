@@ -1,5 +1,13 @@
 # @agent-crm/cli
 
+## 0.21.2
+
+### Patch Changes
+
+- 9a4542c: Import LinkedIn profile photo URLs into `people.profile_picture_url` during LinkedIn and communication imports.
+- Updated dependencies [9a4542c]
+  - @agent-crm/sdk@0.8.2
+
 ## 0.21.1
 
 ### Patch Changes
