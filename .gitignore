@@ -7,5 +7,6 @@ dist/
 test-acrm/
 feedback/
 /scripts/
+.agent-crm-dev/
 .claude/settings.local.json
 *.tgz
