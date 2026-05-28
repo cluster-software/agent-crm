@@ -147,6 +147,18 @@ export async function importLinkedinProfile(
     });
   }
 
+  if (mapped.person.profile_picture_url) {
+    await setSingleValue(lix, {
+      object_slug: "people",
+      record_id: personId,
+      attribute_slug: "profile_picture_url",
+      attribute_type: "url",
+      value: mapped.person.profile_picture_url,
+      source: SOURCE,
+      provenance,
+    });
+  }
+
   if (mapped.person.job_title) {
     await setSingleValue(lix, {
       object_slug: "people",

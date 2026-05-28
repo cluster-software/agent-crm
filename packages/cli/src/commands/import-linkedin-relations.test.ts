@@ -25,6 +25,7 @@ describe("importLinkedinRelations", () => {
           headline: "Founder at Analytical Engines",
           public_identifier: "ada-lovelace",
           public_profile_url: "https://www.linkedin.com/in/ada-lovelace/",
+          profile_picture_url: "https://media.example.com/ada.jpg",
         }),
       ],
     });
@@ -32,6 +33,7 @@ describe("importLinkedinRelations", () => {
     expect(result.stats.people_created).toBe(1);
     await expect(valueFor(ws, "people", "linkedin_url")).resolves.toBe("linkedin.com/in/ada-lovelace");
     await expect(valueFor(ws, "people", "name")).resolves.toBe("Ada Lovelace");
+    await expect(valueFor(ws, "people", "profile_picture_url")).resolves.toBe("https://media.example.com/ada.jpg");
     await expect(valueFor(ws, "people", "job_title")).resolves.toBe("Founder at Analytical Engines");
     await expect(valueFor(ws, "people", "linkedin_connected_at")).resolves.toBe("2025-03-15T15:16:09.000Z");
     await expect(countValues(ws, "source_keys")).resolves.toBe(1);

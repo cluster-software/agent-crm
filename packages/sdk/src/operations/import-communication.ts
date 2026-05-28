@@ -22,6 +22,7 @@ export type CommunicationImportPerson = {
   email?: string;
   displayName?: string;
   linkedinUrl?: string;
+  profilePictureUrl?: string;
   companySourceKey?: string;
 };
 
@@ -236,6 +237,9 @@ export async function importCommunicationBatch(
     }
     if (person.displayName) {
       enqueueSingle(writer, existingValues, plan, "name", "personal-name", person.displayName);
+    }
+    if (person.profilePictureUrl) {
+      enqueueSingle(writer, existingValues, plan, "profile_picture_url", "url", person.profilePictureUrl);
     }
     if (person.companySourceKey) {
       const companyId = resolveRecordId("companies", person.companySourceKey, companyPlans, plannedSourceIndex);
