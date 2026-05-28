@@ -33,6 +33,14 @@ describe("importCommunicationBatch", () => {
       await expect(activeValueCount(workspace, "communication_messages", "channel")).resolves.toBe(1);
       await expect(activeValueCount(workspace, "communication_messages", "subject")).resolves.toBe(1);
       await expect(activeValueCount(workspace, "communication_messages", "thread")).resolves.toBe(1);
+      await expect(activeValueCount(workspace, "communication_messages", "body_preview")).resolves.toBe(1);
+      await expect(activeValueCount(workspace, "communication_messages", "body_render_json")).resolves.toBe(1);
+      await expect(activeValueCount(workspace, "communication_messages", "attachments_json")).resolves.toBe(1);
+      await expect(singleJsonValue(workspace, "communication_messages", "body_render_json")).resolves.toEqual({
+        version: 1,
+        source: "gmail",
+        blocks: [{ type: "paragraph", text: "Hello Alice" }],
+      });
       await expect(activeValueCount(workspace, "communication_threads", "provider")).resolves.toBe(1);
       await expect(activeValueCount(workspace, "communication_threads", "channel")).resolves.toBe(1);
       await expect(activeValueCount(workspace, "communication_threads", "subject")).resolves.toBe(1);
@@ -115,6 +123,13 @@ function duplicateCommunicationBatch(): CommunicationImportBatch {
     providerThreadId: "thread-1",
     threadSourceKey: thread.sourceKey,
     subject: "Hello",
+    bodyPreview: "Hello Alice",
+    bodyRenderJson: {
+      version: 1,
+      source: "gmail",
+      blocks: [{ type: "paragraph", text: "Hello Alice" }],
+    },
+    attachmentsJson: [],
     senderSourceKey: person.sourceKey,
     participantSourceKeys: [person.sourceKey],
   };
@@ -181,4 +196,23 @@ async function singleDisplayValue(
     return typeof parsed === "string" ? parsed : null;
   }
   return null;
+}
+
+async function singleJsonValue(
+  workspace: Workspace,
+  objectSlug: string,
+  attributeSlug: string,
+): Promise<unknown> {
+  const result = await exec(
+    workspace.lix,
+    `SELECT value_json
+     FROM acrm_value
+     WHERE active_until IS NULL
+       AND object_slug = $1
+       AND attribute_slug = $2
+     LIMIT 1`,
+    [objectSlug, attributeSlug],
+  );
+  const value = result.rows[0]?.value_json;
+  return typeof value === "string" ? JSON.parse(value) : value;
 }

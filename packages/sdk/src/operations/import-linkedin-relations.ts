@@ -802,16 +802,20 @@ function parseValueJson(value: unknown): ValueJson | null {
   if (typeof value === "string") {
     try {
       const parsed = JSON.parse(value) as unknown;
-      return isObject(parsed) ? parsed : null;
+      return isJsonValue(parsed) ? parsed : null;
     } catch {
       return null;
     }
   }
-  return isObject(value) ? value : null;
+  return isJsonValue(value) ? value : null;
 }
 
-function isObject(value: unknown): value is ValueJson {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isJsonValue(value: unknown): value is ValueJson {
+  if (value === null) return true;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return true;
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  if (typeof value !== "object") return false;
+  return Object.values(value as Record<string, unknown>).every(isJsonValue);
 }
 
 function objectField(source: Record<string, unknown> | null | undefined, keys: string[]): Record<string, unknown> | null {

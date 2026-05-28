@@ -33,7 +33,10 @@ export function prepareValueInsert(
 ): PreparedValueInsert {
   const normalized = normalizeUniqueKey(args.attribute_type, args.value_json);
   const ref =
-    args.attribute_type === "record-reference"
+    args.attribute_type === "record-reference" &&
+    typeof args.value_json === "object" &&
+    args.value_json !== null &&
+    !Array.isArray(args.value_json)
       ? {
           ref_object: (args.value_json.target_object as string) ?? null,
           ref_record_id: (args.value_json.target_record_id as string) ?? null,

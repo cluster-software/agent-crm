@@ -24,6 +24,7 @@ const ATTRIBUTE_TYPES: AttributeType[] = [
   "timestamp",
   "select",
   "status",
+  "json",
   "record-reference",
 ];
 

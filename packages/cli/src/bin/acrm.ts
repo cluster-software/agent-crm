@@ -103,6 +103,7 @@ JSON value shapes per attribute_type (key for lix_json_get_text):
   email-address         {"email_address": ..., "email_domain": ..., ...}
   domain                {"domain": ..., "root_domain": ...}
   currency              {"currency_value": ..., "currency_code": ...}
+  json                  any JSON object/array/scalar
   status / select       {"id": ..., "title": ...}
   record-reference      {"target_object": ..., "target_record_id": ...}
   (for record-references, prefer the indexed \`ref_record_id\` column)

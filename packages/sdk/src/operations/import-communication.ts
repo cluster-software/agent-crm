@@ -56,7 +56,11 @@ export type CommunicationImportMessage = {
   threadSourceKey?: string;
   subject?: string;
   snippet?: string;
+  bodyPreview?: string;
   bodyText?: string;
+  bodyHtmlSanitized?: string;
+  bodyRenderJson?: unknown;
+  attachmentsJson?: unknown;
   sentAt?: string;
   direction?: "inbound" | "outbound";
   labelIds?: string[];
@@ -293,7 +297,11 @@ export async function importCommunicationBatch(
     if (message.sentAt) enqueueSingle(writer, existingValues, plan, "sent_at", "timestamp", message.sentAt);
     if (message.subject) enqueueSingle(writer, existingValues, plan, "subject", "text", message.subject);
     if (message.snippet) enqueueSingle(writer, existingValues, plan, "snippet", "text", message.snippet);
+    if (message.bodyPreview) enqueueSingle(writer, existingValues, plan, "body_preview", "text", message.bodyPreview);
     if (message.bodyText) enqueueSingle(writer, existingValues, plan, "body_text", "text", message.bodyText);
+    if (message.bodyHtmlSanitized) enqueueSingle(writer, existingValues, plan, "body_html_sanitized", "text", message.bodyHtmlSanitized);
+    if (message.bodyRenderJson != null) enqueueSingle(writer, existingValues, plan, "body_render_json", "json", message.bodyRenderJson);
+    if (message.attachmentsJson != null) enqueueSingle(writer, existingValues, plan, "attachments_json", "json", message.attachmentsJson);
     if (message.direction) enqueueSingle(writer, existingValues, plan, "direction", "status", message.direction);
     for (const labelId of message.labelIds ?? []) {
       enqueueMulti(writer, existingValues, plan, "label_ids", "text", labelId);
@@ -360,16 +368,6 @@ export async function importCommunicationBatch(
 }
 
 async function ensureCommunicationSchema(workspace: Workspace): Promise<void> {
-  const haveCommunicationSchema = await exec(
-    workspace.lix,
-    `SELECT 1
-     FROM acrm_attribute
-     WHERE object_slug = 'communication_messages'
-       AND attribute_slug = 'participants'
-     LIMIT 1`,
-  );
-  if (haveCommunicationSchema.rows.length > 0) return;
-
   await seedObjects(workspace.lix);
   await seedAttributes(workspace.lix);
 }
@@ -940,12 +938,12 @@ function parseValueJson(value: unknown): ValueJson | null {
   if (typeof value === "string") {
     try {
       const parsed = JSON.parse(value) as unknown;
-      return isObject(parsed) ? parsed : null;
+      return isJsonValue(parsed) ? parsed : null;
     } catch {
       return null;
     }
   }
-  return isObject(value) ? value : null;
+  return isJsonValue(value) ? value : null;
 }
 
 function sameValueJson(left: ValueJson, right: ValueJson): boolean {
@@ -978,6 +976,10 @@ function chunks<T>(values: T[], size: number): T[][] {
   return result;
 }
 
-function isObject(value: unknown): value is ValueJson {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isJsonValue(value: unknown): value is ValueJson {
+  if (value === null) return true;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return true;
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  if (typeof value !== "object") return false;
+  return Object.values(value as Record<string, unknown>).every(isJsonValue);
 }
