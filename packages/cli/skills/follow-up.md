@@ -9,57 +9,151 @@ Use when the user says "who do I need to follow up with?", "draft my follow-ups"
 
 ## Run
 
-1. **Query for stale opens.** Active deal stages from the seed schema are `lead`, `in_progress`, `won`, `lost`; "open" means stage in `('lead', 'in_progress')`.
+### 1. Find threads needing a reply
 
-   ```sh
-   acrm execute "
-     SELECT d.record_id AS deal_id,
-            (SELECT json_extract(value_json, '$.value') FROM acrm_value
-              WHERE object_slug = 'deals' AND record_id = d.record_id
-                AND attribute_slug = 'name' AND active_until IS NULL LIMIT 1) AS deal_name,
-            (SELECT json_extract(value_json, '$.id') FROM acrm_value
-              WHERE object_slug = 'deals' AND record_id = d.record_id
-                AND attribute_slug = 'stage' AND active_until IS NULL LIMIT 1) AS stage,
-            (SELECT MAX(active_from) FROM acrm_value
-              WHERE object_slug = 'deals' AND record_id = d.record_id) AS last_activity
-     FROM acrm_record d
-     WHERE d.object_slug = 'deals'
-   " --json
-   ```
+Run this single query to get all messages with their thread, direction, timestamp, and body in one shot:
 
-   Filter the rows in-process: stage in `('lead', 'in_progress')` AND `last_activity` older than 7 days (or whatever threshold the user gave).
+```sh
+acrm execute "
+  SELECT
+    m_thread.ref_record_id AS thread_id,
+    lix_json_get_text(m_dir.value_json, 'id') AS direction,
+    lix_json_get_text(m_sent.value_json, 'timestamp') AS sent_at,
+    lix_json_get_text(m_body.value_json, 'value') AS body_text
+  FROM acrm_value m_thread
+  JOIN acrm_value m_dir
+    ON m_dir.object_slug = 'communication_messages'
+    AND m_dir.record_id = m_thread.record_id
+    AND m_dir.attribute_slug = 'direction'
+    AND m_dir.active_until IS NULL
+  JOIN acrm_value m_sent
+    ON m_sent.object_slug = 'communication_messages'
+    AND m_sent.record_id = m_thread.record_id
+    AND m_sent.attribute_slug = 'sent_at'
+    AND m_sent.active_until IS NULL
+  LEFT JOIN acrm_value m_body
+    ON m_body.object_slug = 'communication_messages'
+    AND m_body.record_id = m_thread.record_id
+    AND m_body.attribute_slug = 'body_text'
+    AND m_body.active_until IS NULL
+  WHERE m_thread.object_slug = 'communication_messages'
+    AND m_thread.attribute_slug = 'thread'
+    AND m_thread.active_until IS NULL
+  ORDER BY m_sent.value_json
+" --json
+```
 
-2. **For each stale deal, pull recent context.** Resolve the associated person and recent value rows so the draft is grounded in what actually happened:
+From the result, group messages by `thread_id`. For each thread, find the chronologically last message. A thread needs a follow-up if:
+- The last message has `direction = 'inbound'` (they messaged you, you haven't replied)
+- That message is older than 2 days but newer than 90 days (stale but not dead)
 
-   ```sh
-   acrm execute "SELECT ref_record_id FROM acrm_value WHERE object_slug = 'deals' AND record_id = ? AND attribute_slug = 'associated_people' AND active_until IS NULL LIMIT 1" '["<deal-record-id>"]' --json
+Adjust thresholds if the user specifies a different window.
 
-   acrm execute "SELECT attribute_slug, value_json, source, active_from FROM acrm_value WHERE object_slug = 'people' AND record_id = ? ORDER BY active_from DESC LIMIT 10" '["<person-record-id>"]' --json
-   ```
+### 2. Resolve who is in each thread
 
-   Then pull recent transcripts linked to that person via `people.associated_transcripts` and read the `summary` / `content` fields for prior-call context:
+For threads needing follow-up, get the participant names and context:
 
-   ```sh
-   acrm execute "SELECT ref_record_id FROM acrm_value WHERE object_slug = 'people' AND record_id = ? AND attribute_slug = 'associated_transcripts' AND active_until IS NULL ORDER BY active_from DESC LIMIT 3" '["<person-record-id>"]' --json
+```sh
+acrm execute "
+  SELECT
+    t_part.record_id AS thread_id,
+    t_part.ref_record_id AS person_id
+  FROM acrm_value t_part
+  WHERE t_part.object_slug = 'communication_threads'
+    AND t_part.attribute_slug = 'participants'
+    AND t_part.active_until IS NULL
+    AND t_part.record_id IN ('<thread_id_1>', '<thread_id_2>')
+" --json
+```
 
-   acrm execute "SELECT attribute_slug, value_json FROM acrm_value WHERE object_slug = 'transcripts' AND record_id = ? AND attribute_slug IN ('summary','title','started_at') AND active_until IS NULL" '["<transcript-record-id>"]' --json
-   ```
+Then get person details (name, job_title, company) for those person IDs:
 
-   Also read other text-typed attributes on the person (`notes`, etc.) that capture prior thread.
+```sh
+acrm execute "
+  SELECT record_id, attribute_slug, value_json
+  FROM acrm_value
+  WHERE object_slug = 'people'
+    AND record_id IN ('<person_id_1>', '<person_id_2>')
+    AND active_until IS NULL
+    AND attribute_slug IN ('name', 'job_title', 'company')
+" --json
+```
 
-3. **Calibrate tone.** Read 5 of the user's recent sent messages to match voice, length, and signoff. Don't invent a tone — mirror what's there. If the user has no reachable sent-mail context, ask them to paste a few examples.
+### 3. Pull transcript context (if available)
 
-4. **Draft a message per person.** Save all drafts to `./drafts/follow-ups-<YYYY-MM-DD>.md`:
-   ```
-   ## <Name> — <Company>
-   Last touch: <date> — <one-line context>
+For each person needing follow-up, check for associated transcripts:
 
-   ---
-   <draft message>
-   ---
-   ```
+```sh
+acrm execute "
+  SELECT record_id, ref_record_id
+  FROM acrm_value
+  WHERE object_slug = 'people'
+    AND record_id = '<person_id>'
+    AND attribute_slug = 'associated_transcripts'
+    AND active_until IS NULL
+  ORDER BY active_from DESC
+  LIMIT 3
+" --json
+```
 
-5. **Show the file path and a count.** The user reviews and edits before sending.
+If transcripts exist, read their summary:
+
+```sh
+acrm execute "
+  SELECT attribute_slug, value_json
+  FROM acrm_value
+  WHERE object_slug = 'transcripts'
+    AND record_id = '<transcript_id>'
+    AND attribute_slug IN ('summary', 'title', 'started_at')
+    AND active_until IS NULL
+" --json
+```
+
+### 4. Calibrate tone
+
+Read 5 of the user's recent outbound messages to match voice, length, and signoff:
+
+```sh
+acrm execute "
+  SELECT lix_json_get_text(m_body.value_json, 'value') AS body_text
+  FROM acrm_value m_dir
+  JOIN acrm_value m_body
+    ON m_body.object_slug = 'communication_messages'
+    AND m_body.record_id = m_dir.record_id
+    AND m_body.attribute_slug = 'body_text'
+    AND m_body.active_until IS NULL
+  JOIN acrm_value m_sent
+    ON m_sent.object_slug = 'communication_messages'
+    AND m_sent.record_id = m_dir.record_id
+    AND m_sent.attribute_slug = 'sent_at'
+    AND m_sent.active_until IS NULL
+  WHERE m_dir.object_slug = 'communication_messages'
+    AND m_dir.attribute_slug = 'direction'
+    AND m_dir.active_until IS NULL
+    AND lix_json_get_text(m_dir.value_json, 'id') = 'outbound'
+  ORDER BY m_sent.value_json DESC
+  LIMIT 5
+" --json
+```
+
+Don't invent a tone — mirror what's there. If the user has no reachable sent-mail context, ask them to paste a few examples.
+
+### 5. Draft a message per person
+
+Save all drafts to `./drafts/follow-ups-<YYYY-MM-DD>.md`:
+
+```
+## <Name> — <Company>
+Last touch: <date> — <one-line context>
+
+---
+<draft message>
+---
+```
+
+### 6. Show the file path and a count
+
+The user reviews and edits before sending.
 
 ## Hard rule
 

@@ -10,6 +10,7 @@
     "test": "npm run build --workspace @agent-crm/sdk && npm run test --workspaces --if-present",
     "test:watch": "npm run test:watch --workspace @agent-crm/cli",
     "dev": "npm run dev --workspace @agent-crm/cli",
+    "dev:app": "node tools/dev-agent-crm-app.mjs",
     "changeset": "changeset",
     "version": "changeset version",
     "release": "changeset publish"
