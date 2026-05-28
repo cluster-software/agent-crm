@@ -17,9 +17,16 @@ export type AttributeType =
   | "timestamp"
   | "select"
   | "status"
+  | "json"
   | "record-reference";
 
-export type ValueJson = Record<string, unknown>;
+export type ValueJson =
+  | string
+  | number
+  | boolean
+  | null
+  | ValueJson[]
+  | { [key: string]: ValueJson };
 
 export type StatusOption = { id: string; title: string };
 
@@ -100,6 +107,8 @@ export function encode(
       return { date: String(input).trim() };
     case "timestamp":
       return { timestamp: String(input).trim() };
+    case "json":
+      return normalizeJsonValue(input);
     case "select":
     case "status": {
       if (typeof input === "object" && input !== null) return input as ValueJson;
@@ -136,6 +145,7 @@ export function normalizeUniqueKey(
   type: AttributeType,
   value: ValueJson,
 ): string | null {
+  if (!isJsonObject(value)) return null;
   switch (type) {
     case "email-address":
       return (value.email_address as string | undefined)?.toLowerCase() ?? null;
@@ -155,10 +165,26 @@ export function normalizeUniqueKey(
 export function recordReferenceTarget(
   value: ValueJson,
 ): { object: string; record_id: string } | null {
+  if (!isJsonObject(value)) return null;
   const t = value.target_object as string | undefined;
   const r = value.target_record_id as string | undefined;
   if (!t || !r) return null;
   return { object: t, record_id: r };
+}
+
+function normalizeJsonValue(input: unknown): ValueJson {
+  if (input === undefined || typeof input === "function" || typeof input === "symbol") {
+    throw new Error("json value must be JSON-serializable");
+  }
+  const json = JSON.stringify(input);
+  if (json === undefined) {
+    throw new Error("json value must be JSON-serializable");
+  }
+  return JSON.parse(json) as ValueJson;
+}
+
+function isJsonObject(value: ValueJson): value is { [key: string]: ValueJson } {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function normalizeDomain(input: string): string {

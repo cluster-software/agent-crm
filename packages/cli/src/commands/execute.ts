@@ -91,6 +91,7 @@ value_json shape by attribute_type (the key to use with lix_json_get_text):
   domain                     {"domain": "<lower>", "root_domain": "<lower>"}
   currency                   {"currency_value": <number>, "currency_code": "<USD>"}
   status / select            {"id": "<option_id>", "title": "<display>"}
+  json                       any JSON object/array/scalar
   record-reference           {"target_object": "<slug>", "target_record_id": "<uuid>"}
 
   Why this matters: \`lix_json_get_text(value_json, 'value')\` returns NULL on
@@ -199,4 +200,3 @@ Errors carry the lix engine code + hint when applicable
       },
     );
 }
-

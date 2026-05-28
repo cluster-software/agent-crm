@@ -7,6 +7,7 @@ import {
   encode,
   normalizeUniqueKey,
   type AttributeType,
+  type ValueJson,
 } from "../domain/values.js";
 import { loadAttributeConfig } from "../workspace/catalog.js";
 
@@ -66,7 +67,7 @@ export async function insertValue(
     record_id: string;
     attribute_slug: string;
     attribute_type: AttributeType;
-    value_json: Record<string, unknown>;
+    value_json: ValueJson;
     source: string;
     provenance: Record<string, unknown>;
   },
