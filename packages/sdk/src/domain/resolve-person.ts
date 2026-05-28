@@ -39,7 +39,7 @@ export type ResolveResult = {
   normalized: NormalizedIdentifiers;
 };
 
-// Why this exists: both /post-call (transcript import) and `acrm import csv`
+// Why this exists: both transcript import and `acrm import csv`
 // resolve people by the same priority — email → linkedin → twitter → phone —
 // but they used to implement the cascade independently. The CSV path had
 // email/linkedin/twitter; the transcript path was email-only, so a meeting

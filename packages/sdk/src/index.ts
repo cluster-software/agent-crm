@@ -16,18 +16,12 @@ export * from "./agent-instructions.js";
 // "@agent-crm/sdk/integrations/apify-linkedin.js".
 export * from "./integrations/apify-post.js";
 export * from "./integrations/google-oauth-client.js";
-export * from "./integrations/granola.js";
-export * from "./integrations/mcp-http-client.js";
 export * from "./integrations/post-mapping.js";
-export * from "./integrations/provider.js";
-export * from "./integrations/providers.js";
 export * from "./integrations/transcript.js";
 
 export * from "./lib/errors.js";
 export * from "./lib/ids.js";
-export * from "./lib/oauth-pkce.js";
 export * from "./lib/time.js";
-export * from "./lib/token-cache.js";
 export * from "./lib/uuidv7.js";
 
 export * from "./workspace/schemas/index.js";

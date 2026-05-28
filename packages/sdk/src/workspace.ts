@@ -3,9 +3,12 @@ import { rm } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { openLix, type Lix } from "@lix-js/sdk";
 import { createBetterSqlite3Backend } from "@lix-js/sdk/sqlite";
+import Database from "better-sqlite3";
 import { AcrmError, ERR } from "./lib/errors.js";
 import { ensureWorkspaceIdentity } from "./workspace/identity.js";
 import { initializeWorkspace } from "./workspace/initialize.js";
+
+const SQLITE_BUSY_TIMEOUT_MS = 30_000;
 
 // Opaque handle wrapping a Lix. Workspaces created by open/create own the
 // connection lifecycle; handles from fromLix() borrow it by default. Callers
@@ -75,8 +78,14 @@ export class Workspace {
 }
 
 async function openWorkspaceLix(absolutePath: string): Promise<Lix> {
+  configureWorkspaceSqliteFile(absolutePath);
   return openLix({
-    backend: createBetterSqlite3Backend({ path: absolutePath }),
+    backend: createBetterSqlite3Backend({
+      path: absolutePath,
+      databaseOptions: {
+        timeout: SQLITE_BUSY_TIMEOUT_MS,
+      },
+    }),
   });
 }
 
@@ -86,4 +95,16 @@ function assertAbsolutePath(workspacePath: string): void {
     `workspace path must be absolute: ${workspacePath}`,
     ERR.INVALID_INPUT,
   );
+}
+
+function configureWorkspaceSqliteFile(absolutePath: string): void {
+  const db = new Database(absolutePath, {
+    timeout: SQLITE_BUSY_TIMEOUT_MS,
+  });
+  try {
+    db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    db.pragma("journal_mode = WAL");
+  } finally {
+    db.close();
+  }
 }

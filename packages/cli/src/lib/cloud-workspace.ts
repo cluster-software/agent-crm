@@ -8,6 +8,7 @@ import {
   ensureWorkspaceIdentity,
   type CommunicationImportBatch,
   type LinkedinRelation,
+  type TranscriptPayload,
 } from "@agent-crm/sdk";
 
 export const DEFAULT_SYNC_ENGINE_URL = "https://agent-crm-sync-engine.onrender.com";
@@ -18,6 +19,14 @@ export const LINKEDIN_NOT_CONNECTED_HINT = [
   "",
   "Then re-run:",
   "  acrm import linkedin",
+].join("\n");
+export const GRANOLA_NOT_CONNECTED_MESSAGE = "Granola is not connected for this workspace.";
+export const GRANOLA_NOT_CONNECTED_HINT = [
+  "Run:",
+  "  acrm connect granola",
+  "",
+  "Then re-run:",
+  "  acrm import granola",
 ].join("\n");
 
 const CLOUD_METADATA_FILENAME = ".agent-crm-cloud.json";
@@ -51,6 +60,7 @@ export type CloudIntegrationProviderStatus = {
 export type CloudIntegrationStatus = {
   gmail: CloudIntegrationProviderStatus;
   linkedin: CloudIntegrationProviderStatus;
+  granola: CloudIntegrationProviderStatus;
 };
 
 export function ensureCloudWorkspaceMetadata(
@@ -250,10 +260,137 @@ export async function fetchCloudIntegrationStatus(input: {
       payloadError(payload) ?? `sync engine returned HTTP ${response.status}`,
     );
   }
-  const integrations = payload.integrations as { gmail?: unknown; linkedin?: unknown };
+  const integrations = payload.integrations as { gmail?: unknown; linkedin?: unknown; granola?: unknown };
   return {
     gmail: parseProviderStatus(integrations.gmail),
     linkedin: parseProviderStatus(integrations.linkedin),
+    granola: parseProviderStatus(integrations.granola),
+  };
+}
+
+export async function connectCloudGranola(input: {
+  syncEngineUrl: string;
+  workspaceId: string;
+  clientToken: string;
+  apiKey: string;
+  cutoffDate?: string;
+}): Promise<{ account: unknown; cutoff_date?: string }> {
+  const url = new URL("/integrations/granola/connect", input.syncEngineUrl);
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${input.clientToken}`,
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: JSON.stringify({
+      workspace_id: input.workspaceId,
+      api_key: input.apiKey,
+      ...(input.cutoffDate ? { cutoff_date: input.cutoffDate } : {}),
+    }),
+  });
+  const payload = await response.json().catch(() => undefined) as
+    | { ok?: unknown; account?: unknown; cutoff_date?: unknown; error?: unknown }
+    | undefined;
+  if (!response.ok || payload?.ok !== true) {
+    throw new AcrmError(
+      "failed to connect Granola",
+      ERR.IMPORT,
+      payloadError(payload) ?? `sync engine returned HTTP ${response.status}`,
+    );
+  }
+  return {
+    account: payload.account,
+    ...(typeof payload.cutoff_date === "string" ? { cutoff_date: payload.cutoff_date } : {}),
+  };
+}
+
+export async function fetchCloudGranolaTranscriptsExport(input: {
+  syncEngineUrl: string;
+  workspaceId: string;
+  clientToken: string;
+  cutoffDate?: string;
+}): Promise<{ transcripts: TranscriptPayload[] }> {
+  const url = new URL(
+    `/workspaces/${encodeURIComponent(input.workspaceId)}/integrations/granola/export`,
+    input.syncEngineUrl,
+  );
+  if (input.cutoffDate) url.searchParams.set("cutoff_date", input.cutoffDate);
+  const response = await fetch(url.toString(), {
+    headers: {
+      authorization: `Bearer ${input.clientToken}`,
+    },
+  });
+  const payload = await response.json().catch(() => undefined) as
+    | { ok?: unknown; data?: unknown; error?: unknown; code?: unknown }
+    | undefined;
+  if (isGranolaNotConnected(payload)) {
+    throw new AcrmError(
+      GRANOLA_NOT_CONNECTED_MESSAGE,
+      ERR.INVALID_INPUT,
+      GRANOLA_NOT_CONNECTED_HINT,
+    );
+  }
+  if (!response.ok || payload?.ok !== true || !payload.data || typeof payload.data !== "object") {
+    throw new AcrmError(
+      "failed to export Granola transcripts",
+      ERR.IMPORT,
+      payloadError(payload) ?? `sync engine returned HTTP ${response.status}`,
+    );
+  }
+  const data = payload.data as { transcripts?: unknown };
+  if (!Array.isArray(data.transcripts)) {
+    throw new AcrmError(
+      "failed to export Granola transcripts",
+      ERR.IMPORT,
+      "sync engine response did not include a transcripts array",
+    );
+  }
+  return { transcripts: data.transcripts as TranscriptPayload[] };
+}
+
+export async function startCloudGranolaBackfill(input: {
+  syncEngineUrl: string;
+  workspaceId: string;
+  clientToken: string;
+  cutoffDate?: string;
+}): Promise<{ started: number; integration_account_ids: string[] }> {
+  const url = new URL(
+    `/workspaces/${encodeURIComponent(input.workspaceId)}/integrations/granola/backfill`,
+    input.syncEngineUrl,
+  );
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${input.clientToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      ...(input.cutoffDate ? { cutoff_date: input.cutoffDate } : {}),
+    }),
+  });
+  const payload = await response.json().catch(() => undefined) as
+    | { ok?: unknown; started?: unknown; integration_account_ids?: unknown; error?: unknown; code?: unknown }
+    | undefined;
+  if (isGranolaNotConnected(payload)) {
+    throw new AcrmError(
+      GRANOLA_NOT_CONNECTED_MESSAGE,
+      ERR.INVALID_INPUT,
+      GRANOLA_NOT_CONNECTED_HINT,
+    );
+  }
+  if (!response.ok || payload?.ok !== true) {
+    throw new AcrmError(
+      "failed to start Granola backfill",
+      ERR.IMPORT,
+      payloadError(payload) ?? `sync engine returned HTTP ${response.status}`,
+    );
+  }
+  return {
+    started: typeof payload.started === "number" ? payload.started : 0,
+    integration_account_ids: Array.isArray(payload.integration_account_ids)
+      ? payload.integration_account_ids.filter((id): id is string => typeof id === "string")
+      : [],
   };
 }
 
@@ -398,6 +535,25 @@ function isLinkedinNotConnected(payload: { error?: unknown; code?: unknown } | u
       normalized === "linkedin_not_connected" ||
       normalized === "not_connected" ||
       (normalized.includes("linkedin") && normalized.includes("not_connected"))
+    );
+  });
+}
+
+function isGranolaNotConnected(payload: { error?: unknown; code?: unknown } | undefined): boolean {
+  const candidates = [
+    payload?.code,
+    typeof payload?.error === "object" && payload.error !== null
+      ? (payload.error as { code?: unknown }).code
+      : undefined,
+    typeof payload?.error === "string" ? payload.error : undefined,
+  ];
+  return candidates.some((candidate) => {
+    if (typeof candidate !== "string") return false;
+    const normalized = candidate.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    return (
+      normalized === "granola_not_connected" ||
+      normalized === "not_connected" ||
+      (normalized.includes("granola") && normalized.includes("not_connected"))
     );
   });
 }

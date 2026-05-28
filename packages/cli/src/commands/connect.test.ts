@@ -124,6 +124,55 @@ describe("connect linkedin command", () => {
     }
   });
 
+  it("builds a Granola connect URL with the local workspace token", () => {
+    const url = connectCommandTest.granolaConnectUrl({
+      syncEngineUrl: "https://sync.example.com",
+      workspaceId: "workspace-1",
+      clientToken: "client-token-1",
+      workspaceName: "pipeline",
+    });
+
+    expect(url).toBe(
+      "https://sync.example.com/integrations/granola/connect?workspace_id=workspace-1&client_token=client-token-1&workspace_name=pipeline",
+    );
+  });
+
+  it("connects Granola by posting the API key to the hosted sync engine", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "acrm-granola-connect-"));
+    const workspacePath = join(dir, "workspace.acrm");
+    const ws = await Workspace.create(workspacePath);
+    await ws.close();
+    process.env.ACRM_SYNC_ENGINE_URL = "https://sync.example.com";
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/register")) return Response.json({ ok: true });
+      expect(url).toBe("https://sync.example.com/integrations/granola/connect");
+      expect(init?.method).toBe("POST");
+      expect((init?.headers as Record<string, string>).authorization).toMatch(/^Bearer /);
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        api_key: "grn_test",
+        workspace_id: expect.any(String),
+      });
+      return Response.json({
+        ok: true,
+        account: { id: "acct-1", provider: "granola" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const result = await connectCommandTest.runConnectGranola({
+        workspace: workspacePath,
+        apiKey: "grn_test",
+      });
+
+      expect(result.connected).toBe(true);
+      expect(result.account).toEqual({ id: "acct-1", provider: "granola" });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("requires an active LinkedIn account before reporting connected status", async () => {
     const dir = await mkdtemp(join(tmpdir(), "acrm-linkedin-status-"));
     const workspacePath = join(dir, "workspace.acrm");

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { spawn } from "node:child_process";
 import type { Command } from "commander";
 import { AcrmError, ERR } from "@agent-crm/sdk";
 import { resolveWorkspacePath } from "../workspace-resolve.js";
@@ -7,6 +8,7 @@ import { loadDotenv } from "../lib/dotenv.js";
 import {
   type CloudIntegrationProviderStatus,
   DEFAULT_SYNC_ENGINE_URL,
+  connectCloudGranola,
   ensureCloudWorkspaceMetadataForWorkspace,
   fetchCloudIntegrationStatus,
   registerCloudWorkspace,
@@ -14,6 +16,14 @@ import {
 
 type LinkedinConnectOpts = {
   orgId?: string;
+  status?: boolean;
+};
+
+type GranolaConnectOpts = {
+  apiKey?: string;
+  apiKeyStdin?: boolean;
+  cutoffDate?: string;
+  open?: boolean;
   status?: boolean;
 };
 
@@ -57,6 +67,62 @@ export function registerConnect(program: Command): void {
               ].join("\n")
             );
           }
+          return;
+        }
+        ok(result);
+      } catch (e) {
+        if (e instanceof AcrmError) fail(e.message, e.code, e.hint);
+        else fail(e instanceof Error ? e.message : String(e), ERR.UNHANDLED);
+        process.exit(1);
+      }
+    });
+
+  connectCmd
+    .command("granola")
+    .description("connect Granola through Agent CRM's hosted sync engine")
+    .option("--api-key <api-key>", "connect by sending this Granola API key to the hosted sync engine")
+    .option("--api-key-stdin", "read the Granola API key from stdin")
+    .option("--cutoff-date <YYYY-MM-DD>", "only backfill Granola notes created on or after this date")
+    .option("--no-open", "print the hosted connect URL without opening it in a browser")
+    .option("--status", "show Granola connection status without starting a new connect flow")
+    .action(async (opts: GranolaConnectOpts) => {
+      const root = program.opts() as { workspace?: string; json?: boolean };
+      setJsonMode(root.json);
+      try {
+        if (opts.status) {
+          const result = await runConnectGranolaStatus({
+            workspace: root.workspace,
+          });
+          if (!isJson()) {
+            process.stdout.write(granolaStatusMessage(result.granola));
+            return;
+          }
+          ok(result);
+          return;
+        }
+        const result = await runConnectGranola({
+          workspace: root.workspace,
+          apiKey: opts.apiKey,
+          apiKeyStdin: opts.apiKeyStdin,
+          cutoffDate: opts.cutoffDate,
+        });
+        if (!isJson()) {
+          if (result.connected) {
+            process.stdout.write("Granola is connected. Backfill is running in the background.\n");
+            return;
+          }
+          if (opts.open !== false) openInBrowser(result.auth_url);
+          process.stdout.write(
+            [
+              opts.open === false
+                ? "Open this URL to connect Granola:"
+                : "Opening browser to connect Granola. If it doesn't open, paste this URL:",
+              result.auth_url,
+              "",
+              "Create a Granola API key with Personal notes and Public notes access, then paste it on that page.",
+              "",
+            ].join("\n")
+          );
           return;
         }
         ok(result);
@@ -186,6 +252,109 @@ function linkedinConnectUrl(input: {
   return url.toString();
 }
 
+async function runConnectGranola(opts: {
+  workspace?: string;
+  apiKey?: string;
+  apiKeyStdin?: boolean;
+  cutoffDate?: string;
+}): Promise<{
+  auth_url: string;
+  workspace_id: string;
+  cluster_org_id: string | null;
+  sync_engine_url: string;
+  connected: boolean;
+  account?: unknown;
+}> {
+  const workspaceFile = resolveWorkspacePath(opts.workspace);
+  const workspaceDir = path.dirname(workspaceFile);
+  loadDotenv(workspaceDir);
+  loadDotenv(process.cwd());
+
+  const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
+    workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
+    clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
+  });
+  const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
+  await registerCloudWorkspace({
+    syncEngineUrl,
+    workspaceId: metadata.workspaceId,
+    clientToken: metadata.clientToken,
+    workspaceName: path.basename(workspaceDir),
+  });
+  const apiKey = opts.apiKeyStdin ? await readStdinSecret() : opts.apiKey;
+  const auth_url = granolaConnectUrl({
+    syncEngineUrl,
+    workspaceId: metadata.workspaceId,
+    clientToken: metadata.clientToken,
+    workspaceName: path.basename(workspaceDir),
+  });
+  if (!apiKey) {
+    return {
+      auth_url,
+      workspace_id: metadata.workspaceId,
+      cluster_org_id: metadata.clusterOrgId ?? null,
+      sync_engine_url: syncEngineUrl,
+      connected: false,
+    };
+  }
+  const connected = await connectCloudGranola({
+    syncEngineUrl,
+    workspaceId: metadata.workspaceId,
+    clientToken: metadata.clientToken,
+    apiKey,
+    cutoffDate: opts.cutoffDate,
+  });
+  return {
+    auth_url,
+    workspace_id: metadata.workspaceId,
+    cluster_org_id: metadata.clusterOrgId ?? null,
+    sync_engine_url: syncEngineUrl,
+    connected: true,
+    account: connected.account,
+  };
+}
+
+async function runConnectGranolaStatus(opts: { workspace?: string }): Promise<{
+  workspace_id: string;
+  sync_engine_url: string;
+  granola: CliProviderStatus;
+}> {
+  const workspaceFile = resolveWorkspacePath(opts.workspace);
+  const workspaceDir = path.dirname(workspaceFile);
+  loadDotenv(workspaceDir);
+  loadDotenv(process.cwd());
+
+  const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
+    workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
+    clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
+    clusterOrgId: process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
+  });
+  const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
+  const status = await fetchCloudIntegrationStatus({
+    syncEngineUrl,
+    workspaceId: metadata.workspaceId,
+    clientToken: metadata.clientToken,
+  });
+  return {
+    workspace_id: metadata.workspaceId,
+    sync_engine_url: syncEngineUrl,
+    granola: toCliProviderStatus(status.granola),
+  };
+}
+
+function granolaConnectUrl(input: {
+  syncEngineUrl: string;
+  workspaceId: string;
+  clientToken: string;
+  workspaceName: string;
+}): string {
+  const url = new URL("/integrations/granola/connect", input.syncEngineUrl);
+  url.searchParams.set("workspace_id", input.workspaceId);
+  url.searchParams.set("client_token", input.clientToken);
+  url.searchParams.set("workspace_name", input.workspaceName || "Agent CRM workspace");
+  return url.toString();
+}
+
 type CliProviderStatus = {
   connected: boolean;
   account_email?: string;
@@ -240,9 +409,42 @@ function linkedinAlreadyConnectedMessage(status: CliProviderStatus): string {
     : "This workspace is already connected with LinkedIn.";
 }
 
+function granolaStatusMessage(status: CliProviderStatus): string {
+  if (!status.connected) return "Granola is not connected yet.\n";
+  const label = status.display_name ?? status.account_email ?? status.provider_account_id;
+  return label ? `Granola is connected: ${label}\n` : "Granola is connected.\n";
+}
+
+function openInBrowser(url: string): void {
+  const command = process.platform === "darwin"
+    ? "open"
+    : process.platform === "win32"
+      ? "cmd"
+      : "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
+  try {
+    const child = spawn(command, args, { detached: true, stdio: "ignore" });
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    // Printed URL remains the fallback.
+  }
+}
+
+async function readStdinSecret(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8").trim();
+}
+
 export const __test = {
   linkedinConnectUrl,
+  granolaConnectUrl,
   runConnectLinkedin,
   runConnectLinkedinStatus,
+  runConnectGranola,
+  runConnectGranolaStatus,
   toCliProviderStatus,
 };

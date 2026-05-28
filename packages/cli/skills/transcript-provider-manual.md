@@ -1,6 +1,6 @@
 ---
 name: transcript-provider-manual
-description: Always-available fallback transcript provider adapter for any source without a native integration (Otter, Fireflies, Fathom, Read.ai, Circleback, Zoom export, audio you transcribed yourself, etc.). The user pastes the transcript in chat or supplies a JSON file; this adapter builds canonical transcript JSON to hand off to `acrm import transcript`. Invoke from /post-call when no native provider is connected, or from /setup-transcripts to describe the manual path.
+description: Always-available fallback transcript provider adapter for any source without a native integration (Otter, Fireflies, Fathom, Read.ai, Circleback, Zoom export, audio you transcribed yourself, etc.). The user pastes the transcript in chat or supplies a JSON file; this adapter builds canonical transcript JSON to hand off to `acrm import transcript`.
 ---
 
 # Manual / file adapter
@@ -28,7 +28,7 @@ Always available. No connection required.
 
 ## Connect
 
-No-op. Skip this section in `/setup-transcripts`.
+No-op.
 
 ## Fetch
 
@@ -62,7 +62,7 @@ For path A, build the JSON inline:
   "title":      "<from user>",
   "started_at": "<ISO 8601 from user, or omit>",
   "content":    "<pasted transcript>",
-  "summary":    "<filled in by caller, e.g. /post-call>",
+  "summary":    "<optional summary>",
   "participants": [
     { "email": "<email>" },
     { "linkedin_url": "linkedin.com/in/<handle>" },

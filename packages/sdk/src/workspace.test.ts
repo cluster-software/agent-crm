@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { exec } from "./db/execute.js";
 import { AcrmError, ERR } from "./lib/errors.js";
@@ -100,6 +101,39 @@ describe("Workspace", () => {
         await expect(ensureWorkspaceIdentity(reopened)).resolves.toBe(firstIdentity);
       } finally {
         await reopened.close();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses WAL mode so another open reader does not block workspace writes", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "acrm-sdk-workspace-"));
+    try {
+      const workspacePath = path.join(dir, "test.acrm");
+      const created = await Workspace.create(workspacePath);
+      await created.close();
+
+      const reader = new Database(workspacePath, { readonly: true });
+      try {
+        expect(reader.pragma("journal_mode", { simple: true })).toBe("wal");
+        reader.exec("BEGIN");
+        reader.prepare("SELECT COUNT(*) FROM lix_kv").get();
+
+        const writer = await Workspace.open(workspacePath);
+        try {
+          await expect(
+            exec(
+              writer.lix,
+              "INSERT INTO acrm_record (object_slug, record_id) VALUES ('people', 'person-1')",
+            ),
+          ).resolves.toMatchObject({ rowsAffected: 1 });
+        } finally {
+          await writer.close();
+        }
+      } finally {
+        reader.exec("ROLLBACK");
+        reader.close();
       }
     } finally {
       await rm(dir, { recursive: true, force: true });

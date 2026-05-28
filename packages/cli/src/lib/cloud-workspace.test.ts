@@ -4,12 +4,17 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ensureCloudWorkspaceMetadata,
+  connectCloudGranola,
   fetchCloudCommunicationExport,
+  fetchCloudGranolaTranscriptsExport,
   fetchCloudIntegrationStatus,
   fetchCloudLinkedinRelationsExport,
+  GRANOLA_NOT_CONNECTED_HINT,
+  GRANOLA_NOT_CONNECTED_MESSAGE,
   LINKEDIN_NOT_CONNECTED_HINT,
   LINKEDIN_NOT_CONNECTED_MESSAGE,
   registerCloudWorkspace,
+  startCloudGranolaBackfill,
   startCloudLinkedinMessageBackfill
 } from "./cloud-workspace.js";
 import { ERR } from "@agent-crm/sdk";
@@ -215,7 +220,10 @@ describe("cloud workspace metadata", () => {
       syncEngineUrl: "https://sync.example.com",
       workspaceId: "workspace-1",
       clientToken: "client-token-1",
-    })).resolves.toEqual(integrations);
+    })).resolves.toEqual({
+      ...integrations,
+      granola: { connected: false },
+    });
 
     expect(fetchMock).toHaveBeenCalledWith(
       "https://sync.example.com/workspaces/workspace-1/integrations/status",
@@ -223,6 +231,104 @@ describe("cloud workspace metadata", () => {
         headers: {
           authorization: "Bearer client-token-1",
         },
+      },
+    );
+  });
+
+  it("connects Granola with an API key and default hosted scopes", async () => {
+    const fetchMock = vi.fn(async () => Response.json({
+      ok: true,
+      account: { id: "acct-1", provider: "granola" },
+      cutoff_date: "2026-05-01",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(connectCloudGranola({
+      syncEngineUrl: "https://sync.example.com",
+      workspaceId: "workspace-1",
+      clientToken: "client-token-1",
+      apiKey: "grn_test",
+      cutoffDate: "2026-05-01",
+    })).resolves.toEqual({
+      account: { id: "acct-1", provider: "granola" },
+      cutoff_date: "2026-05-01",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://sync.example.com/integrations/granola/connect",
+      {
+        method: "POST",
+        headers: {
+          authorization: "Bearer client-token-1",
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          workspace_id: "workspace-1",
+          api_key: "grn_test",
+          cutoff_date: "2026-05-01",
+        }),
+      },
+    );
+  });
+
+  it("fetches Granola transcript exports with cutoff date", async () => {
+    const data = {
+      transcripts: [{
+        source: "granola",
+        source_id: "note-1",
+        participants: [{ email: "alice@example.com" }],
+      }],
+    };
+    const fetchMock = vi.fn(async () => Response.json({ ok: true, data }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchCloudGranolaTranscriptsExport({
+      syncEngineUrl: "https://sync.example.com",
+      workspaceId: "workspace-1",
+      clientToken: "client-token-1",
+      cutoffDate: "2026-05-01",
+    })).resolves.toEqual(data);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://sync.example.com/workspaces/workspace-1/integrations/granola/export?cutoff_date=2026-05-01",
+      {
+        headers: {
+          authorization: "Bearer client-token-1",
+        },
+      },
+    );
+  });
+
+  it("starts Granola backfill with cutoff date", async () => {
+    const fetchMock = vi.fn(async () => Response.json({
+      ok: true,
+      started: 1,
+      integration_account_ids: ["acct-1"],
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(startCloudGranolaBackfill({
+      syncEngineUrl: "https://sync.example.com",
+      workspaceId: "workspace-1",
+      clientToken: "client-token-1",
+      cutoffDate: "2026-05-01",
+    })).resolves.toEqual({
+      started: 1,
+      integration_account_ids: ["acct-1"],
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://sync.example.com/workspaces/workspace-1/integrations/granola/backfill",
+      {
+        method: "POST",
+        headers: {
+          authorization: "Bearer client-token-1",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          cutoff_date: "2026-05-01",
+        }),
       },
     );
   });
@@ -326,6 +432,24 @@ describe("cloud workspace metadata", () => {
       message: LINKEDIN_NOT_CONNECTED_MESSAGE,
       code: ERR.INVALID_INPUT,
       hint: LINKEDIN_NOT_CONNECTED_HINT,
+    });
+  });
+
+  it("turns Granola not-connected export responses into an actionable error", async () => {
+    const fetchMock = vi.fn(async () => Response.json({
+      ok: false,
+      error: { code: "granola_not_connected" },
+    }, { status: 409 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchCloudGranolaTranscriptsExport({
+      syncEngineUrl: "https://sync.example.com",
+      workspaceId: "workspace-1",
+      clientToken: "client-token-1",
+    })).rejects.toMatchObject({
+      message: GRANOLA_NOT_CONNECTED_MESSAGE,
+      code: ERR.INVALID_INPUT,
+      hint: GRANOLA_NOT_CONNECTED_HINT,
     });
   });
 });
