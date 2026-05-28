@@ -1,32 +1,19 @@
 ---
 name: acrm-onboarding
-description: Onboard a new Agent CRM user — initialize a `.acrm` workspace (if needed), then walk them through picking a first data source (Gmail / LinkedIn sync / CSV / LinkedIn or X profile) and importing it. Trigger phrasings — "onboard me", "set up agent crm", "get started with acrm", "I'm new to acrm", or a bare `/acrm-onboarding`.
+description: Onboard a new Agent CRM user in an existing `.acrm` workspace — walk them through picking a first data source (Gmail / LinkedIn sync / CSV / LinkedIn or X profile) and importing it. Trigger phrasings — "onboard me", "set up agent crm", "get started with acrm", "I'm new to acrm", or a bare `/acrm-onboarding`.
 ---
 
 # acrm-onboarding
 
-The first-run flow for Agent CRM. Goal: in one conversation, take a user from "nothing" to "populated `.acrm` with their real contacts" so the rest of the skills have something to chew on.
+The first-run flow for Agent CRM. Goal: in one conversation, help a user populate their existing `.acrm` workspace with real contacts so the rest of the skills have something to chew on.
 
 ## Run
 
-### 1. Greet + workspace check
+### 1. Greet
 
 Say:
 
 > Welcome to Agent CRM — the headless CRM for Claude. Let's get you set up.
-
-Check whether a workspace already exists in this directory:
-
-```sh
-acrm execute "SELECT 1" --json
-```
-
-- If that succeeds, you're already inside a workspace — skip to step 2.
-- If it fails with `ACRM_ERROR_NO_WORKSPACE`, ask the user what to name their workspace (default: `pipeline.acrm`) and run:
-
-  ```sh
-  acrm init <name>.acrm
-  ```
 
 ### 2. Pick a data source
 
@@ -172,7 +159,6 @@ Keep the close short - pick the most relevant one or two suggestions, not a feat
 
 ## Hard rules
 
-- **Never** fabricate a workspace path or skip the `acrm init` step. If no workspace exists, the user must explicitly name one.
 - **Never** silently run a destructive command.
 - **Do not use `gws` for Gmail.** Gmail now goes through the hosted sync engine.
 - **Don't** fabricate OAuth credentials or paper over auth errors. The user owns the Google consent flow.
