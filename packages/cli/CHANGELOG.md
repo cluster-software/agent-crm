@@ -1,5 +1,15 @@
 # @agent-crm/cli
 
+## 0.21.1
+
+### Patch Changes
+
+- d3737f1: Remove manual CLI version and update preflight guidance from Agent CRM onboarding and workspace instructions.
+- dc06ba5: Remove outdated bundled skill guidance from the CLI package and generated agent instructions.
+- Updated dependencies [d3737f1]
+- Updated dependencies [dc06ba5]
+  - @agent-crm/sdk@0.8.1
+
 ## 0.21.0
 
 ### Minor Changes
