@@ -47,11 +47,13 @@ describe("importCommunicationBatch", () => {
             sourceKey: "gmail:me@example.com:email:alice@example.com",
             email: "alice@example.com",
             displayName: "Alice A",
+            profilePictureUrl: "https://media.example.com/alice-a.jpg",
           },
           {
             sourceKey: "gmail:other@example.com:email:alice@example.com",
             email: "alice@example.com",
             displayName: "Alice B",
+            profilePictureUrl: "https://media.example.com/alice-b.jpg",
           },
         ],
         communicationThreads: [],
@@ -60,8 +62,10 @@ describe("importCommunicationBatch", () => {
 
       await expect(recordCount(workspace, "people")).resolves.toBe(1);
       await expect(activeValueCount(workspace, "people", "name")).resolves.toBe(1);
+      await expect(activeValueCount(workspace, "people", "profile_picture_url")).resolves.toBe(1);
       await expect(activeValueCount(workspace, "people", "source_keys")).resolves.toBe(2);
       await expect(singleDisplayValue(workspace, "people", "name")).resolves.toBe("Alice B");
+      await expect(singleDisplayValue(workspace, "people", "profile_picture_url")).resolves.toBe("https://media.example.com/alice-b.jpg");
     });
   });
 });

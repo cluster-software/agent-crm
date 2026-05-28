@@ -3,6 +3,7 @@ import type { LinkedInProfile } from "./apify-linkedin.js";
 export type MappedPerson = {
   name: string | null;
   linkedin_url: string | null;
+  profile_picture_url: string | null;
   job_title: string | null;
 };
 
@@ -48,6 +49,15 @@ export function mapProfile(profile: LinkedInProfile): MappedProfile {
     (pickString(profile.publicIdentifier)
       ? `https://www.linkedin.com/in/${pickString(profile.publicIdentifier)}`
       : null);
+  const profilePictureUrl =
+    pickString(profile.profilePictureUrl) ??
+    pickString(profile.profile_picture_url) ??
+    pickString(profile.profileImageUrl) ??
+    pickString(profile.profile_image_url) ??
+    pickString(profile.pictureUrl) ??
+    pickString(profile.picture_url) ??
+    pickString(profile.imageUrl) ??
+    pickString(profile.image_url);
 
   const current = firstPosition(profile);
   const experience = Array.isArray(profile.experience)
@@ -70,6 +80,7 @@ export function mapProfile(profile: LinkedInProfile): MappedProfile {
     person: {
       name: fullName || null,
       linkedin_url: linkedinUrl,
+      profile_picture_url: profilePictureUrl,
       job_title: jobTitle,
     },
     company: {

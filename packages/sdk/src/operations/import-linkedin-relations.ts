@@ -57,6 +57,7 @@ type NormalizedRelation = {
   relation: LinkedinRelation;
   sourceKey: string;
   linkedinUrl: string | null;
+  profilePictureUrl: string | null;
   fullName: string | null;
   headline: string | null;
   connectedAt: string | null;
@@ -215,6 +216,9 @@ export async function importLinkedinRelations(
     if (relation.fullName) {
       changed = enqueueSingleIfMissing(writer, existingValues, plan, "name", "personal-name", relation.fullName, provenance) || changed;
     }
+    if (relation.profilePictureUrl) {
+      changed = enqueueSingleIfMissing(writer, existingValues, plan, "profile_picture_url", "url", relation.profilePictureUrl, provenance) || changed;
+    }
     if (relation.headline) {
       changed = enqueueSingleIfMissing(writer, existingValues, plan, "job_title", "text", relation.headline, provenance) || changed;
     }
@@ -278,6 +282,7 @@ function normalizeRelation(relation: LinkedinRelation): NormalizedRelation | nul
     relation,
     sourceKey,
     linkedinUrl: relationLinkedinUrl(relation),
+    profilePictureUrl: relationProfilePictureUrl(relation),
     fullName: relationFullName(relation),
     headline: cleanString(relation.headline),
     connectedAt: relationConnectedAt(relation.created_at),
@@ -310,6 +315,19 @@ function relationFullName(relation: LinkedinRelation): string | null {
     .join(" ")
     .trim();
   return full || null;
+}
+
+function relationProfilePictureUrl(relation: LinkedinRelation): string | null {
+  return stringField(relation, [
+    "profile_picture_url",
+    "profilePictureUrl",
+    "profile_image_url",
+    "profileImageUrl",
+    "picture_url",
+    "pictureUrl",
+    "avatar_url",
+    "avatarUrl",
+  ]);
 }
 
 function relationConnectedAt(value: LinkedinRelation["created_at"]): string | null {

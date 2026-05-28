@@ -33,6 +33,7 @@ describe("import linkedin command", () => {
       headline: "Founder at Analytical Engines",
       public_identifier: "ada-lovelace",
       public_profile_url: "https://www.linkedin.com/in/ada-lovelace/",
+      profile_picture_url: "https://media.example.com/ada.jpg",
     };
     const fetchMock = vi.fn(async (url: string) => {
       const parsed = new URL(url);
@@ -84,6 +85,7 @@ describe("import linkedin command", () => {
       const reopened = await Workspace.open(workspacePath);
       try {
         await expect(singleValue(reopened, "linkedin_url")).resolves.toBe("linkedin.com/in/ada-lovelace");
+        await expect(singleValue(reopened, "profile_picture_url")).resolves.toBe("https://media.example.com/ada.jpg");
         await expect(singleValue(reopened, "linkedin_connected_at")).resolves.toBe("2025-03-15T15:16:09.000Z");
         await expect(singleValue(reopened, "linkedin_url", "companies")).resolves.toBe("linkedin.com/company/analytical-engines");
       } finally {
