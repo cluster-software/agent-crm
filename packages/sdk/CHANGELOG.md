@@ -1,5 +1,11 @@
 # @agent-crm/sdk
 
+## 0.9.1
+
+### Patch Changes
+
+- fd5fdaa: Scope hosted LinkedIn message backfill to the relations imported by `acrm import linkedin`, and store company domains from hosted LinkedIn relation imports.
+
 ## 0.9.0
 
 ### Minor Changes
