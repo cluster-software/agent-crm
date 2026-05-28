@@ -78,7 +78,7 @@ A grab-bag of jobs Agent CRM handles today. Each is a skill or a CLI command —
 
 **Prep for a sales call.** [`/prep-call`](packages/cli/skills/prep-call.md) pulls the person's full history from your `.acrm`, fetches their LinkedIn profile (cached, 14-day TTL), and hands you a one-pager with discovery questions tied to what they've actually been talking about.
 
-**Pull call transcripts from Granola.** [`/post-call`](packages/cli/skills/post-call.md) fetches the transcript from your connected provider, resolves participants by email, and imports it as a `transcripts` record linked to the attendees. Local, queryable, and easy to spot patterns across calls.
+**Pull call transcripts from Granola.** `acrm connect granola` stores a user-provided Granola API key in the hosted sync engine, and `acrm import granola` brings synced transcripts into your local workspace with attendees linked as people. Local, queryable, and easy to spot patterns across calls.
 
 **Draft follow-ups in your voice.** [`/follow-up`](packages/cli/skills/follow-up.md) finds leads with stale activity, reads the prior thread plus any past-call transcripts, and drafts the next message. You review and send.
 
@@ -94,7 +94,7 @@ A grab-bag of jobs Agent CRM handles today. Each is a skill or a CLI command —
 
 **Import X / LinkedIn profiles.** Come across someone you want to chat to. Paste the profile URL into Claude Code — `acrm import linkedin <url>` or `acrm import x <handle>` pulls one enriched profile and dedupes against existing people.
 
-**Plug in a new transcript provider.** Adapters are themselves skills. Drop a `transcript-provider-<vendor>` SKILL.md into `~/.claude/skills/` following the contract in [`docs/transcript-provider-protocol.md`](docs/transcript-provider-protocol.md) (Otter, Fireflies, Fathom, Zoom). [`/setup-transcripts`](packages/cli/skills/setup-transcripts.md) picks it up and walks you through connecting it before your first `/post-call`.
+**Plug in a new transcript provider.** Adapters are themselves skills. Drop a `transcript-provider-<vendor>` SKILL.md into `~/.claude/skills/` following the contract in [`docs/transcript-provider-protocol.md`](docs/transcript-provider-protocol.md) (Otter, Fireflies, Fathom, Zoom). Native providers can also add first-class CLI imports like `acrm import granola`.
 
 **Write your own skill.** Ask Claude for _"a skill that reads my call transcripts, updates deal stages, and posts a summary to Slack"_ and it writes a `.md` file into `~/.claude/skills/`. No code.
 

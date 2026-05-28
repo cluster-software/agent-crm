@@ -1,15 +1,15 @@
 # Transcript providers
 
-Provider adapters used by `/setup-transcripts` and `/post-call`. The agent-crm
-CLI (`acrm import transcript`) is provider-agnostic — it accepts canonical
-JSON. Adapters live here and translate from a vendor's native data shape into
-that canonical shape.
+Provider adapters document how vendor transcript data maps into Agent CRM's
+canonical transcript shape. The agent-crm CLI (`acrm import transcript`) is
+provider-agnostic — it accepts canonical JSON. Native integrations can also
+add first-class commands such as `acrm import granola`.
 
 ## Registry
 
 | Provider     | Adapter file       | Connection mode | Status        |
 | ------------ | ------------------ | --------------- | ------------- |
-| Granola      | `granola.md`       | MCP server (OAuth) | implemented |
+| Granola      | `granola.md`       | Hosted sync engine + REST API key | implemented |
 | Manual / file| `manual.md`        | user pastes/uploads transcript | always available |
 
 To add Otter, Fireflies, Fathom, Read.ai, Circleback, Zoom native, etc.,
@@ -17,22 +17,19 @@ follow the contract below.
 
 ## Adapter contract
 
-Every adapter document must expose the sections below so `/setup-transcripts`
-and `/post-call` can read it and behave correctly without hardcoding vendor
-names into the skills:
+Every adapter document should expose the sections below so agents and native
+imports can reason about provider setup and canonical mapping without
+hardcoding vendor names:
 
 1. **`## Detect`** — How to check this provider's state right now. Must
    return one of three states (not just connected/not-connected):
    - `connected` — usable immediately.
    - `unauthenticated` — wiring is in place but credentials are missing or
      expired. Run `Connect` to fix.
-   - `not_installed` — the wiring itself is missing (MCP server not
-     registered with the harness, required CLI not on `$PATH`, env var
-     completely absent, etc.). Run `Install` to fix.
+   - `not_installed` — the wiring itself is missing (required CLI not on
+     `$PATH`, env var completely absent, etc.). Run `Install` to fix.
 
    Probe shapes:
-   - MCP tool (e.g. `mcp__<name>__list_meetings`): tool symbol absent →
-     `not_installed`; auth error → `unauthenticated`; success → `connected`.
    - Env var (e.g. `OTTER_API_KEY`): missing → `not_installed`;
      present but rejected by the provider → `unauthenticated`;
      present and accepted → `connected`.
@@ -42,9 +39,9 @@ names into the skills:
 
 2. **`## Install`** — Step-by-step instructions to put the wiring in place
    when state is `not_installed`. Typically a user-initiated shell command
-   (e.g. `claude mcp add ...`, setting an env var) plus any required session
-   restart. Skills must **not** silently fall back to a different adapter when
-   this state is observed — they should surface the exact command and stop.
+   (e.g. setting an env var) plus any required session restart. Skills must
+   **not** silently fall back to a different adapter when this state is
+   observed — they should surface the exact command and stop.
    Omit this section only for adapters that can never be `not_installed`
    (e.g. manual / file-based).
 
@@ -96,4 +93,5 @@ which attributes were probed and a `reason` of either `person_not_found`
 (at least one identifier was probed) or `no_identifier_provided` (every
 identifier normalized to empty).
 
-This is what `/post-call` builds and pipes to `acrm import transcript`.
+This is the shape to pass to `acrm import transcript` or return from a native
+sync/export path.

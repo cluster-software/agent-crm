@@ -5,7 +5,7 @@ description: Onboard a new Agent CRM user — initialize a `.acrm` workspace (if
 
 # acrm-onboarding
 
-The first-run flow for Agent CRM. Goal: in one conversation, take a user from "nothing" to "populated `.acrm` with their real contacts" so the rest of the skills (`/prep-call`, `/follow-up`, `/post-call`) have something to chew on.
+The first-run flow for Agent CRM. Goal: in one conversation, take a user from "nothing" to "populated `.acrm` with their real contacts" so the rest of the skills (`/prep-call`, `/follow-up`) have something to chew on.
 
 ## Run
 
@@ -193,7 +193,7 @@ Both require `APIFY_API_TOKEN` in `.env` next to the workspace. If missing, the 
 
 For Gmail, do not add a separate confirmation or next-step message after
 the OAuth auth-window copy above. Do not suggest `/prep-call`,
-`/setup-transcripts`, or any other next step. The user still needs to
+Granola, transcripts, or any other next step. The user still needs to
 finish OAuth first.
 
 For local imports, after the import succeeds, show a short summary tied to
@@ -206,7 +206,7 @@ acrm execute "SELECT object_slug, COUNT(*) AS n FROM acrm_record GROUP BY object
 Then suggest the next concrete thing they can do, based on what got imported:
 
 - If `people` > 0 with at least one having a `linkedin_url`, suggest: `try /prep-call <name>` — pulls their LinkedIn and drafts discovery questions.
-- Recommend connecting a transcript provider so meetings flow in: `try /setup-transcripts` (enables `/post-call`).
+- Recommend connecting Granola so meetings flow in: `try /connect-granola-to-acrm`.
 
 Keep the close short — one or two suggestions, not a feature dump.
 

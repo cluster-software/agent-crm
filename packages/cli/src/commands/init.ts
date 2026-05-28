@@ -26,7 +26,7 @@ export function registerInit(program: Command): void {
             const bold = process.env.NO_COLOR ? "" : "\x1b[1m";
             const reset = process.env.NO_COLOR ? "" : "\x1b[0m";
             process.stdout.write(
-              `\nCreated ${workspacePath}\nNext steps:\n  ${bold}acrm import csv <path>${reset}     load your leads\n  ${bold}/setup-transcripts${reset}         connect a transcript provider to enable /post-call (optional)\n`,
+              `\nCreated ${workspacePath}\nNext steps:\n  ${bold}acrm import csv <path>${reset}          load your leads\n  ${bold}acrm connect granola${reset}            connect Granola transcripts (optional)\n`,
             );
           }
         } finally {

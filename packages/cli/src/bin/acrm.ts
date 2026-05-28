@@ -14,10 +14,9 @@ import { attachLinkedinSubcommand } from "../commands/import-linkedin.js";
 import { attachXSubcommand } from "../commands/import-x.js";
 import { attachPostSubcommand } from "../commands/import-post.js";
 import { attachGmailSubcommand } from "../commands/import-gmail.js";
+import { attachGranolaSubcommand } from "../commands/import-granola.js";
 import { attachTranscriptSubcommand } from "../commands/import-transcript.js";
 import { registerSkills } from "../commands/skills.js";
-import { registerAuth } from "../commands/auth.js";
-import { PROVIDERS } from "@agent-crm/sdk";
 import { fail } from "../output/json.js";
 import { ERR } from "@agent-crm/sdk";
 import {
@@ -66,6 +65,8 @@ Typical flow:
   acrm connect linkedin           connect LinkedIn through Agent CRM's hosted sync engine
   acrm import csv ./leads.csv     load people + companies (and deals if columns present)
   acrm import gmail               connect Gmail through Agent CRM's hosted sync engine
+  acrm connect granola            connect Granola through Agent CRM's hosted sync engine
+  acrm import granola             import synced Granola transcripts
   acrm import linkedin            import existing LinkedIn contacts from the connected account
   acrm import linkedin <url>      add one person from a LinkedIn profile (creates person + company)
   acrm import x <handle>          add one person from an X/Twitter profile
@@ -81,14 +82,6 @@ Custom schema:
   acrm attribute add candidates.stage --type status \\
       --option sourced --option screen --option onsite --option offer
   acrm attribute edit-options deals.stage add custom_value       extend a built-in enum
-
-Provider auth (one-time, for \`acrm import transcript --from <provider>\`):
-${PROVIDERS.filter((p) => p.oauth)
-  .map(
-    (p) =>
-      `  acrm auth ${p.name.padEnd(22)}cache ${p.label} OAuth token at ~/.config/acrm/${p.name}.json`,
-  )
-  .join("\n")}
 
 SQL engine: DataFusion (NOT SQLite/Postgres)
   - Use $1, $2 placeholders. The '?' placeholder is rejected.
@@ -123,13 +116,13 @@ attachLinkedinSubcommand(getOrCreateImportCommand(program));
 attachXSubcommand(getOrCreateImportCommand(program));
 attachPostSubcommand(getOrCreateImportCommand(program));
 attachGmailSubcommand(getOrCreateImportCommand(program));
+attachGranolaSubcommand(getOrCreateImportCommand(program));
 attachTranscriptSubcommand(getOrCreateImportCommand(program));
 registerExecute(program);
 registerRecords(program);
 registerSchema(program);
 registerSignals(program);
 registerSkills(program);
-registerAuth(program);
 
 return program;
 }

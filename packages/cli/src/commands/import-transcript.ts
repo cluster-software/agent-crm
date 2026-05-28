@@ -5,31 +5,30 @@ import {
   AcrmError,
   ERR,
   Workspace,
-  getProvider,
   importTranscript,
   parseTranscriptPayload,
-  providerNames,
   type TranscriptImportResult,
   type TranscriptPayload,
 } from "@agent-crm/sdk";
 import { resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, ok, setJsonMode } from "../output/json.js";
-import { acrmConfigDir } from "../lib/config-dir.js";
 
 type Opts = {
   file?: string;
   from?: string;
 };
 
+const NATIVE_TRANSCRIPT_PROVIDERS: string[] = [];
+
 export function attachTranscriptSubcommand(parent: Command): void {
   parent
     .command("transcript [meeting-id]")
     .description(
-      "Import a meeting transcript. Two forms: `--from <provider> <meeting-id>` is the fast path — the CLI fetches transcript + summary + participants directly from the provider. `--file <path>` (or stdin) is the manual path for sources without a native adapter. Either way, upserts a `transcripts` record (deduped by `source_id`), resolves each participant by email / LinkedIn URL / Twitter URL, and auto-creates `people` records for unknown participants that carry an identifier.",
+      "Import a meeting transcript from canonical JSON. Upserts a `transcripts` record (deduped by `source_id`), resolves each participant by email / LinkedIn URL / Twitter URL, and auto-creates `people` records for unknown participants that carry an identifier.",
     )
     .option(
       "--from <provider>",
-      `fetch directly from the provider — recommended fast path (supported: ${providerNames().join(", ")}). Requires a cached token; run \`acrm auth <provider>\` once first.`,
+      `fetch directly from a native provider adapter (supported: ${NATIVE_TRANSCRIPT_PROVIDERS.join(", ") || "none"}).`,
     )
     .option(
       "--file <path>",
@@ -40,16 +39,12 @@ export function attachTranscriptSubcommand(parent: Command): void {
       `
 Two forms:
 
-  acrm import transcript --from <provider> <meeting-id>     (recommended)
-      Fast path. The CLI fetches the transcript, summary, and participants
-      from the provider in one call. Sub-5s end-to-end.
-      Supported providers: ${providerNames().join(", ")}.
-
-      One-time setup:
-          acrm auth ${providerNames()[0] ?? "<provider>"}                    # cache OAuth token at ~/.config/acrm/
-
-      Then:
-          acrm import transcript --from ${providerNames()[0] ?? "<provider>"} <meeting-id>
+  acrm import transcript --from <provider> <meeting-id>
+      Native transcript adapters are not currently bundled here.
+      Supported providers: ${NATIVE_TRANSCRIPT_PROVIDERS.join(", ") || "none"}.
+      For Granola, use:
+          acrm connect granola
+          acrm import granola
 
   acrm import transcript --file <path>     (or pipe JSON to stdin)
       Manual path. Use for sources without a native CLI adapter (Otter,
@@ -117,7 +112,6 @@ async function runImportTranscript(opts: {
   meetingId?: string;
 }): Promise<TranscriptImportResult> {
   const payload = await loadPayload(opts);
-  maybeNudgeFastPath(payload, opts);
 
   const ws = await Workspace.open(resolveWorkspacePath(opts.workspace));
   try {
@@ -127,29 +121,9 @@ async function runImportTranscript(opts: {
   }
 }
 
-// If the user fell through to --file/stdin for a source that actually has a
-// native CLI adapter, nudge them toward the fast path. This is the entire
-// fix for the ax-eval finding that agents converge on --file because the
-// JSON shape is the most-documented part of the help text. Writes to stderr
-// so JSON consumers on stdout aren't affected.
-function maybeNudgeFastPath(
-  payload: TranscriptPayload,
-  opts: { from?: string },
-): void {
-  if (opts.from) return;
-  const provider = getProvider(payload.source);
-  if (!provider) return;
-  process.stderr.write(
-    `hint: source="${payload.source}" has a native adapter — ` +
-      `\`acrm import transcript --from ${provider.name} ${payload.source_id}\` ` +
-      `skips the JSON roundtrip (run \`acrm auth ${provider.name}\` once first to cache the token)\n`,
-  );
-}
-
 // Resolves the canonical payload from whichever source the user asked for.
-// `--from <provider> <meeting-id>` dispatches to a provider adapter and
-// bypasses the stdin / file path entirely — that's the fast-path that keeps
-// transcript bytes off the LLM. `--file` and stdin remain the manual path.
+// `--file` and stdin are the manual path. Provider-specific fast paths such as
+// Granola have their own import commands.
 async function loadPayload(opts: {
   file?: string;
   from?: string;
@@ -162,23 +136,11 @@ async function loadPayload(opts: {
         ERR.INVALID_INPUT,
       );
     }
-    const meetingId = opts.meetingId?.trim();
-    if (!meetingId) {
-      throw new AcrmError(
-        "--from <provider> requires a meeting id positional argument",
-        ERR.INVALID_INPUT,
-      );
-    }
-    const adapter = getProvider(opts.from);
-    if (!adapter) {
-      throw new AcrmError(
-        `unknown --from provider: ${opts.from}. Supported: ${providerNames().join(", ")}`,
-        ERR.INVALID_INPUT,
-      );
-    }
-    return await adapter.fetchTranscript(meetingId, {
-      configDir: acrmConfigDir(),
-    });
+    throw new AcrmError(
+      `unknown --from provider: ${opts.from}. Supported: ${NATIVE_TRANSCRIPT_PROVIDERS.join(", ") || "none"}`,
+      ERR.INVALID_INPUT,
+      opts.from.toLowerCase() === "granola" ? "use: acrm import granola" : undefined,
+    );
   }
 
   if (opts.meetingId) {
@@ -193,7 +155,7 @@ async function loadPayload(opts: {
     : await readStdin();
   if (!raw.trim()) {
     throw new AcrmError(
-      "no input received (pipe JSON to stdin, pass --file, or use --from <provider> <meeting-id>)",
+      "no input received (pipe JSON to stdin, pass --file, or use a provider-specific import command)",
       ERR.INVALID_INPUT,
     );
   }
