@@ -126,14 +126,13 @@ acrm --json import gmail --backfill-since <YYYY-MM-DD> --exclude-newsletters
 Use `--include-newsletters` instead of `--exclude-newsletters` when the user
 chooses to include newsletters and marketing emails.
 
-When running inside the Agent CRM Electron app, this opens the hosted auth
-flow in the app. Outside the app, it falls back to the system browser. Do
-not print `data.auth_url` unless the command fails to open the auth window
-and the user needs the fallback URL. If you do need to show the fallback URL,
-print it as a bare URL on its own line, not as a Markdown link.
+This opens the hosted auth flow in the user's default browser. Do not print
+`data.auth_url` unless the command fails to open the browser and the user
+needs the fallback URL. If you do need to show the fallback URL, print it as a
+bare URL on its own line, not as a Markdown link.
 
 ```md
-The Agent CRM auth window should now be open to connect Gmail.
+Your browser should now be open to connect Gmail.
 
 Pick your Google account and click Allow.
 
@@ -146,9 +145,9 @@ What `acrm import gmail` does now:
 
 1. Reads or creates `.agent-crm-cloud.json` next to the local workspace.
 2. Registers the cloud workspace with the hosted sync engine.
-3. Opens the hosted Gmail connect page in Agent CRM when available, falling
-   back to the system browser. That page checks Cluster auth, resolves the
-   org from the signed-in email domain, then starts Google OAuth.
+3. Opens the hosted Gmail connect page in the user's default browser. That
+   page checks Cluster auth, resolves the org from the signed-in email domain,
+   then starts Google OAuth.
 4. Passes the selected Gmail backfill and newsletter filtering preferences
    to the hosted sync engine.
 5. Returns the hosted connect URL as `data.auth_url` for fallback/debugging.

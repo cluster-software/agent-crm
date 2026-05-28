@@ -121,12 +121,6 @@ describe("importGoogleContacts", () => {
       command: "xdg-open",
       args: ["https://example.com"],
     });
-    expect(gmailCommandTest.browserOpenCommand("darwin", "https://example.com", {
-      ACRM_OPEN_URL_COMMAND: "/tmp/agent-crm-open-url",
-    })).toEqual({
-      command: "/tmp/agent-crm-open-url",
-      args: ["https://example.com"],
-    });
   });
 
   it("registers the cloud workspace and returns a hosted Gmail browser URL", async () => {
