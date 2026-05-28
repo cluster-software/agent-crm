@@ -1,5 +1,13 @@
 # @agent-crm/cli
 
+## 0.20.1
+
+### Patch Changes
+
+- de23f2c: Open hosted Gmail and LinkedIn auth flows in the system browser instead of the Electron app.
+- Updated dependencies [f5da9cc]
+  - @agent-crm/sdk@0.7.10
+
 ## 0.20.0
 
 ### Minor Changes
