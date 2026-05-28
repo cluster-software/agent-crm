@@ -32,7 +32,7 @@ export function attachGmailSubcommand(parent: Command): void {
     .description(
       "Connect Gmail through Agent CRM's hosted sync engine. Opens hosted Google OAuth and syncs people, email threads, and email messages into the cloud workspace.",
     )
-    .option("--no-open", "print the OAuth URL without opening the auth window")
+    .option("--no-open", "print the OAuth URL without opening the browser")
     .option("--org-id <org-id>", "Cluster organization id for hosted Gmail sync")
     .option("--backfill-days <days>", "Gmail backfill window in days. Supported values: 30, 90")
     .option("--backfill-since <YYYY-MM-DD>", "Gmail backfill start date")
@@ -59,9 +59,7 @@ export function attachGmailSubcommand(parent: Command): void {
             [
               opts.open === false
                 ? "Open this URL to connect Gmail:"
-                : process.env.ACRM_OPEN_URL_COMMAND
-                  ? "Opening Agent CRM to connect Gmail. If it doesn't open, paste this URL:"
-                  : "Opening browser to connect Gmail. If it doesn't open, paste this URL:",
+                : "Opening browser to connect Gmail. If it doesn't open, paste this URL:",
               result.auth_url,
               "",
               "After OAuth, Gmail sync runs in the background through Agent CRM's hosted sync engine.",
@@ -218,11 +216,8 @@ function hasGmailSyncPreferences(opts: GmailSyncPreferences): boolean {
 
 function browserOpenCommand(
   platform: NodeJS.Platform,
-  url: string,
-  env: NodeJS.ProcessEnv = process.env,
+  url: string
 ): { command: string; args: string[] } {
-  const appUrlOpener = env.ACRM_OPEN_URL_COMMAND?.trim();
-  if (appUrlOpener) return { command: appUrlOpener, args: [url] };
   if (platform === "darwin") return { command: "open", args: [url] };
   if (platform === "win32") {
     return { command: "cmd", args: ["/c", "start", "", url] };
