@@ -7,9 +7,11 @@ import {
   importCommunicationBatch,
   importLinkedinRelations,
   importLinkedinProfile,
+  normalizeLinkedinUrl,
   type CommunicationImportResult,
   type ImportLinkedinRelationsResult,
   type LinkedinImportResult,
+  type LinkedinRelation,
 } from "@agent-crm/sdk";
 import { resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, ok, setJsonMode } from "../output/json.js";
@@ -105,6 +107,7 @@ async function runImportLinkedinNetwork(opts: { workspace?: string; cutoffDate?:
   message_backfill?: {
     started: number;
     integration_account_ids: string[];
+    scoped?: boolean;
   };
   message_backfill_warning?: string;
 }> {
@@ -131,7 +134,7 @@ async function runImportLinkedinNetwork(opts: { workspace?: string; cutoffDate?:
     let stats = result.stats;
     let companyEnrichment: unknown;
     let companyEnrichmentWarning: string | undefined;
-    let messageBackfill: { started: number; integration_account_ids: string[] } | undefined;
+    let messageBackfill: { started: number; integration_account_ids: string[]; scoped?: boolean } | undefined;
     let messageBackfillWarning: string | undefined;
     if (relations.length > 0) {
       try {
@@ -139,6 +142,7 @@ async function runImportLinkedinNetwork(opts: { workspace?: string; cutoffDate?:
           syncEngineUrl,
           workspaceId: metadata.workspaceId,
           clientToken: metadata.clientToken,
+          scope: linkedinMessageBackfillScope(relations),
         });
       } catch (error) {
         messageBackfillWarning = error instanceof Error ? error.message : String(error);
@@ -184,6 +188,37 @@ function mergeLinkedinRelationStats(
     companies_updated: left.companies_updated + right.companies_updated,
     relations_skipped_no_key: left.relations_skipped_no_key,
   };
+}
+
+function linkedinMessageBackfillScope(relations: LinkedinRelation[]): {
+  providerPersonIds?: string[];
+  linkedinUrls?: string[];
+  publicIdentifiers?: string[];
+} | undefined {
+  const providerPersonIds = uniqueStrings(relations.map((relation) => cleanString(relation.member_id)));
+  const linkedinUrls = uniqueStrings(relations.map((relation) => {
+    const explicit = cleanString(relation.public_profile_url);
+    if (explicit) return normalizeLinkedinUrl(explicit) ?? explicit;
+    const publicIdentifier = cleanString(relation.public_identifier);
+    return publicIdentifier ? `linkedin.com/in/${publicIdentifier}` : null;
+  }));
+  const publicIdentifiers = uniqueStrings(relations.map((relation) => cleanString(relation.public_identifier)));
+  if (!providerPersonIds.length && !linkedinUrls.length && !publicIdentifiers.length) return undefined;
+  return {
+    ...(providerPersonIds.length ? { providerPersonIds } : {}),
+    ...(linkedinUrls.length ? { linkedinUrls } : {}),
+    ...(publicIdentifiers.length ? { publicIdentifiers } : {}),
+  };
+}
+
+function cleanString(value: unknown): string | null {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const text = String(value).trim();
+  return text ? text : null;
+}
+
+function uniqueStrings(values: Array<string | null>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))];
 }
 
 async function runSyncLinkedin(opts: { workspace?: string }): Promise<{

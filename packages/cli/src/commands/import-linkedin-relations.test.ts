@@ -53,6 +53,7 @@ describe("importLinkedinRelations", () => {
         last_name: "Lovelace",
         company_name: "Analytical Engines",
         company_linkedin_url: "https://www.linkedin.com/company/analytical-engines/",
+        company_website: "https://www.analytical-engines.example/about",
         public_profile_url: "https://www.linkedin.com/in/ada-lovelace/",
       }),
     ];
@@ -67,6 +68,7 @@ describe("importLinkedinRelations", () => {
     expect(second.stats.people_updated).toBe(0);
     expect(second.stats.companies_updated).toBe(0);
     await expect(valueFor(ws, "companies", "name")).resolves.toBe("Analytical Engines");
+    await expect(valueFor(ws, "companies", "domains")).resolves.toBe("analytical-engines.example");
     await expect(valueFor(ws, "companies", "linkedin_url")).resolves.toBe("linkedin.com/company/analytical-engines");
     await expect(referenceCount(ws, "people", "company", "companies")).resolves.toBe(1);
     await expect(referenceCount(ws, "companies", "team", "people")).resolves.toBe(1);
@@ -209,9 +211,9 @@ async function valueFor(ws: Workspace, objectSlug: string, attributeSlug: string
   );
   const raw = result.rows[0]?.value_json;
   const parsed = typeof raw === "string"
-    ? JSON.parse(raw) as { value?: string; full_name?: string; timestamp?: string }
-    : raw as { value?: string; full_name?: string; timestamp?: string } | undefined;
-  return parsed?.value ?? parsed?.full_name ?? parsed?.timestamp ?? null;
+    ? JSON.parse(raw) as { value?: string; full_name?: string; timestamp?: string; domain?: string }
+    : raw as { value?: string; full_name?: string; timestamp?: string; domain?: string } | undefined;
+  return parsed?.value ?? parsed?.full_name ?? parsed?.timestamp ?? parsed?.domain ?? null;
 }
 
 async function referenceCount(
