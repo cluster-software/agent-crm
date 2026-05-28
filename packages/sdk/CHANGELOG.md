@@ -1,5 +1,11 @@
 # @agent-crm/sdk
 
+## 0.7.10
+
+### Patch Changes
+
+- f5da9cc: Stop asking agents to preflight CLI updates before every Agent CRM workspace task.
+
 ## 0.7.9
 
 ### Patch Changes
