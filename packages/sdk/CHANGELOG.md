@@ -1,5 +1,11 @@
 # @agent-crm/sdk
 
+## 0.9.0
+
+### Minor Changes
+
+- 7d5e3b6: Add first-class JSON attributes and structured email render fields for communication message imports.
+
 ## 0.8.2
 
 ### Patch Changes
