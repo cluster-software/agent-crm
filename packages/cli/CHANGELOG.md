@@ -1,5 +1,11 @@
 # @agent-crm/cli
 
+## 0.22.1
+
+### Patch Changes
+
+- 26dfdcb: Remove the `acrm-onboarding` workspace preflight so onboarding assumes it is run inside an existing workspace.
+
 ## 0.22.0
 
 ### Minor Changes
