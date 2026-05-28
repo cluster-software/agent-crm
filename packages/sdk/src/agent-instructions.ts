@@ -93,7 +93,7 @@ export const AGENT_INSTRUCTIONS_BLOCK = [
   "Signals and skills:",
   "- Local signals live in `<workspace>/signals/*.md`. Use `acrm signals list`, `acrm signals sync`, and `acrm signals run` to inspect, create output attributes, and fill missing people/company fields.",
   "- `acrm skills install` installs bundled Agent CRM skills into supported AI agents; `acrm skills list` shows what is installed; `acrm skills remove` removes installed Agent CRM skills.",
-  "- Useful bundled skills include `acrm-query`, `acrm-onboarding`, `connect-granola-to-acrm`, `create-signals`, `follow-up`, `prep-call`, and `import-post`.",
+  "- Useful bundled skills include `acrm-query`, `acrm-onboarding`, `connect-granola-to-acrm`, `create-signals`, `follow-up`, and `import-post`.",
   AGENT_INSTRUCTIONS_END,
   "",
 ].join("\n");
