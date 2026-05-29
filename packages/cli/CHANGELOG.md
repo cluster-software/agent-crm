@@ -1,5 +1,11 @@
 # @agent-crm/cli
 
+## 0.22.3
+
+### Patch Changes
+
+- 4a92b59: Remove the stale `acrm --version` preflight from the Granola connection skill.
+
 ## 0.22.2
 
 ### Patch Changes
