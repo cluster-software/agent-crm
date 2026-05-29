@@ -13,7 +13,6 @@ troubleshoot Granola with Agent CRM.
 1. Confirm the workspace is ready:
 
    ```sh
-   acrm --version
    acrm connect granola --status --json
    ```
 

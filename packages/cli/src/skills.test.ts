@@ -1,7 +1,16 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("bundled skills", () => {
+  it("does not ask bundled skills to run version preflight checks", () => {
+    const skillsDir = new URL("../skills/", import.meta.url);
+    for (const filename of readdirSync(skillsDir)) {
+      if (!filename.endsWith(".md")) continue;
+      const skill = readFileSync(new URL(filename, skillsDir), "utf8");
+      expect(skill, filename).not.toContain("acrm --version");
+    }
+  });
+
   it("does not ask acrm-onboarding to run preflight checks", () => {
     const skill = readFileSync(
       new URL("../skills/acrm-onboarding.md", import.meta.url),
