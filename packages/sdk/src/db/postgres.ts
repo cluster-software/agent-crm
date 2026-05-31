@@ -37,7 +37,9 @@ export class PostgresDatabase implements AcrmDatabase {
 
   static connect(options: string | PostgresConnectionOptions): PostgresDatabase {
     const pool = new Pool(
-      typeof options === "string" ? connectionOptionsFromString(options) : options,
+      typeof options === "string"
+        ? connectionOptionsFromString(options)
+        : normalizeConnectionOptions(options),
     );
     return new PostgresDatabase(pool, () => pool.end());
   }
@@ -125,10 +127,16 @@ export class PostgresDatabase implements AcrmDatabase {
 function connectionOptionsFromString(
   connectionString: string,
 ): PostgresConnectionOptions {
-  const options: PostgresConnectionOptions = { connectionString };
-  const channelBinding = channelBindingMode(connectionString);
+  return normalizeConnectionOptions({ connectionString });
+}
+
+function normalizeConnectionOptions(
+  options: PostgresConnectionOptions,
+): PostgresConnectionOptions {
+  if (options.enableChannelBinding !== undefined) return options;
+  const channelBinding = channelBindingMode(options.connectionString);
   if (channelBinding === "require" || channelBinding === "prefer") {
-    options.enableChannelBinding = true;
+    return { ...options, enableChannelBinding: true };
   }
   return options;
 }

@@ -6,6 +6,7 @@ import {
 } from "../db/value-row.js";
 import {
   encode,
+  normalizeLookupKey,
   normalizeLinkedinUrl,
   normalizeDomain as normalizeDomainValue,
   type AttributeConfig,
@@ -190,11 +191,11 @@ async function importNormalizedCommunicationBatch(
     const linkedinUrl = normalizeLinkedinUrlValue(person.linkedinUrl);
     const existingRecordId = plannedSourceIndex.get(sourceIndexKey("people", person.sourceKey)) ??
       (email ? plannedEmailIndex.get(email) : undefined) ??
-      (linkedinUrl ? plannedLinkedinIndex.get(linkedinUrl) : undefined);
+      (linkedinUrl ? plannedLinkedinIndex.get(lookupIndexKey(linkedinUrl)) : undefined);
     const plan = planRecord("people", person.sourceKey, existingRecordId, recordsToCreate, plannedSourceIndex);
     personPlans.set(person.sourceKey, plan);
     if (email) plannedEmailIndex.set(email, plan.recordId);
-    if (linkedinUrl) plannedLinkedinIndex.set(linkedinUrl, plan.recordId);
+    if (linkedinUrl) plannedLinkedinIndex.set(lookupIndexKey(linkedinUrl), plan.recordId);
     if (plan.created) stats.people_created++;
   }
 
@@ -443,7 +444,7 @@ async function loadSourceKeyIndex(
   sourceKeys: string[],
 ): Promise<Map<string, string>> {
   const index = new Map<string, string>();
-  for (const chunk of chunks(unique(sourceKeys), SELECT_CHUNK_SIZE)) {
+  for (const chunk of chunks(unique(sourceKeys.map(lookupIndexKey)), SELECT_CHUNK_SIZE)) {
     const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
     const result = await exec(
       db,
@@ -495,7 +496,12 @@ async function loadPeopleByLinkedinUrl(
   db: Workspace["db"],
   people: CommunicationImportPerson[],
 ): Promise<Map<string, string>> {
-  const urls = unique(people.map((person) => normalizeLinkedinUrlValue(person.linkedinUrl)).filter((url): url is string => Boolean(url)));
+  const urls = unique(
+    people
+      .map((person) => normalizeLinkedinUrlValue(person.linkedinUrl))
+      .filter((url): url is string => Boolean(url))
+      .map(lookupIndexKey),
+  );
   const index = new Map<string, string>();
   for (const chunk of chunks(urls, SELECT_CHUNK_SIZE)) {
     const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
@@ -928,7 +934,11 @@ function preparedValueKey(value: PreparedValueInsert): string | null {
 }
 
 function sourceIndexKey(objectSlug: string, sourceKey: string): string {
-  return `${objectSlug}\0${sourceKey}`;
+  return `${objectSlug}\0${lookupIndexKey(sourceKey)}`;
+}
+
+function lookupIndexKey(value: string): string {
+  return normalizeLookupKey(value) ?? value;
 }
 
 function singleValueKey(objectSlug: string, recordId: string, attributeSlug: string): string {

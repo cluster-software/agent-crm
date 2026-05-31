@@ -78,7 +78,7 @@ describe("importCommunicationBatch", () => {
     });
   });
 
-  it("does not index long text values as normalized keys", async () => {
+  it("hashes long text values into bounded normalized keys", async () => {
     await withWorkspace(async (workspace) => {
       const batch = duplicateCommunicationBatch();
       batch.communicationMessages = [{
@@ -93,7 +93,7 @@ describe("importCommunicationBatch", () => {
       ).resolves.toBe(1);
       await expect(
         normalizedKeyFor(workspace, "communication_messages", "body_text"),
-      ).resolves.toBeNull();
+      ).resolves.toMatch(/^sha256:[0-9a-f]{64}$/);
     });
   });
 

@@ -5,6 +5,7 @@ import { generateUuid } from "../lib/ids.js";
 import { nowIso } from "../lib/time.js";
 import {
   encode,
+  normalizeLookupKey,
   normalizeUniqueKey,
   type AttributeType,
   type ValueJson,
@@ -21,13 +22,15 @@ export async function findRecordByUnique(
   attribute_slug: string,
   normalized_key: string,
 ): Promise<string | null> {
+  const lookupKey = normalizeLookupKey(normalized_key);
+  if (!lookupKey) return null;
   const r = await exec(
     db,
     `SELECT record_id FROM acrm_value
      WHERE object_slug = $1 AND attribute_slug = $2
        AND normalized_key = $3 AND active_until IS NULL
      LIMIT 1`,
-    [object_slug, attribute_slug, normalized_key],
+    [object_slug, attribute_slug, lookupKey],
   );
   return (r.rows[0]?.record_id as string | undefined) ?? null;
 }

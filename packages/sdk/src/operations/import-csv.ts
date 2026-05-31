@@ -6,6 +6,7 @@ import {
 } from "../db/value-row.js";
 import {
   encode,
+  normalizeLookupKey,
   normalizeUniqueKey,
   normalizeDomain,
   normalizePhoneNumber,
@@ -21,6 +22,7 @@ import { generateUuid } from "../lib/ids.js";
 import { nowIso } from "../lib/time.js";
 import { loadAttribute } from "../workspace/catalog.js";
 import type { Workspace } from "../workspace.js";
+import { runWithConcurrency } from "./run-with-concurrency.js";
 
 type CsvRow = Record<string, string>;
 type LookupCache = Map<string, string | null>;
@@ -112,6 +114,26 @@ function cacheKey(object_slug: string, attribute_slug: string, normalized_key: s
   return `${object_slug}\x00${attribute_slug}\x00${normalized_key}`;
 }
 
+function lookupCacheKey(
+  object_slug: string,
+  attribute_slug: string,
+  normalized_key: string,
+): string | null {
+  const lookupKey = normalizeLookupKey(normalized_key);
+  return lookupKey ? cacheKey(object_slug, attribute_slug, lookupKey) : null;
+}
+
+function rememberLookup(
+  cache: LookupCache,
+  object_slug: string,
+  attribute_slug: string,
+  normalized_key: string,
+  record_id: string | null,
+): void {
+  const ck = lookupCacheKey(object_slug, attribute_slug, normalized_key);
+  if (ck) cache.set(ck, record_id);
+}
+
 type LookupKey = {
   object_slug: string;
   attribute_slug: string;
@@ -125,7 +147,9 @@ async function findRecordByUnique(
   attribute_slug: string,
   normalized_key: string,
 ): Promise<string | null> {
-  const ck = cacheKey(object_slug, attribute_slug, normalized_key);
+  const lookupKey = normalizeLookupKey(normalized_key);
+  if (!lookupKey) return null;
+  const ck = cacheKey(object_slug, attribute_slug, lookupKey);
   if (cache.has(ck)) return cache.get(ck) ?? null;
   const r = await exec(
     db,
@@ -133,7 +157,7 @@ async function findRecordByUnique(
      WHERE object_slug = $1 AND attribute_slug = $2
        AND normalized_key = $3 AND active_until IS NULL
      LIMIT 1`,
-    [object_slug, attribute_slug, normalized_key],
+    [object_slug, attribute_slug, lookupKey],
   );
   const id = (r.rows[0]?.record_id as string | undefined) ?? null;
   cache.set(ck, id);
@@ -146,8 +170,8 @@ async function findCompanyByName(
   name: string,
 ): Promise<string | null> {
   const key = name.trim().toLowerCase();
-  const ck = cacheKey("companies", "name__ci", key);
-  if (cache.has(ck)) return cache.get(ck) ?? null;
+  const ck = lookupCacheKey("companies", "name__ci", key);
+  if (ck && cache.has(ck)) return cache.get(ck) ?? null;
   const r = await exec(
     db,
     `SELECT record_id FROM acrm_value
@@ -158,7 +182,7 @@ async function findCompanyByName(
     [key],
   );
   const id = (r.rows[0]?.record_id as string | undefined) ?? null;
-  cache.set(ck, id);
+  if (ck) cache.set(ck, id);
   return id;
 }
 
@@ -471,8 +495,9 @@ function collectLookupKeysForRow(
     attribute_slug: string,
     normalized_key: string | null | undefined,
   ) => {
-    if (!normalized_key) return;
-    keys.push({ object_slug, attribute_slug, normalized_key });
+    const lookupKey = normalizeLookupKey(normalized_key);
+    if (!lookupKey) return;
+    keys.push({ object_slug, attribute_slug, normalized_key: lookupKey });
   };
 
   const emails = collectEmails(row);
@@ -713,7 +738,7 @@ async function importRow(
         provenance,
         isFresh: true,
       });
-      cache.set(cacheKey("companies", "domains", companyDomain), companyId);
+      rememberLookup(cache, "companies", "domains", companyDomain, companyId);
       if (companyName) {
         await setSingleValue(db, batcher, {
           object_slug: "companies",
@@ -745,7 +770,7 @@ async function importRow(
         provenance,
         isFresh: true,
       });
-      cache.set(cacheKey("companies", "name__ci", companyName.trim().toLowerCase()), companyId);
+      rememberLookup(cache, "companies", "name__ci", companyName.trim().toLowerCase(), companyId);
       stats.companies_created++;
     }
   }
@@ -786,7 +811,7 @@ async function importRow(
           provenance,
           isFresh: true,
         });
-        cache.set(cacheKey("people", "email_addresses", e.trim().toLowerCase()), personId);
+        rememberLookup(cache, "people", "email_addresses", e.trim().toLowerCase(), personId);
       }
       for (const p of phones) {
         const normalized = normalizePhoneNumber(p, defaultCountry);
@@ -802,7 +827,7 @@ async function importRow(
           provenance,
           isFresh: true,
         });
-        cache.set(cacheKey("people", "phone_numbers", normalized), personId);
+        rememberLookup(cache, "people", "phone_numbers", normalized, personId);
       }
       if (linkedinKey) {
         await setSingleValue(db, batcher, {
@@ -815,7 +840,7 @@ async function importRow(
           provenance,
           isFresh: true,
         });
-        cache.set(cacheKey("people", "linkedin_url", linkedinKey), personId);
+        rememberLookup(cache, "people", "linkedin_url", linkedinKey, personId);
       }
       if (twitterKey) {
         await setSingleValue(db, batcher, {
@@ -828,7 +853,7 @@ async function importRow(
           provenance,
           isFresh: true,
         });
-        cache.set(cacheKey("people", "twitter_url", twitterKey), personId);
+        rememberLookup(cache, "people", "twitter_url", twitterKey, personId);
       }
       if (fullName) {
         await setSingleValue(db, batcher, {
@@ -1032,24 +1057,6 @@ function normalizePositiveInt(value: unknown, fallback: number): number {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 1) return fallback;
   return Math.floor(n);
-}
-
-async function runWithConcurrency(
-  total: number,
-  concurrency: number,
-  worker: (index: number) => Promise<void>,
-): Promise<void> {
-  let next = 0;
-  const workers = Array.from(
-    { length: Math.min(Math.max(1, concurrency), Math.max(1, total)) },
-    async () => {
-      while (next < total) {
-        const index = next++;
-        await worker(index);
-      }
-    },
-  );
-  await Promise.all(workers);
 }
 
 export type ImportCsvArgs = {

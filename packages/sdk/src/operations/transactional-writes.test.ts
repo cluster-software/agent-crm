@@ -92,6 +92,29 @@ describe("transactional SDK writes", () => {
     );
   });
 
+  it("dedupes transcript imports with oversized unique source IDs", async () => {
+    await withWorkspace(async (workspace) => {
+      const sourceId = `manual:${"source-id-".repeat(700)}`;
+      await importTranscript(workspace, {
+        source: "manual",
+        source_id: sourceId,
+        title: "Intro",
+        participants: [{ email: "alice@example.com" }],
+      });
+      await importTranscript(workspace, {
+        source: "manual",
+        source_id: sourceId,
+        title: "Intro again",
+        participants: [{ email: "alice@example.com" }],
+      });
+
+      await expect(recordCount(workspace, "transcripts")).resolves.toBe(1);
+      await expect(
+        normalizedKeyFor(workspace, "transcripts", "source_id"),
+      ).resolves.toMatch(/^sha256:[0-9a-f]{64}$/);
+    });
+  });
+
   it("rolls back X profile record shells if value insertion fails", async () => {
     const cacheDir = await mkdtemp(path.join(os.tmpdir(), "acrm-x-profile-"));
     try {
@@ -578,6 +601,24 @@ async function activeValueRecordId(
     [objectSlug, attributeSlug, normalizedKey],
   );
   return (result.rows[0]?.record_id as string | undefined) ?? null;
+}
+
+async function normalizedKeyFor(
+  workspace: Workspace,
+  objectSlug: string,
+  attributeSlug: string,
+): Promise<string | null> {
+  const result = await exec(
+    workspace.db,
+    `SELECT normalized_key
+       FROM acrm_value
+      WHERE object_slug = $1
+        AND attribute_slug = $2
+        AND active_until IS NULL
+      LIMIT 1`,
+    [objectSlug, attributeSlug],
+  );
+  return (result.rows[0]?.normalized_key as string | null | undefined) ?? null;
 }
 
 async function activeAttributeCount(

@@ -3,6 +3,7 @@ import {
   type CountryCode,
 } from "libphonenumber-js/min";
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import { AcrmError, ERR } from "../lib/errors.js";
 
 export type AttributeType =
@@ -39,6 +40,7 @@ export type AttributeConfig = {
 };
 
 const MAX_NORMALIZED_KEY_BYTES = 1024;
+const NORMALIZED_KEY_HASH_PREFIX = "sha256:";
 
 export function resolveStatusOption(
   raw: string,
@@ -165,9 +167,14 @@ export function normalizeUniqueKey(
   }
 }
 
+export function normalizeLookupKey(value: string | null | undefined): string | null {
+  return boundedNormalizedKey(value ?? undefined);
+}
+
 function boundedNormalizedKey(value: string | undefined): string | null {
   if (!value) return null;
-  return Buffer.byteLength(value, "utf8") <= MAX_NORMALIZED_KEY_BYTES ? value : null;
+  if (Buffer.byteLength(value, "utf8") <= MAX_NORMALIZED_KEY_BYTES) return value;
+  return `${NORMALIZED_KEY_HASH_PREFIX}${createHash("sha256").update(value).digest("hex")}`;
 }
 
 export function recordReferenceTarget(

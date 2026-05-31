@@ -26,6 +26,22 @@ describe("PostgresDatabase", () => {
     }
   });
 
+  it("maps object-form connection string channel binding params without overriding explicit options", async () => {
+    const required = PostgresDatabase.connect({
+      connectionString: "postgresql://user:pass@example.com/db?channel_binding=require",
+    });
+    const explicit = PostgresDatabase.connect({
+      connectionString: "postgresql://user:pass@example.com/db?channel_binding=require",
+      enableChannelBinding: false,
+    });
+    try {
+      expect(poolOptions(required).enableChannelBinding).toBe(true);
+      expect(poolOptions(explicit).enableChannelBinding).toBe(false);
+    } finally {
+      await Promise.all([required.close(), explicit.close()]);
+    }
+  });
+
   it("rolls back failed pool-backed transactions", async () => {
     const pool = new TransactionalPool();
     const db = PostgresDatabase.fromQueryable(pool);
