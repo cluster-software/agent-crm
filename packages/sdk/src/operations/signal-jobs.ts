@@ -22,7 +22,7 @@ export type SignalRunJobState = {
 };
 
 export function signalJobsDirForWorkspace(workspaceFile: string): string {
-  return path.join(path.dirname(workspaceFile), ".cache", "signals", "jobs");
+  return path.join(localWorkspaceDir(workspaceFile), ".cache", "signals", "jobs");
 }
 
 export async function writeSignalJobState(
@@ -130,6 +130,10 @@ function signalJobPath(workspaceFile: string, id: string): string {
 
 function safeJobId(id: string): string {
   return id.replace(/[^a-zA-Z0-9_.-]/g, "_");
+}
+
+function localWorkspaceDir(workspaceFile: string): string {
+  return /^postgres(?:ql)?:\/\//i.test(workspaceFile) ? process.cwd() : path.dirname(workspaceFile);
 }
 
 function isProcessAlive(pid: number | undefined): boolean {

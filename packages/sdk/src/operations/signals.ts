@@ -227,7 +227,7 @@ export async function ensureSignalAttributes(
     for (const output of definition.outputs) {
       assertOutputDoesNotTargetCoreField(definition, output);
       const existing = await loadAttribute(
-        workspace.lix,
+        workspace.db,
         definition.object_slug,
         output.attribute,
       );
@@ -654,7 +654,7 @@ async function ensureOptions(
     options: [...current, ...missing],
   };
   await exec(
-    workspace.lix,
+    workspace.db,
     "UPDATE acrm_attribute SET config_json = $1 WHERE object_slug = $2 AND attribute_slug = $3",
     [JSON.stringify(nextConfig), object_slug, output.attribute],
   );
@@ -669,7 +669,7 @@ async function changeSignalAttributeType(
 ): Promise<void> {
   const signalSource = `signal:${definition.slug}`;
   const active = await exec(
-    workspace.lix,
+    workspace.db,
     `SELECT source
        FROM acrm_value
       WHERE object_slug = $1
@@ -687,7 +687,7 @@ async function changeSignalAttributeType(
 
   const now = nowIso();
   await exec(
-    workspace.lix,
+    workspace.db,
     `UPDATE acrm_value
         SET active_until = $1
       WHERE object_slug = $2
@@ -697,7 +697,7 @@ async function changeSignalAttributeType(
     [now, definition.object_slug, output.attribute, signalSource],
   );
   await exec(
-    workspace.lix,
+    workspace.db,
     `UPDATE acrm_attribute
         SET title = $1,
             attribute_type = $2,
@@ -721,7 +721,7 @@ async function retireRemovedSignalValues(
   const desired = new Set(definition.outputs.map((output) => output.attribute));
   const signalSource = `signal:${definition.slug}`;
   const active = await exec(
-    workspace.lix,
+    workspace.db,
     `SELECT DISTINCT attribute_slug
        FROM acrm_value
       WHERE object_slug = $1
@@ -736,7 +736,7 @@ async function retireRemovedSignalValues(
 
   const placeholders = removed.map((_, index) => `$${index + 4}`).join(", ");
   await exec(
-    workspace.lix,
+    workspace.db,
     `UPDATE acrm_value
         SET active_until = $1
       WHERE object_slug = $2
@@ -792,7 +792,7 @@ async function selectRecords(
   const records: SignalRecordRef[] = [];
   for (const object_slug of objects) {
     const r = await exec(
-      workspace.lix,
+      workspace.db,
       "SELECT record_id FROM acrm_record WHERE object_slug = $1 ORDER BY record_id DESC",
       [object_slug],
     );
@@ -826,7 +826,7 @@ async function activeAttributesForOutputs(
   if (outputs.length === 0) return new Set();
   const placeholders = outputs.map((_, index) => `$${index + 3}`).join(", ");
   const r = await exec(
-    workspace.lix,
+    workspace.db,
     `SELECT attribute_slug
        FROM acrm_value
       WHERE object_slug = $1
@@ -883,7 +883,7 @@ async function runOneSignal(
   for (const output of outputs) {
     if (!requestedKeys.has(output.key)) continue;
     const definitionOutput = outputByKey.get(output.key)!;
-    await setSingleValue(workspace.lix, {
+    await setSingleValue(workspace.db, {
       object_slug: definition.object_slug,
       record_id: record.record_id,
       attribute_slug: definitionOutput.attribute,
@@ -915,7 +915,7 @@ async function loadRecordContext(
   record: SignalRecordRef,
 ): Promise<RecordContextValue[]> {
   const r = await exec(
-    workspace.lix,
+    workspace.db,
     `SELECT v.attribute_slug, v.value_json, a.title, a.attribute_type
        FROM acrm_value v
        JOIN acrm_attribute a

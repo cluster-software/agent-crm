@@ -31,7 +31,7 @@ troubleshoot Granola with Agent CRM.
    --cutoff-date YYYY-MM-DD
    ```
 
-5. Start a backfill/import into the local workspace:
+5. Start a backfill/import into the Postgres workspace:
 
    ```sh
    acrm import granola --json

@@ -25,9 +25,9 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@lix-js/sdk": "0.6.0-preview.3",
-    "better-sqlite3": "^12.9.0",
-    "libphonenumber-js": "^1.13.2"
+    "@types/pg": "^8.20.0",
+    "libphonenumber-js": "^1.13.2",
+    "pg": "^8.21.0"
   },
   "engines": {
     "node": ">=20"

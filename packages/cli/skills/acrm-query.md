@@ -1,9 +1,9 @@
 ---
 name: acrm-query
-description: Cheat-sheet for querying the .acrm workspace with `acrm execute`. Read this before writing any SQL against acrm. acrm uses an EAV schema — there is no `people` / `companies` / `transcripts` table.
+description: Cheat-sheet for querying the Agent CRM Postgres workspace with `acrm execute`. Read this before writing any SQL against acrm. acrm uses an EAV schema — there is no `people` / `companies` / `transcripts` table.
 ---
 
-The .acrm file does **not** have per-object SQL tables. Every record lives in
+Agent CRM does **not** have per-object SQL tables. Every record lives in
 `acrm_record`; every attribute value lives in `acrm_value`. The object names
 you see in the docs (`people`, `companies`, `deals`, `posts`, `transcripts`)
 are values in the `object_slug` column — not tables.
@@ -18,7 +18,7 @@ are values in the `object_slug` column — not tables.
 **Always single-quote the SQL** when it contains `$1`, `$2`, … placeholders. In
 zsh/bash, double quotes let the shell expand `$N` to its own positional
 parameters (empty in an interactive shell), so the SQL that reaches `acrm` has
-bare gaps and the parser errors out with `LIX_PARSE_ERROR` at a random column.
+bare gaps and the parser errors out with `Postgres syntax error` at a random column.
 
 ```sh
 ❌ acrm execute "SELECT $1"  '["hi"]'    # zsh eats $1 → "SELECT "
@@ -34,8 +34,7 @@ acrm execute 'UPDATE acrm_value SET value_json = $1 WHERE id = $2' \
   '["{\"key\":\"value\"}","row-id"]'
 ```
 
-Why no `$1`-free heredoc trick? `acrm execute` rejects `?` placeholders
-(DataFusion limitation), so `$N` is mandatory whenever you bind params.
+`acrm execute` uses Postgres parameters, so `$1`, `$2`, … placeholders are mandatory whenever you bind params.
 
 ## Tables
 
@@ -49,13 +48,12 @@ Why no `$1`-free heredoc trick? `acrm execute` rejects `?` placeholders
 ### `acrm_value` columns worth knowing
 
 - `id` — value-row PK. Use this for surgical updates (`UPDATE … WHERE id=$1`).
-  Lix-defaulted to `lix_uuid_v7()` if omitted on insert.
+  Postgres-defaulted if omitted on insert.
 - `object_slug`, `record_id`, `attribute_slug` — the entity this value belongs to.
 - `value_json` — the typed payload (e.g. `{"value":"Cluster"}` or `{"target_record_id":"…"}`).
 - `normalized_key` — denormalized key for unique-keyed attrs (email_address, domain, url, text).
 - `ref_object`, `ref_record_id` — for record-reference attrs, the indexed link target.
-- `active_from`, `active_until` — versioning. `active_from` is Lix-defaulted to
-  `lix_timestamp()` if omitted. **Always filter `active_until IS NULL` for current values.**
+- `active_from`, `active_until` — versioning. `active_from` is Postgres-defaulted if omitted. **Always filter `active_until IS NULL` for current values.**
 - `source`, `provenance_json` — where this value came from.
 
 `attribute_type` is **not** a column on `acrm_value` — it lives on
@@ -70,14 +68,12 @@ WHERE  v.object_slug = 'people' AND v.record_id = $1
        AND v.active_until IS NULL;
 ```
 
-## SQL dialect: DataFusion
+## SQL dialect: Postgres-compatible providers
 
 - Placeholders are `$1`, `$2`, … (`?` is rejected).
 - Single statement per `acrm execute` call.
 - No `sqlite_master` — use `information_schema.tables`, `information_schema.columns`.
-- No `json_extract` — use lix UDFs:
-  - `lix_json_get(value_json, 'key')` returns a JSON value.
-  - `lix_json_get_text(value_json, 'key')` returns text.
+- JSON columns are jsonb. Use `value_json -> 'key'` for jsonb and `value_json ->> 'key'` for text.
 
 ## Common queries
 
@@ -155,8 +151,7 @@ multivalued attributes, applies a conflict policy on single-valued attributes
 (`--prefer keep|discard|interactive`, default `keep`), and removes the discarded
 `acrm_record` row.
 
-> The verb is `dedupe`, not `merge` — `merge` in lix-land means version/branch
-> merging (`mergeVersion`), which is a different operation.
+> The verb is `dedupe`, not `merge`.
 
 ## Custom schema (registering objects + attributes)
 
@@ -193,7 +188,7 @@ acrm attribute edit-options deals.stage add renewed
 
 ## value_json shape per attribute_type
 
-`lix_json_get_text(value_json, 'value')` returns NULL on most non-text types
+`value_json ->> 'value'` returns NULL on most non-text types
 because they don't use a `value` key. Use the right key:
 
 | attribute_type     | shape                                                            |
@@ -229,7 +224,7 @@ INSERT INTO acrm_value (object_slug, record_id, attribute_slug, value_json)
 VALUES ('people', 'person_1', 'name', '{"full_name":"Ada Lovelace"}');
 ```
 
-`id` defaults to `lix_uuid_v7()` and `active_from` to `lix_timestamp()`. The
+`id` and `active_from` have Postgres defaults. The
 invariants `acrm_value` mutations must still maintain themselves: `active_until = NULL`
 for current values (set the previous current row's `active_until` to NOW when
 replacing a single-valued attr), the right `normalized_key` for unique-keyed

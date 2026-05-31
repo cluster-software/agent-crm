@@ -1,10 +1,12 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { openLix, type Lix } from "@lix-js/sdk";
-import { createBetterSqlite3Backend } from "@lix-js/sdk/sqlite";
+import { newDb } from "pg-mem";
 import { describe, expect, it } from "vitest";
 import { exec } from "../db/execute.js";
+import { PostgresDatabase } from "../db/postgres.js";
+import type { AcrmDatabase } from "../db/types.js";
+import { uuidv7 } from "../lib/uuidv7.js";
 import { createRecord } from "./records.js";
 import {
   loadSignalDefinitions,
@@ -15,14 +17,20 @@ import { seedAttributes, seedObjects } from "../workspace/seeds.js";
 import { registerAllSchemas } from "../workspace/schemas/index.js";
 import { Workspace } from "../workspace.js";
 
-async function openTestWorkspace(): Promise<Lix> {
-  const lix = await openLix({
-    backend: createBetterSqlite3Backend({ path: ":memory:" }),
+async function openTestWorkspace(): Promise<AcrmDatabase> {
+  const mem = newDb({ noAstCoverageCheck: true });
+  mem.public.registerFunction({
+    name: "gen_random_uuid",
+    returns: "text",
+    implementation: () => uuidv7(),
   });
-  await registerAllSchemas(lix);
-  await seedObjects(lix);
-  await seedAttributes(lix);
-  return lix;
+  const pg = mem.adapters.createPg();
+  const pool = new pg.Pool();
+  const db = PostgresDatabase.fromQueryable(pool, () => pool.end());
+  await registerAllSchemas(db);
+  await seedObjects(db);
+  await seedAttributes(db);
+  return db;
 }
 
 async function withSignalsDir(
@@ -85,10 +93,10 @@ describe("signals", () => {
   });
 
   it("syncs attributes, runs once, and stores per-field provenance", async () => {
-    const lix = await openTestWorkspace();
+    const db = await openTestWorkspace();
     const { dir, cleanup } = await withSignalsDir(hotelSignal);
     try {
-      const company = await createRecord(Workspace.fromLix(lix), {
+      const company = await createRecord(Workspace.fromDatabase(db), {
         object_slug: "companies",
         fields: ["name=Hotel Felix", "domains=hotelfelix.example"],
       });
@@ -126,7 +134,7 @@ describe("signals", () => {
         });
       };
 
-      const result = await runSignals(Workspace.fromLix(lix), {
+      const result = await runSignals(Workspace.fromDatabase(db), {
         signalsDir: dir,
         records: [{ object_slug: "companies", record_id: company.record_id }],
         mode: "missing",
@@ -145,7 +153,7 @@ describe("signals", () => {
         },
       ]);
       const values = await exec(
-        lix,
+        db,
         `SELECT attribute_slug, value_json, source, provenance_json
            FROM acrm_value
           WHERE object_slug = 'companies'
@@ -159,27 +167,27 @@ describe("signals", () => {
       const byAttr = new Map(
         values.rows.map((row) => [row.attribute_slug as string, row]),
       );
-      expect(JSON.parse(byAttr.get("operator_status")!.value_json as string)).toEqual({
+      expect(parseJsonColumn(byAttr.get("operator_status")!.value_json)).toEqual({
         id: "owner_identified",
         title: "Owner identified",
       });
-      const provenance = JSON.parse(
-        byAttr.get("operator_name")!.provenance_json as string,
+      const provenance = parseJsonColumn(
+        byAttr.get("operator_name")!.provenance_json,
       ) as Record<string, unknown>;
       expect(byAttr.get("operator_name")!.source).toBe("signal:hotel_contact_path");
       expect(provenance.reasoning).toBe("The legal notice lists this entity.");
       expect(provenance.uncited).toBe(true);
     } finally {
       await cleanup();
-      await lix.close();
+      await db.close();
     }
   });
 
   it("does not rerun missing-only signals when outputs already exist", async () => {
-    const lix = await openTestWorkspace();
+    const db = await openTestWorkspace();
     const { dir, cleanup } = await withSignalsDir(hotelSignal);
     try {
-      const company = await createRecord(Workspace.fromLix(lix), {
+      const company = await createRecord(Workspace.fromDatabase(db), {
         object_slug: "companies",
         fields: ["name=Hotel Existing"],
       });
@@ -202,14 +210,14 @@ describe("signals", () => {
             },
           ],
         });
-      await runSignals(Workspace.fromLix(lix), {
+      await runSignals(Workspace.fromDatabase(db), {
         signalsDir: dir,
         records: [{ object_slug: "companies", record_id: company.record_id }],
         mode: "missing",
         runner: firstRunner,
       });
 
-      const second = await runSignals(Workspace.fromLix(lix), {
+      const second = await runSignals(Workspace.fromDatabase(db), {
         signalsDir: dir,
         records: [{ object_slug: "companies", record_id: company.record_id }],
         mode: "missing",
@@ -230,7 +238,7 @@ describe("signals", () => {
       ]);
     } finally {
       await cleanup();
-      await lix.close();
+      await db.close();
     }
   });
 
@@ -256,15 +264,15 @@ object: companies
 
 Find the company name.
 `;
-    const lix = await openTestWorkspace();
+    const db = await openTestWorkspace();
     const { dir, cleanup } = await withSignalsDir(coreFieldSignal);
     try {
-      const company = await createRecord(Workspace.fromLix(lix), {
+      const company = await createRecord(Workspace.fromDatabase(db), {
         object_slug: "companies",
         fields: ["name=Hotel Protected"],
       });
       await expect(
-        runSignals(Workspace.fromLix(lix), {
+        runSignals(Workspace.fromDatabase(db), {
           signalsDir: dir,
           records: [{ object_slug: "companies", record_id: company.record_id }],
           mode: "force",
@@ -275,19 +283,19 @@ Find the company name.
       ).rejects.toThrow(/targets core field companies\.name/);
     } finally {
       await cleanup();
-      await lix.close();
+      await db.close();
     }
   });
 
   it("records a failure when a runner returns an unknown output key", async () => {
-    const lix = await openTestWorkspace();
+    const db = await openTestWorkspace();
     const { dir, cleanup } = await withSignalsDir(hotelSignal);
     try {
-      const company = await createRecord(Workspace.fromLix(lix), {
+      const company = await createRecord(Workspace.fromDatabase(db), {
         object_slug: "companies",
         fields: ["name=Hotel Bad Output"],
       });
-      const result = await runSignals(Workspace.fromLix(lix), {
+      const result = await runSignals(Workspace.fromDatabase(db), {
         signalsDir: dir,
         records: [{ object_slug: "companies", record_id: company.record_id }],
         mode: "force",
@@ -309,7 +317,7 @@ Find the company name.
       expect(result.failures[0]?.message).toMatch(/unknown output key/);
     } finally {
       await cleanup();
-      await lix.close();
+      await db.close();
     }
   });
 
@@ -335,14 +343,14 @@ object: companies
 
 Find the number of employees.
 `;
-    const lix = await openTestWorkspace();
+    const db = await openTestWorkspace();
     const { dir, cleanup } = await withSignalsDir(typedSignal);
     try {
-      const company = await createRecord(Workspace.fromLix(lix), {
+      const company = await createRecord(Workspace.fromDatabase(db), {
         object_slug: "companies",
         fields: ["name=Hotel Wrong Type"],
       });
-      const result = await runSignals(Workspace.fromLix(lix), {
+      const result = await runSignals(Workspace.fromDatabase(db), {
         signalsDir: dir,
         records: [{ object_slug: "companies", record_id: company.record_id }],
         mode: "force",
@@ -367,12 +375,12 @@ Find the number of employees.
       expect(result.failures[0]?.stdout_excerpt).toContain("employee_count");
     } finally {
       await cleanup();
-      await lix.close();
+      await db.close();
     }
   });
 
   it("allows web tools, attaches a JSON schema, and passes the configured Claude model", async () => {
-    const lix = await openTestWorkspace();
+    const db = await openTestWorkspace();
     const { dir, cleanup } = await withSignalsDir(hotelSignal);
     const binDir = await mkdtemp(path.join(tmpdir(), "acrm-claude-bin-"));
     const argsPath = path.join(binDir, "args.json");
@@ -423,11 +431,11 @@ console.log(JSON.stringify({
       delete process.env.ACRM_SIGNAL_RUNNER;
       delete process.env.SIGNAL_RUNS_MODEL;
 
-      const company = await createRecord(Workspace.fromLix(lix), {
+      const company = await createRecord(Workspace.fromDatabase(db), {
         object_slug: "companies",
         fields: ["name=Hotel Default Runner"],
       });
-      const result = await runSignals(Workspace.fromLix(lix), {
+      const result = await runSignals(Workspace.fromDatabase(db), {
         signalsDir: dir,
         records: [{ object_slug: "companies", record_id: company.record_id }],
         mode: "force",
@@ -449,11 +457,11 @@ console.log(JSON.stringify({
       expect(JSON.stringify(schema)).toContain("operator_status");
 
       process.env.SIGNAL_RUNS_MODEL = "opus";
-      const overrideCompany = await createRecord(Workspace.fromLix(lix), {
+      const overrideCompany = await createRecord(Workspace.fromDatabase(db), {
         object_slug: "companies",
         fields: ["name=Hotel Model Override"],
       });
-      const overrideResult = await runSignals(Workspace.fromLix(lix), {
+      const overrideResult = await runSignals(Workspace.fromDatabase(db), {
         signalsDir: dir,
         records: [{ object_slug: "companies", record_id: overrideCompany.record_id }],
         mode: "force",
@@ -471,19 +479,19 @@ console.log(JSON.stringify({
       else process.env.ACRM_TEST_CLAUDE_ARGS = previousArgsPath;
       await cleanup();
       await rm(binDir, { recursive: true, force: true });
-      await lix.close();
+      await db.close();
     }
   });
 
   it("parses Claude JSON output wrappers with structured_output", async () => {
-    const lix = await openTestWorkspace();
+    const db = await openTestWorkspace();
     const { dir, cleanup } = await withSignalsDir(hotelSignal);
     try {
-      const company = await createRecord(Workspace.fromLix(lix), {
+      const company = await createRecord(Workspace.fromDatabase(db), {
         object_slug: "companies",
         fields: ["name=Hotel Wrapper"],
       });
-      const result = await runSignals(Workspace.fromLix(lix), {
+      const result = await runSignals(Workspace.fromDatabase(db), {
         signalsDir: dir,
         records: [{ object_slug: "companies", record_id: company.record_id }],
         mode: "force",
@@ -514,12 +522,12 @@ console.log(JSON.stringify({
       expect(result.values_written).toBe(2);
     } finally {
       await cleanup();
-      await lix.close();
+      await db.close();
     }
   });
 
   it("includes runner stderr excerpts in failures", async () => {
-    const lix = await openTestWorkspace();
+    const db = await openTestWorkspace();
     const { dir, cleanup } = await withSignalsDir(hotelSignal);
     const binDir = await mkdtemp(path.join(tmpdir(), "acrm-claude-fail-bin-"));
     const claudePath = path.join(binDir, "claude");
@@ -540,11 +548,11 @@ process.exit(17);
       process.env.PATH = `${binDir}:${previousPath ?? ""}`;
       delete process.env.ACRM_SIGNAL_RUNNER;
 
-      const company = await createRecord(Workspace.fromLix(lix), {
+      const company = await createRecord(Workspace.fromDatabase(db), {
         object_slug: "companies",
         fields: ["name=Hotel Runner Failure"],
       });
-      const result = await runSignals(Workspace.fromLix(lix), {
+      const result = await runSignals(Workspace.fromDatabase(db), {
         signalsDir: dir,
         records: [{ object_slug: "companies", record_id: company.record_id }],
         mode: "force",
@@ -562,7 +570,7 @@ process.exit(17);
       else process.env.ACRM_SIGNAL_RUNNER = previousRunner;
       await cleanup();
       await rm(binDir, { recursive: true, force: true });
-      await lix.close();
+      await db.close();
     }
   });
 
@@ -616,14 +624,14 @@ object: companies
 
 Classify the operator role.
 `;
-    const lix = await openTestWorkspace();
+    const db = await openTestWorkspace();
     const { dir, cleanup } = await withSignalsDir(oldSignal);
     try {
-      const company = await createRecord(Workspace.fromLix(lix), {
+      const company = await createRecord(Workspace.fromDatabase(db), {
         object_slug: "companies",
         fields: ["name=Hotel Migration"],
       });
-      await runSignals(Workspace.fromLix(lix), {
+      await runSignals(Workspace.fromDatabase(db), {
         signalsDir: dir,
         records: [{ object_slug: "companies", record_id: company.record_id }],
         mode: "force",
@@ -649,7 +657,7 @@ Classify the operator role.
       });
 
       await writeFile(path.join(dir, "hotel_contact_path.md"), newSignal, "utf8");
-      const result = await runSignals(Workspace.fromLix(lix), {
+      const result = await runSignals(Workspace.fromDatabase(db), {
         signalsDir: dir,
         records: [{ object_slug: "companies", record_id: company.record_id }],
         mode: "missing",
@@ -670,12 +678,12 @@ Classify the operator role.
       expect(result.runs_succeeded).toBe(1);
       expect(result.values_written).toBe(1);
       const attr = await exec(
-        lix,
+        db,
         "SELECT attribute_type FROM acrm_attribute WHERE object_slug = 'companies' AND attribute_slug = 'operator_role'",
       );
       expect(attr.rows[0]?.attribute_type).toBe("select");
       const active = await exec(
-        lix,
+        db,
         `SELECT attribute_slug, value_json
            FROM acrm_value
           WHERE object_slug = 'companies'
@@ -686,13 +694,17 @@ Classify the operator role.
         [company.record_id],
       );
       expect(active.rows.map((row) => row.attribute_slug)).toEqual(["operator_role"]);
-      expect(JSON.parse(active.rows[0]?.value_json as string)).toEqual({
+      expect(parseJsonColumn(active.rows[0]?.value_json)).toEqual({
         id: "general_manager",
         title: "General manager",
       });
     } finally {
       await cleanup();
-      await lix.close();
+      await db.close();
     }
   });
 });
+
+function parseJsonColumn(value: unknown): unknown {
+  return typeof value === "string" ? JSON.parse(value) : value;
+}

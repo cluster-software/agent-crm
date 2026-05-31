@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Lix } from "@lix-js/sdk";
-import { openTestWorkspace } from "../test/open-test-lix.js";
+import type { AcrmDatabase } from "-crm/sdk";
+import { openTestWorkspace } from "../test/open-test-db.js";
 import { exec } from "@agent-crm/sdk";
 import {
   addMultiValue,
@@ -11,7 +11,7 @@ import { generateUuid } from "@agent-crm/sdk";
 import { dedupeRecords, importTranscript, Workspace } from "@agent-crm/sdk";
 
 async function seedPerson(
-  lix: Lix,
+  db: AcrmDatabase,
   spec: {
     email?: string;
     emails?: string[];
@@ -21,13 +21,13 @@ async function seedPerson(
     job_title?: string;
   },
 ): Promise<string> {
-  const id = await generateUuid(lix);
-  await insertRecord(lix, "people", id);
+  const id = await generateUuid(db);
+  await insertRecord(db, "people", id);
   const source = "test";
   const provenance = { test: true };
   const emails = [...(spec.emails ?? []), ...(spec.email ? [spec.email] : [])];
   for (const e of emails) {
-    await addMultiValue(lix, {
+    await addMultiValue(db, {
       object_slug: "people",
       record_id: id,
       attribute_slug: "email_addresses",
@@ -38,7 +38,7 @@ async function seedPerson(
     });
   }
   if (spec.linkedin_url) {
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "people",
       record_id: id,
       attribute_slug: "linkedin_url",
@@ -49,7 +49,7 @@ async function seedPerson(
     });
   }
   if (spec.twitter_url) {
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "people",
       record_id: id,
       attribute_slug: "twitter_url",
@@ -60,7 +60,7 @@ async function seedPerson(
     });
   }
   if (spec.name) {
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "people",
       record_id: id,
       attribute_slug: "name",
@@ -71,7 +71,7 @@ async function seedPerson(
     });
   }
   if (spec.job_title) {
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "people",
       record_id: id,
       attribute_slug: "job_title",
@@ -84,9 +84,9 @@ async function seedPerson(
   return id;
 }
 
-async function emailsFor(lix: Lix, personId: string): Promise<string[]> {
+async function emailsFor(db: AcrmDatabase, personId: string): Promise<string[]> {
   const r = await exec(
-    lix,
+    db,
     `SELECT normalized_key FROM acrm_value
      WHERE object_slug = 'people' AND record_id = $1
        AND attribute_slug = 'email_addresses' AND active_until IS NULL
@@ -97,12 +97,12 @@ async function emailsFor(lix: Lix, personId: string): Promise<string[]> {
 }
 
 async function singleValueFor(
-  lix: Lix,
+  db: AcrmDatabase,
   personId: string,
   attribute_slug: string,
 ): Promise<string | null> {
   const r = await exec(
-    lix,
+    db,
     `SELECT normalized_key, value_json FROM acrm_value
      WHERE object_slug = 'people' AND record_id = $1
        AND attribute_slug = $2 AND active_until IS NULL
@@ -117,12 +117,12 @@ async function singleValueFor(
 }
 
 async function recordExists(
-  lix: Lix,
+  db: AcrmDatabase,
   object_slug: string,
   record_id: string,
 ): Promise<boolean> {
   const r = await exec(
-    lix,
+    db,
     `SELECT 1 FROM acrm_record WHERE object_slug = $1 AND record_id = $2`,
     [object_slug, record_id],
   );
@@ -131,16 +131,16 @@ async function recordExists(
 
 describe("dedupeRecords", () => {
   it("reassigns multivalued values and dedupes by normalized_key", async () => {
-    const lix = await openTestWorkspace();
-    const keep = await seedPerson(lix, {
+    const db = await openTestWorkspace();
+    const keep = await seedPerson(db, {
       emails: ["alice@acme.com"],
       name: "Alice",
     });
-    const discard = await seedPerson(lix, {
+    const discard = await seedPerson(db, {
       emails: ["alice@acme.com", "alice.b@acme.com"],
     });
 
-    const result = await dedupeRecords(Workspace.fromLix(lix), {
+    const result = await dedupeRecords(Workspace.fromDatabase(db), {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -150,25 +150,25 @@ describe("dedupeRecords", () => {
 
     expect(result.applied).toBe(true);
     expect(result.discard_record_deleted).toBe(true);
-    expect(await recordExists(lix, "people", discard)).toBe(false);
+    expect(await recordExists(db, "people", discard)).toBe(false);
 
     // Keeper has both emails, deduped.
-    expect(await emailsFor(lix, keep)).toEqual([
+    expect(await emailsFor(db, keep)).toEqual([
       "alice.b@acme.com",
       "alice@acme.com",
     ]);
-    await lix.close();
+    await db.close();
   });
 
   it("moves single-valued attributes when keeper is empty", async () => {
-    const lix = await openTestWorkspace();
-    const keep = await seedPerson(lix, { email: "luis@cluster.com" });
-    const discard = await seedPerson(lix, {
+    const db = await openTestWorkspace();
+    const keep = await seedPerson(db, { email: "luis@cluster.com" });
+    const discard = await seedPerson(db, {
       linkedin_url: "linkedin.com/in/luis",
       job_title: "Founder",
     });
 
-    await dedupeRecords(Workspace.fromLix(lix), {
+    await dedupeRecords(Workspace.fromDatabase(db), {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -176,30 +176,30 @@ describe("dedupeRecords", () => {
       dryRun: false,
     });
 
-    expect(await singleValueFor(lix, keep, "linkedin_url")).toBe(
+    expect(await singleValueFor(db, keep, "linkedin_url")).toBe(
       "linkedin.com/in/luis",
     );
     const titleRow = await exec(
-      lix,
+      db,
       `SELECT value_json FROM acrm_value
        WHERE object_slug='people' AND record_id=$1
          AND attribute_slug='job_title' AND active_until IS NULL`,
       [keep],
     );
-    expect(titleRow.rows[0]?.value_json).toContain("Founder");
-    await lix.close();
+    expect(JSON.stringify(titleRow.rows[0]?.value_json)).toContain("Founder");
+    await db.close();
   });
 
   it("--prefer keep drops discard's single-value on conflict", async () => {
-    const lix = await openTestWorkspace();
-    const keep = await seedPerson(lix, {
+    const db = await openTestWorkspace();
+    const keep = await seedPerson(db, {
       linkedin_url: "linkedin.com/in/keep",
     });
-    const discard = await seedPerson(lix, {
+    const discard = await seedPerson(db, {
       linkedin_url: "linkedin.com/in/discard",
     });
 
-    const result = await dedupeRecords(Workspace.fromLix(lix), {
+    const result = await dedupeRecords(Workspace.fromDatabase(db), {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -210,22 +210,22 @@ describe("dedupeRecords", () => {
     expect(result.conflicts).toHaveLength(1);
     expect(result.conflicts[0]?.attribute_slug).toBe("linkedin_url");
     expect(result.conflicts[0]?.resolution).toBe("keep");
-    expect(await singleValueFor(lix, keep, "linkedin_url")).toBe(
+    expect(await singleValueFor(db, keep, "linkedin_url")).toBe(
       "linkedin.com/in/keep",
     );
-    await lix.close();
+    await db.close();
   });
 
   it("--prefer discard replaces keeper's single-value", async () => {
-    const lix = await openTestWorkspace();
-    const keep = await seedPerson(lix, {
+    const db = await openTestWorkspace();
+    const keep = await seedPerson(db, {
       linkedin_url: "linkedin.com/in/keep",
     });
-    const discard = await seedPerson(lix, {
+    const discard = await seedPerson(db, {
       linkedin_url: "linkedin.com/in/discard",
     });
 
-    await dedupeRecords(Workspace.fromLix(lix), {
+    await dedupeRecords(Workspace.fromDatabase(db), {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -233,21 +233,21 @@ describe("dedupeRecords", () => {
       dryRun: false,
     });
 
-    expect(await singleValueFor(lix, keep, "linkedin_url")).toBe(
+    expect(await singleValueFor(db, keep, "linkedin_url")).toBe(
       "linkedin.com/in/discard",
     );
-    await lix.close();
+    await db.close();
   });
 
   it("redirects inbound record-references (transcripts.participants) to the keeper", async () => {
-    const lix = await openTestWorkspace();
-    const keep = await seedPerson(lix, {
+    const db = await openTestWorkspace();
+    const keep = await seedPerson(db, {
       linkedin_url: "linkedin.com/in/luis",
     });
-    const discard = await seedPerson(lix, { email: "luis@cluster.com" });
+    const discard = await seedPerson(db, { email: "luis@cluster.com" });
 
     // Import a transcript that points at the discard via email.
-    await importTranscript(Workspace.fromLix(lix), {
+    await importTranscript(Workspace.fromDatabase(db), {
       source: "granola",
       source_id: "meeting-1",
       title: "T",
@@ -256,14 +256,14 @@ describe("dedupeRecords", () => {
 
     // Sanity: the transcript references the discard, not the keeper.
     const before = await exec(
-      lix,
+      db,
       `SELECT ref_record_id FROM acrm_value
        WHERE object_slug='transcripts' AND attribute_slug='participants'
          AND active_until IS NULL`,
     );
     expect(before.rows[0]?.ref_record_id).toBe(discard);
 
-    await dedupeRecords(Workspace.fromLix(lix), {
+    await dedupeRecords(Workspace.fromDatabase(db), {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -273,18 +273,18 @@ describe("dedupeRecords", () => {
 
     // Forward link now points at the keeper.
     const after = await exec(
-      lix,
+      db,
       `SELECT ref_record_id, value_json FROM acrm_value
        WHERE object_slug='transcripts' AND attribute_slug='participants'
          AND active_until IS NULL`,
     );
     expect(after.rows[0]?.ref_record_id).toBe(keep);
-    expect(after.rows[0]?.value_json).toContain(keep);
+    expect(JSON.stringify(after.rows[0]?.value_json)).toContain(keep);
 
     // Inverse link (people.associated_transcripts) was on the discard;
     // gets moved to the keeper as one of its own multivalued rows.
     const inv = await exec(
-      lix,
+      db,
       `SELECT record_id FROM acrm_value
        WHERE object_slug='people' AND attribute_slug='associated_transcripts'
          AND active_until IS NULL`,
@@ -292,18 +292,18 @@ describe("dedupeRecords", () => {
     expect(inv.rows[0]?.record_id).toBe(keep);
 
     // The discard record is gone.
-    expect(await recordExists(lix, "people", discard)).toBe(false);
-    await lix.close();
+    expect(await recordExists(db, "people", discard)).toBe(false);
+    await db.close();
   });
 
   it("--dry-run reports the plan without mutating", async () => {
-    const lix = await openTestWorkspace();
-    const keep = await seedPerson(lix, {
+    const db = await openTestWorkspace();
+    const keep = await seedPerson(db, {
       linkedin_url: "linkedin.com/in/luis",
     });
-    const discard = await seedPerson(lix, { email: "luis@cluster.com" });
+    const discard = await seedPerson(db, { email: "luis@cluster.com" });
 
-    const plan = await dedupeRecords(Workspace.fromLix(lix), {
+    const plan = await dedupeRecords(Workspace.fromDatabase(db), {
       object_slug: "people",
       keep_record_id: keep,
       discard_record_id: discard,
@@ -314,16 +314,16 @@ describe("dedupeRecords", () => {
     expect(plan.applied).toBe(false);
     expect(plan.discard_record_deleted).toBe(false);
     expect(plan.items.length).toBeGreaterThan(0);
-    expect(await recordExists(lix, "people", discard)).toBe(true);
-    expect(await emailsFor(lix, keep)).toEqual([]);
-    await lix.close();
+    expect(await recordExists(db, "people", discard)).toBe(true);
+    expect(await emailsFor(db, keep)).toEqual([]);
+    await db.close();
   });
 
   it("rejects merging a record with itself", async () => {
-    const lix = await openTestWorkspace();
-    const id = await seedPerson(lix, { email: "a@b.com" });
+    const db = await openTestWorkspace();
+    const id = await seedPerson(db, { email: "a@b.com" });
     await expect(
-      dedupeRecords(Workspace.fromLix(lix), {
+      dedupeRecords(Workspace.fromDatabase(db), {
         object_slug: "people",
         keep_record_id: id,
         discard_record_id: id,
@@ -331,14 +331,14 @@ describe("dedupeRecords", () => {
         dryRun: false,
       }),
     ).rejects.toThrow(/same record_id/);
-    await lix.close();
+    await db.close();
   });
 
   it("rejects unknown keep / discard record_ids", async () => {
-    const lix = await openTestWorkspace();
-    const id = await seedPerson(lix, { email: "a@b.com" });
+    const db = await openTestWorkspace();
+    const id = await seedPerson(db, { email: "a@b.com" });
     await expect(
-      dedupeRecords(Workspace.fromLix(lix), {
+      dedupeRecords(Workspace.fromDatabase(db), {
         object_slug: "people",
         keep_record_id: id,
         discard_record_id: "does-not-exist",
@@ -346,30 +346,30 @@ describe("dedupeRecords", () => {
         dryRun: false,
       }),
     ).rejects.toThrow(/discard record_id not found/);
-    await lix.close();
+    await db.close();
   });
 
   it("end-to-end: reproduces the Luis duplicate scenario from the RCA", async () => {
-    const lix = await openTestWorkspace();
+    const db = await openTestWorkspace();
     // Luis #1: created by `acrm import linkedin` — has LinkedIn, no email.
-    const luis1 = await seedPerson(lix, {
+    const luis1 = await seedPerson(db, {
       linkedin_url: "linkedin.com/in/luis-costa-laveron-834b05177",
       name: "Luis Costa Laveron",
       job_title: "Founder",
     });
     // Luis #2: created by `acrm import transcript` from an email-only
     // participant before the resolver could bridge identifier sets.
-    const luis2 = await seedPerson(lix, { email: "luis@hello-cluster.com" });
+    const luis2 = await seedPerson(db, { email: "luis@hello-cluster.com" });
 
     // Transcript was imported pointing at luis2.
-    await importTranscript(Workspace.fromLix(lix), {
+    await importTranscript(Workspace.fromDatabase(db), {
       source: "granola",
       source_id: "meeting-luis",
       title: "Discovery — Luis",
       participants: [{ email: "luis@hello-cluster.com" }],
     });
 
-    const result = await dedupeRecords(Workspace.fromLix(lix), {
+    const result = await dedupeRecords(Workspace.fromDatabase(db), {
       object_slug: "people",
       keep_record_id: luis1,
       discard_record_id: luis2,
@@ -378,20 +378,20 @@ describe("dedupeRecords", () => {
     });
 
     expect(result.applied).toBe(true);
-    expect(await recordExists(lix, "people", luis2)).toBe(false);
-    expect(await emailsFor(lix, luis1)).toEqual(["luis@hello-cluster.com"]);
-    expect(await singleValueFor(lix, luis1, "linkedin_url")).toBe(
+    expect(await recordExists(db, "people", luis2)).toBe(false);
+    expect(await emailsFor(db, luis1)).toEqual(["luis@hello-cluster.com"]);
+    expect(await singleValueFor(db, luis1, "linkedin_url")).toBe(
       "linkedin.com/in/luis-costa-laveron-834b05177",
     );
 
     // Transcript now references the kept Luis.
     const refs = await exec(
-      lix,
+      db,
       `SELECT ref_record_id FROM acrm_value
        WHERE object_slug='transcripts' AND attribute_slug='participants'
          AND active_until IS NULL`,
     );
     expect(refs.rows[0]?.ref_record_id).toBe(luis1);
-    await lix.close();
+    await db.close();
   });
 });

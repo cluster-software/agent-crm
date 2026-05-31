@@ -3,6 +3,7 @@ import {
   type AttributeType,
   type ValueJson,
 } from "../domain/values.js";
+import { nowIso } from "../lib/time.js";
 
 export type ValueInsertInput = {
   object_slug: string;
@@ -20,6 +21,7 @@ export type PreparedValueInsert = {
   record_id: string;
   attribute_slug: string;
   value_json: string;
+  active_from: string;
   normalized_key: string | null;
   ref_object: string | null;
   ref_record_id: string | null;
@@ -48,6 +50,7 @@ export function prepareValueInsert(
     record_id: args.record_id,
     attribute_slug: args.attribute_slug,
     value_json: JSON.stringify(args.value_json),
+    active_from: nowIso(),
     normalized_key: normalized,
     ref_object: ref.ref_object,
     ref_record_id: ref.ref_record_id,

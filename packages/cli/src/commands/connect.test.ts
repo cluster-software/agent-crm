@@ -1,9 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Workspace } from "@agent-crm/sdk";
 import { __test as connectCommandTest } from "./connect.js";
+import { openTestWorkspace } from "../test/open-test-db.js";
+
+const TEST_DATABASE_URL = "postgres://user:pass@localhost/acrm_test";
 
 describe("connect linkedin command", () => {
   const oldSyncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL;
@@ -40,10 +39,7 @@ describe("connect linkedin command", () => {
   });
 
   it("returns a hosted sync-engine LinkedIn connect URL when the workspace is not connected", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "acrm-linkedin-connect-"));
-    const workspacePath = join(dir, "workspace.acrm");
-    const ws = await Workspace.create(workspacePath);
-    await ws.close();
+    const db = await openTestWorkspace();
     process.env.ACRM_SYNC_ENGINE_URL = "https://sync.example.com";
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = new URL(String(input));
@@ -60,7 +56,8 @@ describe("connect linkedin command", () => {
 
     try {
       const result = await connectCommandTest.runConnectLinkedin({
-        workspace: workspacePath,
+        workspace: TEST_DATABASE_URL,
+        db,
         orgId: "org-1",
       });
 
@@ -74,15 +71,12 @@ describe("connect linkedin command", () => {
       expect(new URL(String(fetchMock.mock.calls[0]?.[0])).pathname).toContain("/register");
       expect(new URL(String(fetchMock.mock.calls[1]?.[0])).pathname).toContain("/integrations/status");
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await db.close();
     }
   });
 
   it("reports an already connected workspace instead of returning a connect URL", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "acrm-linkedin-connected-"));
-    const workspacePath = join(dir, "workspace.acrm");
-    const ws = await Workspace.create(workspacePath);
-    await ws.close();
+    const db = await openTestWorkspace();
     process.env.ACRM_SYNC_ENGINE_URL = "https://sync.example.com";
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = new URL(String(input));
@@ -111,7 +105,8 @@ describe("connect linkedin command", () => {
 
     try {
       const result = await connectCommandTest.runConnectLinkedin({
-        workspace: workspacePath,
+        workspace: TEST_DATABASE_URL,
+        db,
       });
 
       expect(result.connected).toBe(true);
@@ -120,15 +115,12 @@ describe("connect linkedin command", () => {
       expect(result.linkedin.connected).toBe(true);
       expect(result.linkedin.display_name).toBe("Luis on LinkedIn");
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await db.close();
     }
   });
 
   it("uses LinkedIn provider health when sync status is stale or errored", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "acrm-linkedin-provider-status-"));
-    const workspacePath = join(dir, "workspace.acrm");
-    const ws = await Workspace.create(workspacePath);
-    await ws.close();
+    const db = await openTestWorkspace();
     process.env.ACRM_SYNC_ENGINE_URL = "https://sync.example.com";
     const fetchMock = vi.fn(async () => Response.json({
       ok: true,
@@ -158,7 +150,8 @@ describe("connect linkedin command", () => {
 
     try {
       const result = await connectCommandTest.runConnectLinkedinStatus({
-        workspace: workspacePath,
+        workspace: TEST_DATABASE_URL,
+        db,
       });
 
       expect(result.linkedin.connected).toBe(true);
@@ -169,7 +162,7 @@ describe("connect linkedin command", () => {
       expect(result.linkedin.accounts?.[0]?.status).toBe("error");
       expect(result.linkedin.accounts?.[0]?.provider_status).toBe("ok");
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await db.close();
     }
   });
 
@@ -191,7 +184,7 @@ describe("connect linkedin command", () => {
     expect(result.accounts?.[0]?.provider_status).toBe("credentials");
   });
 
-  it("builds a Granola connect URL with the local workspace token", () => {
+  it("builds a Granola connect URL with the workspace token", () => {
     const url = connectCommandTest.granolaConnectUrl({
       syncEngineUrl: "https://sync.example.com",
       workspaceId: "workspace-1",
@@ -205,10 +198,7 @@ describe("connect linkedin command", () => {
   });
 
   it("connects Granola by posting the API key to the hosted sync engine", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "acrm-granola-connect-"));
-    const workspacePath = join(dir, "workspace.acrm");
-    const ws = await Workspace.create(workspacePath);
-    await ws.close();
+    const db = await openTestWorkspace();
     process.env.ACRM_SYNC_ENGINE_URL = "https://sync.example.com";
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes("/register")) return Response.json({ ok: true });
@@ -228,7 +218,8 @@ describe("connect linkedin command", () => {
 
     try {
       const result = await connectCommandTest.runConnectGranola({
-        workspace: workspacePath,
+        workspace: TEST_DATABASE_URL,
+        db,
         apiKey: "grn_test",
       });
 
@@ -236,15 +227,12 @@ describe("connect linkedin command", () => {
       expect(result.account).toEqual({ id: "acct-1", provider: "granola" });
       expect(fetchMock).toHaveBeenCalledTimes(2);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await db.close();
     }
   });
 
   it("requires an active LinkedIn account before reporting connected status", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "acrm-linkedin-status-"));
-    const workspacePath = join(dir, "workspace.acrm");
-    const ws = await Workspace.create(workspacePath);
-    await ws.close();
+    const db = await openTestWorkspace();
     process.env.ACRM_SYNC_ENGINE_URL = "https://sync.example.com";
     const fetchMock = vi.fn(async () => Response.json({
       ok: true,
@@ -269,7 +257,8 @@ describe("connect linkedin command", () => {
 
     try {
       const result = await connectCommandTest.runConnectLinkedinStatus({
-        workspace: workspacePath,
+        workspace: TEST_DATABASE_URL,
+        db,
       });
 
       expect(result.linkedin.connected).toBe(false);
@@ -277,7 +266,7 @@ describe("connect linkedin command", () => {
       const [url] = fetchMock.mock.calls[0] as [string];
       expect(url).toContain("/integrations/status");
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await db.close();
     }
   });
 });

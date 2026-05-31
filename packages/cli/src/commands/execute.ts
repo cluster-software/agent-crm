@@ -1,14 +1,19 @@
 import type { Command } from "commander";
-import type { LixRuntimeValue } from "@lix-js/sdk";
-import { AcrmError, ERR, Workspace, dumpSchema, query } from "@agent-crm/sdk";
-import { resolveWorkspacePath } from "../workspace-resolve.js";
+import {
+  AcrmError,
+  ERR,
+  dumpSchema,
+  query,
+  type SqlValue,
+} from "@agent-crm/sdk";
+import { openResolvedWorkspace, resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, ok, setJsonMode } from "../output/json.js";
 
 export function registerExecute(program: Command): void {
   program
     .command("execute [sql] [params]")
     .description(
-      "run a SQL query or mutation against the .acrm file; params is a JSON array. SHELL: SINGLE-QUOTE the SQL whenever it contains $1/$2/... placeholders (double quotes let zsh/bash expand $N to empty). Pass `--schema` instead of SQL to dump the EAV layout (objects, attributes, types). SQL dialect is DataFusion (NOT SQLite/Postgres) — see `acrm execute --help`.",
+      "run a Postgres query or mutation against the Agent CRM database; params is a JSON array. SHELL: SINGLE-QUOTE SQL that contains $1/$2/... placeholders. Pass `--schema` instead of SQL to dump the EAV layout.",
     )
     .option(
       "--schema",
@@ -51,7 +56,7 @@ SHELL QUOTING (read this first — it's the #1 footgun):
   - SINGLE-QUOTE any SQL that contains $1, $2, ... placeholders. In zsh/bash,
     double quotes expand $N to the shell's positional parameters (empty in an
     interactive shell), so the SQL that reaches acrm has bare gaps and the
-    parser errors out with LIX_PARSE_ERROR at a random column.
+    Postgres parser errors out at a misleading column.
 
       ❌ acrm execute "SELECT \$1"  '["hi"]'    # zsh eats $1 → "SELECT "
       ✅ acrm execute 'SELECT $1'   '["hi"]'    # single quotes pass it through
@@ -62,16 +67,16 @@ SHELL QUOTING (read this first — it's the #1 footgun):
       acrm execute 'UPDATE t SET col = $1 WHERE id = $2' \\
         '["{\\"key\\":\\"value\\"}","row-id"]'
 
-SQL dialect: DataFusion (NOT SQLite, NOT Postgres)
-  - Placeholders are $1, $2, ...   The '?' placeholder is rejected.
-  - No sqlite_master — use information_schema.tables / .columns.
-  - Single statement per call.
+SQL dialect: Postgres-compatible providers (Neon, Supabase, Postgres)
+  - Placeholders are $1, $2, ...
+  - Use information_schema.tables / .columns for introspection.
+  - JSON columns are jsonb.
 
-JSON projection (json_extract is NOT available; use the lix UDFs instead):
-  lix_json_get(json, key_or_index, ...)        returns a JSON value
-  lix_json_get_text(json, key_or_index, ...)   returns text
+JSON projection:
+  value_json -> 'key'          returns jsonb
+  value_json ->> 'key'         returns text
   Example:
-    SELECT lix_json_get_text(value_json, 'value') AS company_name
+    SELECT value_json ->> 'value' AS company_name
     FROM acrm_value
     WHERE object_slug = 'companies' AND attribute_slug = 'name'
       AND active_until IS NULL;
@@ -81,7 +86,7 @@ JSON columns to be aware of:
   acrm_value.provenance_json   import row index, source metadata
   acrm_attribute.config_json   per-attribute config (status options, ref target, ...)
 
-value_json shape by attribute_type (the key to use with lix_json_get_text):
+value_json shape by attribute_type (the key to use with ->>):
   text / url                 {"value": "<string>"}
   number                     {"value": <number>}
   date                       {"date": "<YYYY-MM-DD>"}
@@ -94,7 +99,7 @@ value_json shape by attribute_type (the key to use with lix_json_get_text):
   json                       any JSON object/array/scalar
   record-reference           {"target_object": "<slug>", "target_record_id": "<uuid>"}
 
-  Why this matters: \`lix_json_get_text(value_json, 'value')\` returns NULL on
+  Why this matters: \`value_json ->> 'value'\` returns NULL on
   status/currency/personal-name/email-address rows because those types don't
   use a "value" key. Pick the right key from the table above (or for
   record-reference attrs, prefer the indexed \`ref_record_id\` column over
@@ -123,8 +128,7 @@ Introspection (use these instead of sqlite_master):
   acrm execute "SELECT object_slug, attribute_slug, attribute_type, is_multivalued, is_unique FROM acrm_attribute ORDER BY object_slug"
   acrm execute "SELECT object_slug, COUNT(*) AS n FROM acrm_record GROUP BY object_slug"
 
-Errors carry the lix engine code + hint when applicable
-(e.g. LIX_SQL_PARSE_ERROR with hint: "Use $1 instead of ?").
+Errors carry the Postgres code + hint when applicable.
 `,
     )
     .action(
@@ -143,7 +147,7 @@ Errors carry the lix engine code + hint when applicable
                 ERR.INVALID_INPUT,
               );
             }
-            const ws = await Workspace.open(resolveWorkspacePath(root.workspace));
+            const ws = await openResolvedWorkspace(resolveWorkspacePath(root.workspace));
             try {
               ok(await dumpSchema(ws));
             } finally {
@@ -159,7 +163,7 @@ Errors carry the lix engine code + hint when applicable
             );
           }
 
-          let params: LixRuntimeValue[] = [];
+          let params: SqlValue[] = [];
           if (paramsJson) {
             let parsed: unknown;
             try {
@@ -176,7 +180,7 @@ Errors carry the lix engine code + hint when applicable
                 ERR.INVALID_INPUT,
               );
             }
-            params = parsed as LixRuntimeValue[];
+            params = parsed as SqlValue[];
           }
           if (params.length > 0 && !/\$\d+/.test(sql)) {
             throw new AcrmError(
@@ -185,7 +189,7 @@ Errors carry the lix engine code + hint when applicable
               `In zsh/bash, "$1" is the shell's first positional arg. Single-quote the SQL, or escape each $ as \\$. See \`acrm execute --help\`.`,
             );
           }
-          const ws = await Workspace.open(resolveWorkspacePath(root.workspace));
+          const ws = await openResolvedWorkspace(resolveWorkspacePath(root.workspace));
           try {
             const result = await query(ws, sql, params);
             ok({ rows: result.rows, rows_affected: result.rowsAffected });

@@ -1,8 +1,5 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { openTestWorkspace } from "../test/open-test-lix.js";
+import { openTestWorkspace } from "../test/open-test-db.js";
 import {
   exec,
   importGoogleContacts,
@@ -11,13 +8,15 @@ import {
 } from "@agent-crm/sdk";
 import { __test as gmailCommandTest } from "./import-gmail.js";
 
+const TEST_DATABASE_URL = "postgres://user:pass@localhost/acrm_test";
+
 async function rowsFor(
   ws: Workspace,
   object_slug: string,
   attribute_slug: string,
 ) {
   const r = await exec(
-    ws.lix,
+    ws.db,
     `SELECT record_id, normalized_key, value_json FROM acrm_value
      WHERE object_slug = $1 AND attribute_slug = $2 AND active_until IS NULL
      ORDER BY normalized_key`,
@@ -124,10 +123,7 @@ describe("importGoogleContacts", () => {
   });
 
   it("registers the cloud workspace and returns a hosted Gmail browser URL", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "acrm-gmail-import-"));
-    const workspacePath = join(dir, "pipeline.acrm");
-    const ws = await Workspace.create(workspacePath);
-    await ws.close();
+    const db = await openTestWorkspace();
     vi.stubEnv("ACRM_SYNC_ENGINE_URL", "https://sync.example.com");
     vi.stubEnv("ACRM_CLOUD_WORKSPACE_ID", "workspace-1");
     vi.stubEnv("ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN", "client-token-1");
@@ -136,7 +132,9 @@ describe("importGoogleContacts", () => {
 
     try {
       const result = await gmailCommandTest.runImportGmail({
-        workspace: workspacePath,
+        workspace: TEST_DATABASE_URL,
+        db,
+        workspaceName: "pipeline",
         orgId: "org-1",
       });
       const authUrl = new URL(result.auth_url);
@@ -147,12 +145,12 @@ describe("importGoogleContacts", () => {
       expect(authUrl.origin + authUrl.pathname).toBe("https://sync.example.com/integrations/gmail/connect");
       expect(authUrl.searchParams.get("workspace_id")).toBe("workspace-1");
       expect(authUrl.searchParams.get("cluster_org_id")).toBe("org-1");
-      expect(authUrl.searchParams.get("workspace_name")).toBe(basename(dir));
+      expect(authUrl.searchParams.get("workspace_name")).toBe("pipeline");
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [registerUrl, registerInit] = fetchMock.mock.calls[0] as [string, RequestInit];
       const parsedRegisterUrl = new URL(registerUrl);
       expect(parsedRegisterUrl.origin + parsedRegisterUrl.pathname).toBe("https://sync.example.com/workspaces/workspace-1/register");
-      expect(parsedRegisterUrl.searchParams.get("workspace_name")).toBe(basename(dir));
+      expect(parsedRegisterUrl.searchParams.get("workspace_name")).toBe("pipeline");
       expect(registerInit).toEqual({
         method: "POST",
         headers: {
@@ -160,13 +158,13 @@ describe("importGoogleContacts", () => {
         },
       });
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await db.close();
     }
   });
 
   it("creates person + company from a connection with email + organization", async () => {
-    const lix = await openTestWorkspace();
-    const ws = Workspace.fromLix(lix);
+    const db = await openTestWorkspace();
+    const ws = Workspace.fromDatabase(db);
     const contacts: GoogleContact[] = [
       {
         resource_name: "people/c1",
@@ -189,12 +187,12 @@ describe("importGoogleContacts", () => {
     expect(names).toHaveLength(1);
     const titles = await rowsFor(ws, "people", "job_title");
     expect(titles).toHaveLength(1);
-    await lix.close();
+    await db.close();
   });
 
   it("dedupes a contact that already exists via CSV by email", async () => {
-    const lix = await openTestWorkspace();
-    const ws = Workspace.fromLix(lix);
+    const db = await openTestWorkspace();
+    const ws = Workspace.fromDatabase(db);
     const first: GoogleContact[] = [
       {
         resource_name: "people/c1",
@@ -217,12 +215,12 @@ describe("importGoogleContacts", () => {
     expect(result.stats.people_created).toBe(0);
     const emails = await rowsFor(ws, "people", "email_addresses");
     expect(emails).toHaveLength(1);
-    await lix.close();
+    await db.close();
   });
 
   it("skips a contact with only a display name (no identifier)", async () => {
-    const lix = await openTestWorkspace();
-    const ws = Workspace.fromLix(lix);
+    const db = await openTestWorkspace();
+    const ws = Workspace.fromDatabase(db);
     const result = await importGoogleContacts(ws, {
       contacts: [
         {
@@ -234,12 +232,12 @@ describe("importGoogleContacts", () => {
     });
     expect(result.stats.people_created).toBe(0);
     expect(result.stats.people_skipped_no_identifier).toBe(1);
-    await lix.close();
+    await db.close();
   });
 
   it("classifies linkedin + x URLs from the contact card", async () => {
-    const lix = await openTestWorkspace();
-    const ws = Workspace.fromLix(lix);
+    const db = await openTestWorkspace();
+    const ws = Workspace.fromDatabase(db);
     await importGoogleContacts(ws, {
       contacts: [
         {
@@ -261,12 +259,12 @@ describe("importGoogleContacts", () => {
     const x = await rowsFor(ws, "people", "twitter_url");
     expect(x).toHaveLength(1);
     expect(x[0]?.normalized_key).toBe("x.com/larry");
-    await lix.close();
+    await db.close();
   });
 
   it("links an existing person (matched by linkedin) to the company discovered on re-import", async () => {
-    const lix = await openTestWorkspace();
-    const ws = Workspace.fromLix(lix);
+    const db = await openTestWorkspace();
+    const ws = Workspace.fromDatabase(db);
 
     // First import: linkedin-only contact. No email → no company.
     await importGoogleContacts(ws, {
@@ -313,12 +311,12 @@ describe("importGoogleContacts", () => {
       companyLinks,
       "fix: existing person now linked to the company",
     ).toHaveLength(1);
-    await lix.close();
+    await db.close();
   });
 
   it("dedupes companies across two contacts that share a domain", async () => {
-    const lix = await openTestWorkspace();
-    const ws = Workspace.fromLix(lix);
+    const db = await openTestWorkspace();
+    const ws = Workspace.fromDatabase(db);
     const result = await importGoogleContacts(ws, {
       contacts: [
         {
@@ -340,6 +338,6 @@ describe("importGoogleContacts", () => {
     const domains = await rowsFor(ws, "companies", "domains");
     expect(domains).toHaveLength(1);
     expect(domains[0]?.normalized_key).toBe("acme.com");
-    await lix.close();
+    await db.close();
   });
 });

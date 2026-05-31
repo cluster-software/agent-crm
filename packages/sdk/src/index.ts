@@ -6,6 +6,10 @@
 // "@agent-crm/sdk/integrations/linkedin-mapping.js".
 
 export * from "./db/execute.js";
+export * from "./db/postgres.js";
+export * from "./db/providers/registry.js";
+export * from "./db/providers/types.js";
+export * from "./db/types.js";
 export * from "./db/upsert.js";
 export * from "./domain/resolve-person.js";
 export * from "./domain/values.js";

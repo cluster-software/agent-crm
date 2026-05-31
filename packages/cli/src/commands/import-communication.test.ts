@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { exec, importCommunicationBatch, Workspace } from "@agent-crm/sdk";
-import { openTestWorkspace } from "../test/open-test-lix.js";
+import { openTestWorkspace } from "../test/open-test-db.js";
 
 describe("importCommunicationBatch", () => {
   it("imports Gmail communication data idempotently with relationships", async () => {
-    const lix = await openTestWorkspace();
-    const ws = Workspace.fromLix(lix);
+    const db = await openTestWorkspace();
+    const ws = Workspace.fromDatabase(db);
     const batch = {
       people: [
         {
@@ -65,7 +65,7 @@ describe("importCommunicationBatch", () => {
     };
 
     const first = await importCommunicationBatch(ws, batch);
-    const valuesAfterFirstImport = await countValues(lix);
+    const valuesAfterFirstImport = await countValues(db);
     const second = await importCommunicationBatch(ws, batch);
 
     expect(first.stats.people_created).toBe(2);
@@ -76,26 +76,26 @@ describe("importCommunicationBatch", () => {
     expect(second.stats.companies_created).toBe(0);
     expect(second.stats.communication_threads_created).toBe(0);
     expect(second.stats.communication_messages_created).toBe(0);
-    await expect(countValues(lix)).resolves.toBe(valuesAfterFirstImport);
+    await expect(countValues(db)).resolves.toBe(valuesAfterFirstImport);
 
-    await expect(countRecords(lix, "people")).resolves.toBe(2);
-    await expect(countRecords(lix, "companies")).resolves.toBe(1);
-    await expect(countRecords(lix, "communication_threads")).resolves.toBe(1);
-    await expect(countRecords(lix, "communication_messages")).resolves.toBe(1);
-    await expect(hasAttribute(lix, "people", "communication_threads")).resolves.toBe(true);
-    await expect(hasAttribute(lix, "people", "communication_messages")).resolves.toBe(true);
-    await expect(countRefs(lix, "people", "communication_threads")).resolves.toBe(2);
-    await expect(countRefs(lix, "people", "communication_messages")).resolves.toBe(2);
-    await expect(countRefs(lix, "people", "company")).resolves.toBe(2);
-    await expect(countRefs(lix, "companies", "team")).resolves.toBe(2);
-    await expect(countRefs(lix, "communication_threads", "messages")).resolves.toBe(1);
+    await expect(countRecords(db, "people")).resolves.toBe(2);
+    await expect(countRecords(db, "companies")).resolves.toBe(1);
+    await expect(countRecords(db, "communication_threads")).resolves.toBe(1);
+    await expect(countRecords(db, "communication_messages")).resolves.toBe(1);
+    await expect(hasAttribute(db, "people", "communication_threads")).resolves.toBe(true);
+    await expect(hasAttribute(db, "people", "communication_messages")).resolves.toBe(true);
+    await expect(countRefs(db, "people", "communication_threads")).resolves.toBe(2);
+    await expect(countRefs(db, "people", "communication_messages")).resolves.toBe(2);
+    await expect(countRefs(db, "people", "company")).resolves.toBe(2);
+    await expect(countRefs(db, "companies", "team")).resolves.toBe(2);
+    await expect(countRefs(db, "communication_threads", "messages")).resolves.toBe(1);
 
-    await lix.close();
+    await db.close();
   });
 
   it("imports LinkedIn communication people with linkedin_url and dedupes by it", async () => {
-    const lix = await openTestWorkspace();
-    const ws = Workspace.fromLix(lix);
+    const db = await openTestWorkspace();
+    const ws = Workspace.fromDatabase(db);
 
     const first = await importCommunicationBatch(ws, linkedinMessageBatch({
       personSourceKey: "linkedin_unipile:acct-1:profile:https://www.linkedin.com/in/enrique-goudet",
@@ -112,12 +112,12 @@ describe("importCommunicationBatch", () => {
 
     expect(first.stats.people_created).toBe(1);
     expect(second.stats.people_created).toBe(0);
-    await expect(countRecords(lix, "people")).resolves.toBe(1);
-    await expect(singleValue(lix, "people", "linkedin_url")).resolves.toBe("linkedin.com/in/enrique-goudet");
-    await expect(countValuesFor(lix, "people", "linkedin_url")).resolves.toBe(1);
-    await expect(countValuesFor(lix, "people", "source_keys")).resolves.toBe(2);
+    await expect(countRecords(db, "people")).resolves.toBe(1);
+    await expect(singleValue(db, "people", "linkedin_url")).resolves.toBe("linkedin.com/in/enrique-goudet");
+    await expect(countValuesFor(db, "people", "linkedin_url")).resolves.toBe(1);
+    await expect(countValuesFor(db, "people", "source_keys")).resolves.toBe(2);
 
-    await lix.close();
+    await db.close();
   });
 });
 
@@ -162,27 +162,27 @@ function linkedinMessageBatch(input: {
   };
 }
 
-async function countRecords(lix: Awaited<ReturnType<typeof openTestWorkspace>>, objectSlug: string) {
+async function countRecords(db: Awaited<ReturnType<typeof openTestWorkspace>>, objectSlug: string) {
   const result = await exec(
-    lix,
+    db,
     "SELECT COUNT(*) AS n FROM acrm_record WHERE object_slug = $1",
     [objectSlug],
   );
   return Number(result.rows[0]?.n ?? 0);
 }
 
-async function countValues(lix: Awaited<ReturnType<typeof openTestWorkspace>>) {
-  const result = await exec(lix, "SELECT COUNT(*) AS n FROM acrm_value", []);
+async function countValues(db: Awaited<ReturnType<typeof openTestWorkspace>>) {
+  const result = await exec(db, "SELECT COUNT(*) AS n FROM acrm_value", []);
   return Number(result.rows[0]?.n ?? 0);
 }
 
 async function countValuesFor(
-  lix: Awaited<ReturnType<typeof openTestWorkspace>>,
+  db: Awaited<ReturnType<typeof openTestWorkspace>>,
   objectSlug: string,
   attributeSlug: string,
 ) {
   const result = await exec(
-    lix,
+    db,
     `SELECT COUNT(*) AS n
      FROM acrm_value
      WHERE object_slug = $1 AND attribute_slug = $2 AND active_until IS NULL`,
@@ -192,12 +192,12 @@ async function countValuesFor(
 }
 
 async function singleValue(
-  lix: Awaited<ReturnType<typeof openTestWorkspace>>,
+  db: Awaited<ReturnType<typeof openTestWorkspace>>,
   objectSlug: string,
   attributeSlug: string,
 ) {
   const result = await exec(
-    lix,
+    db,
     `SELECT value_json
      FROM acrm_value
      WHERE object_slug = $1 AND attribute_slug = $2 AND active_until IS NULL
@@ -217,12 +217,12 @@ async function singleValue(
 }
 
 async function hasAttribute(
-  lix: Awaited<ReturnType<typeof openTestWorkspace>>,
+  db: Awaited<ReturnType<typeof openTestWorkspace>>,
   objectSlug: string,
   attributeSlug: string,
 ) {
   const result = await exec(
-    lix,
+    db,
     "SELECT 1 FROM acrm_attribute WHERE object_slug = $1 AND attribute_slug = $2",
     [objectSlug, attributeSlug],
   );
@@ -230,12 +230,12 @@ async function hasAttribute(
 }
 
 async function countRefs(
-  lix: Awaited<ReturnType<typeof openTestWorkspace>>,
+  db: Awaited<ReturnType<typeof openTestWorkspace>>,
   objectSlug: string,
   attributeSlug: string,
 ) {
   const result = await exec(
-    lix,
+    db,
     `SELECT COUNT(*) AS n FROM acrm_value
      WHERE object_slug = $1 AND attribute_slug = $2 AND active_until IS NULL`,
     [objectSlug, attributeSlug],

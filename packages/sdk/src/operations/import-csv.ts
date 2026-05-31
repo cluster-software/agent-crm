@@ -1,4 +1,4 @@
-import type { Lix, LixRuntimeValue } from "@lix-js/sdk";
+import type { AcrmDatabase, SqlValue } from "../db/types.js";
 import { exec } from "../db/execute.js";
 import {
   prepareValueInsert,
@@ -119,7 +119,7 @@ type LookupKey = {
 };
 
 async function findRecordByUnique(
-  lix: Lix,
+  db: AcrmDatabase,
   cache: LookupCache,
   object_slug: string,
   attribute_slug: string,
@@ -128,7 +128,7 @@ async function findRecordByUnique(
   const ck = cacheKey(object_slug, attribute_slug, normalized_key);
   if (cache.has(ck)) return cache.get(ck) ?? null;
   const r = await exec(
-    lix,
+    db,
     `SELECT record_id FROM acrm_value
      WHERE object_slug = $1 AND attribute_slug = $2
        AND normalized_key = $3 AND active_until IS NULL
@@ -141,7 +141,7 @@ async function findRecordByUnique(
 }
 
 async function findCompanyByName(
-  lix: Lix,
+  db: AcrmDatabase,
   cache: LookupCache,
   name: string,
 ): Promise<string | null> {
@@ -149,7 +149,7 @@ async function findCompanyByName(
   const ck = cacheKey("companies", "name__ci", key);
   if (cache.has(ck)) return cache.get(ck) ?? null;
   const r = await exec(
-    lix,
+    db,
     `SELECT record_id FROM acrm_value
      WHERE object_slug = 'companies' AND attribute_slug = 'name'
        AND active_until IS NULL
@@ -162,10 +162,8 @@ async function findCompanyByName(
   return id;
 }
 
-// Each `lix.execute()` becomes its own Lix commit. The batcher collapses
-// inserts into multi-row VALUES statements, one commit per flush. Adaptive
-// cadence: small CSVs flush once at the end; large CSVs flush every N rows
-// to bound memory.
+// Collapse inserts into multi-row VALUES statements. Adaptive cadence: small
+// CSVs flush once at the end; large CSVs flush every N rows to bound memory.
 const LARGE_CSV_THRESHOLD = 2000;
 const LARGE_CSV_FLUSH_EVERY_ROWS = 50;
 // 5,000 values × 12 placeholders = 60,000 params per statement; tested fine.
@@ -180,7 +178,7 @@ class WriteBatcher {
   private enqueuedMulti = new Set<string>();
   private mutex = new AsyncMutex();
 
-  constructor(private lix: Lix) {}
+  constructor(private db: AcrmDatabase) {}
 
   async enqueueRecord(r: PendingRecord): Promise<void> {
     await this.mutex.runExclusive(() => {
@@ -218,9 +216,9 @@ class WriteBatcher {
       const placeholders = chunk
         .map((_, j) => `($${j * 2 + 1}, $${j * 2 + 2})`)
         .join(", ");
-      const params: LixRuntimeValue[] = chunk.flatMap((r) => [r.object_slug, r.record_id]);
+      const params: SqlValue[] = chunk.flatMap((r) => [r.object_slug, r.record_id]);
       await exec(
-        this.lix,
+        this.db,
         `INSERT INTO acrm_record (object_slug, record_id) VALUES ${placeholders}`,
         params,
       );
@@ -229,7 +227,7 @@ class WriteBatcher {
   }
 
   private async flushValues(): Promise<void> {
-    const COLS = 10;
+    const COLS = 11;
     for (let i = 0; i < this.values.length; i += MAX_BATCH_VALUES) {
       const chunk = this.values.slice(i, i + MAX_BATCH_VALUES);
       const placeholders = chunk
@@ -238,12 +236,13 @@ class WriteBatcher {
           return `(${Array.from({ length: COLS }, (_, k) => `$${base + k + 1}`).join(", ")})`;
         })
         .join(", ");
-      const params: LixRuntimeValue[] = chunk.flatMap((v) => [
+      const params: SqlValue[] = chunk.flatMap((v) => [
         v.id,
         v.object_slug,
         v.record_id,
         v.attribute_slug,
         v.value_json,
+        v.active_from,
         v.normalized_key,
         v.ref_object,
         v.ref_record_id,
@@ -251,10 +250,10 @@ class WriteBatcher {
         v.provenance_json,
       ]);
       await exec(
-        this.lix,
+        this.db,
         `INSERT INTO acrm_value
           (id, object_slug, record_id, attribute_slug, value_json,
-           normalized_key, ref_object, ref_record_id, source, provenance_json)
+           active_from, normalized_key, ref_object, ref_record_id, source, provenance_json)
          VALUES ${placeholders}`,
         params,
       );
@@ -317,7 +316,7 @@ async function insertRecord(
 }
 
 async function setSingleValue(
-  lix: Lix,
+  db: AcrmDatabase,
   batcher: WriteBatcher,
   args: {
     object_slug: string;
@@ -335,18 +334,18 @@ async function setSingleValue(
   if (!args.isFresh) {
     await batcher.flush();
     await exec(
-      lix,
+      db,
       `UPDATE acrm_value SET active_until = $1
        WHERE object_slug = $2 AND record_id = $3 AND attribute_slug = $4 AND active_until IS NULL`,
       [nowIso(), args.object_slug, args.record_id, args.attribute_slug],
     );
   }
-  const id = await generateUuid(lix);
+  const id = await generateUuid(db);
   await batcher.enqueueValue(prepareValueInsert(id, { ...args, value_json }));
 }
 
 async function addMultiValue(
-  lix: Lix,
+  db: AcrmDatabase,
   batcher: WriteBatcher,
   args: {
     object_slug: string;
@@ -365,7 +364,7 @@ async function addMultiValue(
   if (!args.isFresh && normalized) {
     await batcher.flush();
     const exists = await exec(
-      lix,
+      db,
       `SELECT 1 FROM acrm_value
        WHERE object_slug = $1 AND record_id = $2 AND attribute_slug = $3
          AND normalized_key = $4 AND active_until IS NULL LIMIT 1`,
@@ -373,7 +372,7 @@ async function addMultiValue(
     );
     if (exists.rows.length) return;
   }
-  const id = await generateUuid(lix);
+  const id = await generateUuid(db);
   await batcher.enqueueValue(prepareValueInsert(id, { ...args, value_json }));
 }
 
@@ -517,7 +516,7 @@ function collectLookupKeysForRow(
 const LOOKUP_PREFETCH_CHUNK_SIZE = 500;
 
 async function prefetchUniqueLookups(
-  lix: Lix,
+  db: AcrmDatabase,
   cache: LookupCache,
   rows: readonly CsvRow[],
   defaultCountry: string | undefined,
@@ -548,7 +547,7 @@ async function prefetchUniqueLookups(
       const chunk = group.slice(i, i + LOOKUP_PREFETCH_CHUNK_SIZE);
       const placeholders = chunk.map((_, j) => `$${j + 3}`).join(", ");
       const result = await exec(
-        lix,
+        db,
         `SELECT record_id, normalized_key FROM acrm_value
          WHERE object_slug = $1 AND attribute_slug = $2
            AND active_until IS NULL
@@ -657,7 +656,7 @@ function diagnoseEmptyImport(
 }
 
 async function importRow(
-  lix: Lix,
+  db: AcrmDatabase,
   batcher: WriteBatcher,
   cache: LookupCache,
   row: CsvRow,
@@ -698,13 +697,13 @@ async function importRow(
   }
 
   if (companyDomain) {
-    const existing = await findRecordByUnique(lix, cache, "companies", "domains", companyDomain);
+    const existing = await findRecordByUnique(db, cache, "companies", "domains", companyDomain);
     if (existing) {
       companyId = existing;
     } else {
-      companyId = await generateUuid(lix);
+      companyId = await generateUuid(db);
       await insertRecord(batcher, "companies", companyId);
-      await addMultiValue(lix, batcher, {
+      await addMultiValue(db, batcher, {
         object_slug: "companies",
         record_id: companyId,
         attribute_slug: "domains",
@@ -716,7 +715,7 @@ async function importRow(
       });
       cache.set(cacheKey("companies", "domains", companyDomain), companyId);
       if (companyName) {
-        await setSingleValue(lix, batcher, {
+        await setSingleValue(db, batcher, {
           object_slug: "companies",
           record_id: companyId,
           attribute_slug: "name",
@@ -730,13 +729,13 @@ async function importRow(
       stats.companies_created++;
     }
   } else if (companyName) {
-    const existing = await findCompanyByName(lix, cache, companyName);
+    const existing = await findCompanyByName(db, cache, companyName);
     if (existing) {
       companyId = existing;
     } else {
-      companyId = await generateUuid(lix);
+      companyId = await generateUuid(db);
       await insertRecord(batcher, "companies", companyId);
-      await setSingleValue(lix, batcher, {
+      await setSingleValue(db, batcher, {
         object_slug: "companies",
         record_id: companyId,
         attribute_slug: "name",
@@ -757,7 +756,7 @@ async function importRow(
   // person
   let personId: string | null = null;
   const personLookup = await resolvePersonByIdentifiers(
-    (attr, key) => findRecordByUnique(lix, cache, "people", attr, key),
+    (attr, key) => findRecordByUnique(db, cache, "people", attr, key),
     {
       emails,
       linkedin_url: linkedin ?? undefined,
@@ -774,10 +773,10 @@ async function importRow(
     let personIsFresh = false;
     if (!personId) {
       personIsFresh = true;
-      personId = await generateUuid(lix);
+      personId = await generateUuid(db);
       await insertRecord(batcher, "people", personId);
       for (const e of emails) {
-        await addMultiValue(lix, batcher, {
+        await addMultiValue(db, batcher, {
           object_slug: "people",
           record_id: personId,
           attribute_slug: "email_addresses",
@@ -792,7 +791,7 @@ async function importRow(
       for (const p of phones) {
         const normalized = normalizePhoneNumber(p, defaultCountry);
         if (!normalized) continue;
-        await addMultiValue(lix, batcher, {
+        await addMultiValue(db, batcher, {
           object_slug: "people",
           record_id: personId,
           attribute_slug: "phone_numbers",
@@ -806,7 +805,7 @@ async function importRow(
         cache.set(cacheKey("people", "phone_numbers", normalized), personId);
       }
       if (linkedinKey) {
-        await setSingleValue(lix, batcher, {
+        await setSingleValue(db, batcher, {
           object_slug: "people",
           record_id: personId,
           attribute_slug: "linkedin_url",
@@ -819,7 +818,7 @@ async function importRow(
         cache.set(cacheKey("people", "linkedin_url", linkedinKey), personId);
       }
       if (twitterKey) {
-        await setSingleValue(lix, batcher, {
+        await setSingleValue(db, batcher, {
           object_slug: "people",
           record_id: personId,
           attribute_slug: "twitter_url",
@@ -832,7 +831,7 @@ async function importRow(
         cache.set(cacheKey("people", "twitter_url", twitterKey), personId);
       }
       if (fullName) {
-        await setSingleValue(lix, batcher, {
+        await setSingleValue(db, batcher, {
           object_slug: "people",
           record_id: personId,
           attribute_slug: "name",
@@ -844,7 +843,7 @@ async function importRow(
         });
       }
       if (jobTitle) {
-        await setSingleValue(lix, batcher, {
+        await setSingleValue(db, batcher, {
           object_slug: "people",
           record_id: personId,
           attribute_slug: "job_title",
@@ -859,7 +858,7 @@ async function importRow(
     }
 
     if (companyId) {
-      await setSingleValue(lix, batcher, {
+      await setSingleValue(db, batcher, {
         object_slug: "people",
         record_id: personId,
         attribute_slug: "company",
@@ -880,9 +879,9 @@ async function importRow(
   // deal (optional)
   const dealName = pick(row, "deal_name", "deal");
   if (dealName) {
-    const dealId = await generateUuid(lix);
+    const dealId = await generateUuid(db);
     await insertRecord(batcher, "deals", dealId);
-    await setSingleValue(lix, batcher, {
+    await setSingleValue(db, batcher, {
       object_slug: "deals",
       record_id: dealId,
       attribute_slug: "name",
@@ -894,9 +893,9 @@ async function importRow(
     });
     const stage = pick(row, "deal_stage", "stage");
     if (stage) {
-      const attr = await loadAttribute(lix, "deals", "stage");
+      const attr = await loadAttribute(db, "deals", "stage");
       if (attr) {
-        await setSingleValue(lix, batcher, {
+        await setSingleValue(db, batcher, {
           object_slug: "deals",
           record_id: dealId,
           attribute_slug: "stage",
@@ -911,7 +910,7 @@ async function importRow(
     }
     const dealValue = pick(row, "deal_value", "value");
     if (dealValue) {
-      await setSingleValue(lix, batcher, {
+      await setSingleValue(db, batcher, {
         object_slug: "deals",
         record_id: dealId,
         attribute_slug: "value",
@@ -924,7 +923,7 @@ async function importRow(
     }
     const closeDate = pick(row, "close_date", "deal_close_date");
     if (closeDate) {
-      await setSingleValue(lix, batcher, {
+      await setSingleValue(db, batcher, {
         object_slug: "deals",
         record_id: dealId,
         attribute_slug: "close_date",
@@ -937,7 +936,7 @@ async function importRow(
     }
     const nextStep = pick(row, "next_step", "deal_next_step");
     if (nextStep) {
-      await setSingleValue(lix, batcher, {
+      await setSingleValue(db, batcher, {
         object_slug: "deals",
         record_id: dealId,
         attribute_slug: "next_step",
@@ -949,7 +948,7 @@ async function importRow(
       });
     }
     if (companyId) {
-      await setSingleValue(lix, batcher, {
+      await setSingleValue(db, batcher, {
         object_slug: "deals",
         record_id: dealId,
         attribute_slug: "associated_company",
@@ -961,7 +960,7 @@ async function importRow(
       });
     }
     if (personId) {
-      await addMultiValue(lix, batcher, {
+      await addMultiValue(db, batcher, {
         object_slug: "deals",
         record_id: dealId,
         attribute_slug: "associated_people",
@@ -1093,7 +1092,7 @@ export async function importCsv(
   workspace: Workspace,
   args: ImportCsvArgs,
 ): Promise<ImportCsvResult> {
-  const lix = workspace.lix;
+  const db = workspace.db;
   const rows = parseCsv(args.csvText);
   const detected = detectColumns(rows);
   args.onStart?.({ total: rows.length, detected });
@@ -1106,8 +1105,8 @@ export async function importCsv(
     people_skipped_no_identifier: 0,
   };
   const cache: LookupCache = new Map();
-  await prefetchUniqueLookups(lix, cache, rows, args.default_country);
-  const batcher = new WriteBatcher(lix);
+  await prefetchUniqueLookups(db, cache, rows, args.default_country);
+  const batcher = new WriteBatcher(db);
   const rowLocks = new KeyedLocks();
   const touchedRecords = new Map<string, ImportCsvTouchedRecord>();
   const flushEvery =
@@ -1123,7 +1122,7 @@ export async function importCsv(
       rowLockKeys(row, args.default_country),
       () =>
         importRow(
-          lix,
+          db,
           batcher,
           cache,
           row,

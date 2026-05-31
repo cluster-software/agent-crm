@@ -1,9 +1,10 @@
-import { mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ensureCloudWorkspaceMetadata,
+  ensureCloudWorkspaceMetadataForWorkspace,
   connectCloudGranola,
   fetchCloudCommunicationExport,
   fetchCloudGranolaTranscriptsExport,
@@ -15,9 +16,12 @@ import {
   LINKEDIN_NOT_CONNECTED_MESSAGE,
   registerCloudWorkspace,
   startCloudGranolaBackfill,
-  startCloudLinkedinMessageBackfill
+  startCloudLinkedinMessageBackfill,
 } from "./cloud-workspace.js";
-import { ERR } from "@agent-crm/sdk";
+import { ERR, exec } from "@agent-crm/sdk";
+import { openTestWorkspace } from "../test/open-test-db.js";
+
+const TEST_DATABASE_URL = "postgres://user:pass@localhost/acrm_test";
 
 describe("cloud workspace metadata", () => {
   afterEach(() => {
@@ -25,35 +29,33 @@ describe("cloud workspace metadata", () => {
   });
 
   it("persists a preferred Cluster org id for future hosted connects", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "acrm-cloud-workspace-"));
+    const db = await openTestWorkspace();
     try {
-      const first = ensureCloudWorkspaceMetadata(dir, {
+      const first = await ensureCloudWorkspaceMetadata(db, {
         workspaceId: "workspace-1",
         clientToken: "client-token-1",
         clusterOrgId: "org-1",
       });
-      const second = ensureCloudWorkspaceMetadata(dir);
-      const raw = JSON.parse(await readFile(join(dir, ".agent-crm-cloud.json"), "utf8")) as {
-        clusterOrgId?: string;
-      };
+      const second = await ensureCloudWorkspaceMetadata(db);
+      const raw = await exec(db, "SELECT value FROM acrm_metadata WHERE key = $1", ["cloud.cluster_org_id"]);
 
       expect(first.clusterOrgId).toBe("org-1");
       expect(second.clusterOrgId).toBe("org-1");
-      expect(raw.clusterOrgId).toBe("org-1");
+      expect(raw.rows[0]?.value).toBe("org-1");
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await db.close();
     }
   });
 
-  it("reuses a sidecar with a matching local workspace id", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "acrm-cloud-workspace-"));
+  it("reuses metadata stored in the Postgres workspace", async () => {
+    const db = await openTestWorkspace();
     try {
-      const first = ensureCloudWorkspaceMetadata(dir, {
+      const first = await ensureCloudWorkspaceMetadata(db, {
         workspaceId: "workspace-1",
         clientToken: "client-token-1",
         localWorkspaceId: "local-1",
       });
-      const second = ensureCloudWorkspaceMetadata(dir, {
+      const second = await ensureCloudWorkspaceMetadata(db, {
         localWorkspaceId: "local-1",
       });
 
@@ -62,115 +64,189 @@ describe("cloud workspace metadata", () => {
       expect(second.clientToken).toBe("client-token-1");
       expect(second.localWorkspaceId).toBe("local-1");
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await db.close();
     }
   });
 
-  it("backfills a non-stale legacy sidecar with the local workspace id", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "acrm-cloud-workspace-"));
+  it("stores workspace credentials in a canonical metadata row", async () => {
+    const db = await openTestWorkspace();
     try {
-      const workspacePath = join(dir, "test.acrm");
-      await writeFile(workspacePath, "", "utf8");
-      await writeFile(join(dir, ".agent-crm-cloud.json"), `${JSON.stringify({
+      await ensureCloudWorkspaceMetadata(db, {
         workspaceId: "workspace-1",
         clientToken: "client-token-1",
-        createdAt: new Date(Date.now() + 60_000).toISOString(),
-      })}\n`, "utf8");
-
-      const metadata = ensureCloudWorkspaceMetadata(dir, {
+        clusterOrgId: "org-1",
         localWorkspaceId: "local-1",
-        workspacePath,
       });
-      const raw = JSON.parse(await readFile(join(dir, ".agent-crm-cloud.json"), "utf8")) as {
-        workspaceId?: string;
-        localWorkspaceId?: string;
-      };
+      const raw = await exec(db, "SELECT value FROM acrm_metadata WHERE key = $1", ["cloud.workspace"]);
+
+      expect(JSON.parse(String(raw.rows[0]?.value))).toMatchObject({
+        workspaceId: "workspace-1",
+        clientToken: "client-token-1",
+        clusterOrgId: "org-1",
+        localWorkspaceId: "local-1",
+      });
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("prefers canonical cloud credentials over stale split metadata rows", async () => {
+    const db = await openTestWorkspace();
+    try {
+      await exec(db, "INSERT INTO acrm_metadata (key, value) VALUES ($1, $2)", [
+        "cloud.workspace",
+        JSON.stringify({
+          workspaceId: "workspace-canonical",
+          clientToken: "client-token-canonical",
+          createdAt: "2026-05-31T00:00:00.000Z",
+        }),
+      ]);
+      await exec(db, "INSERT INTO acrm_metadata (key, value) VALUES ($1, $2)", [
+        "cloud.workspace_id",
+        "workspace-stale",
+      ]);
+      await exec(db, "INSERT INTO acrm_metadata (key, value) VALUES ($1, $2)", [
+        "cloud.client_token",
+        "client-token-stale",
+      ]);
+
+      const metadata = await ensureCloudWorkspaceMetadata(db);
+      const split = await exec(
+        db,
+        "SELECT key, value FROM acrm_metadata WHERE key IN ($1, $2) ORDER BY key",
+        ["cloud.client_token", "cloud.workspace_id"],
+      );
+
+      expect(metadata.workspaceId).toBe("workspace-canonical");
+      expect(metadata.clientToken).toBe("client-token-canonical");
+      expect(split.rows).toEqual([
+        { key: "cloud.client_token", value: "client-token-canonical" },
+        { key: "cloud.workspace_id", value: "workspace-canonical" },
+      ]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("migrates legacy sidecar credentials into the Postgres workspace", async () => {
+    const db = await openTestWorkspace();
+    const legacyDir = mkdtempSync(join(tmpdir(), "acrm-cloud-"));
+    try {
+      writeFileSync(
+        join(legacyDir, ".agent-crm-cloud.json"),
+        `${JSON.stringify({
+          workspaceId: "workspace-legacy",
+          clientToken: "client-token-legacy",
+          clusterOrgId: "org-legacy",
+        })}\n`,
+        "utf8",
+      );
+
+      const metadata = await ensureCloudWorkspaceMetadataForWorkspace(
+        TEST_DATABASE_URL,
+        {},
+        { db, legacyMetadataDir: legacyDir },
+      );
+      const raw = await exec(db, "SELECT value FROM acrm_metadata WHERE key = $1", ["cloud.workspace"]);
+
+      expect(metadata.workspaceId).toBe("workspace-legacy");
+      expect(metadata.clientToken).toBe("client-token-legacy");
+      expect(metadata.clusterOrgId).toBe("org-legacy");
+      expect(JSON.parse(String(raw.rows[0]?.value))).toMatchObject({
+        workspaceId: "workspace-legacy",
+        clientToken: "client-token-legacy",
+        clusterOrgId: "org-legacy",
+      });
+    } finally {
+      rmSync(legacyDir, { recursive: true, force: true });
+      await db.close();
+    }
+  });
+
+  it("does not implicitly migrate a sidecar from the current working directory", async () => {
+    const db = await openTestWorkspace();
+    const oldCwd = process.cwd();
+    const legacyDir = mkdtempSync(join(tmpdir(), "acrm-cloud-"));
+    try {
+      writeFileSync(
+        join(legacyDir, ".agent-crm-cloud.json"),
+        `${JSON.stringify({
+          workspaceId: "workspace-legacy",
+          clientToken: "client-token-legacy",
+        })}\n`,
+        "utf8",
+      );
+      process.chdir(legacyDir);
+
+      const metadata = await ensureCloudWorkspaceMetadataForWorkspace(
+        TEST_DATABASE_URL,
+        { workspaceId: "workspace-new", clientToken: "client-token-new" },
+        { db },
+      );
+
+      expect(metadata.workspaceId).toBe("workspace-new");
+      expect(metadata.clientToken).toBe("client-token-new");
+    } finally {
+      process.chdir(oldCwd);
+      rmSync(legacyDir, { recursive: true, force: true });
+      await db.close();
+    }
+  });
+
+  it("does not let a legacy sidecar overwrite existing Postgres metadata", async () => {
+    const db = await openTestWorkspace();
+    const legacyDir = mkdtempSync(join(tmpdir(), "acrm-cloud-"));
+    try {
+      await ensureCloudWorkspaceMetadata(db, {
+        workspaceId: "workspace-db",
+        clientToken: "client-token-db",
+        clusterOrgId: "org-db",
+      });
+      writeFileSync(
+        join(legacyDir, ".agent-crm-cloud.json"),
+        `${JSON.stringify({
+          workspaceId: "workspace-legacy",
+          clientToken: "client-token-legacy",
+          clusterOrgId: "org-legacy",
+        })}\n`,
+        "utf8",
+      );
+
+      const metadata = await ensureCloudWorkspaceMetadataForWorkspace(
+        TEST_DATABASE_URL,
+        {},
+        { db, legacyMetadataDir: legacyDir },
+      );
+
+      expect(metadata.workspaceId).toBe("workspace-db");
+      expect(metadata.clientToken).toBe("client-token-db");
+      expect(metadata.clusterOrgId).toBe("org-db");
+    } finally {
+      rmSync(legacyDir, { recursive: true, force: true });
+      await db.close();
+    }
+  });
+
+  it("keeps existing workspace credentials but lets preferred Cluster org id change", async () => {
+    const db = await openTestWorkspace();
+    try {
+      await ensureCloudWorkspaceMetadata(db, {
+        workspaceId: "workspace-1",
+        clientToken: "client-token-1",
+        localWorkspaceId: "local-1",
+      });
+      const metadata = await ensureCloudWorkspaceMetadata(db, {
+        workspaceId: "new-workspace",
+        clientToken: "new-token",
+        clusterOrgId: "org-2",
+      });
 
       expect(metadata.workspaceId).toBe("workspace-1");
-      expect(raw.localWorkspaceId).toBe("local-1");
-      expect((await readdir(dir)).filter((name) => name.includes(".stale-"))).toEqual([]);
+      expect(metadata.clientToken).toBe("client-token-1");
+      expect(metadata.clusterOrgId).toBe("org-2");
+      expect(metadata.localWorkspaceId).toBe("local-1");
     } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("archives a stale legacy sidecar when the .acrm file is newer", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "acrm-cloud-workspace-"));
-    try {
-      const workspacePath = join(dir, "test.acrm");
-      await writeFile(workspacePath, "", "utf8");
-      await writeFile(join(dir, ".agent-crm-cloud.json"), `${JSON.stringify({
-        workspaceId: "old-workspace",
-        clientToken: "old-token",
-        createdAt: "2000-01-01T00:00:00.000Z",
-      })}\n`, "utf8");
-
-      const metadata = ensureCloudWorkspaceMetadata(dir, {
-        workspaceId: "new-workspace",
-        clientToken: "new-token",
-        localWorkspaceId: "local-1",
-        workspacePath,
-      });
-      const entries = await readdir(dir);
-
-      expect(metadata.workspaceId).toBe("new-workspace");
-      expect(metadata.clientToken).toBe("new-token");
-      expect(entries.some((name) => name.startsWith(".agent-crm-cloud.json.stale-"))).toBe(true);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("archives a stale legacy sidecar without createdAt using file timestamps", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "acrm-cloud-workspace-"));
-    try {
-      const workspacePath = join(dir, "test.acrm");
-      await writeFile(workspacePath, "", "utf8");
-      await writeFile(join(dir, ".agent-crm-cloud.json"), `${JSON.stringify({
-        workspaceId: "old-workspace",
-        clientToken: "old-token",
-      })}\n`, "utf8");
-      const future = new Date(Date.now() + 60_000);
-      await utimes(workspacePath, future, future);
-
-      const metadata = ensureCloudWorkspaceMetadata(dir, {
-        workspaceId: "new-workspace",
-        clientToken: "new-token",
-        localWorkspaceId: "local-1",
-        workspacePath,
-      });
-      const entries = await readdir(dir);
-
-      expect(metadata.workspaceId).toBe("new-workspace");
-      expect(metadata.clientToken).toBe("new-token");
-      expect(entries.some((name) => name.startsWith(".agent-crm-cloud.json.stale-"))).toBe(true);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("archives a sidecar with a mismatched local workspace id", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "acrm-cloud-workspace-"));
-    try {
-      ensureCloudWorkspaceMetadata(dir, {
-        workspaceId: "old-workspace",
-        clientToken: "old-token",
-        localWorkspaceId: "local-1",
-      });
-
-      const metadata = ensureCloudWorkspaceMetadata(dir, {
-        workspaceId: "new-workspace",
-        clientToken: "new-token",
-        localWorkspaceId: "local-2",
-      });
-      const entries = await readdir(dir);
-
-      expect(metadata.workspaceId).toBe("new-workspace");
-      expect(metadata.clientToken).toBe("new-token");
-      expect(metadata.localWorkspaceId).toBe("local-2");
-      expect(entries.some((name) => name.startsWith(".agent-crm-cloud.json.stale-"))).toBe(true);
-    } finally {
-      await rm(dir, { recursive: true, force: true });
+      await db.close();
     }
   });
 

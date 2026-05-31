@@ -8,12 +8,12 @@ import {
   Workspace,
   type LinkedinRelation,
 } from "@agent-crm/sdk";
-import { openTestWorkspace } from "../test/open-test-lix.js";
+import { openTestWorkspace } from "../test/open-test-db.js";
 
 describe("importLinkedinRelations", () => {
   it("imports LinkedIn relation rows into people", async () => {
-    const lix = await openTestWorkspace();
-    const ws = Workspace.fromLix(lix);
+    const db = await openTestWorkspace();
+    const ws = Workspace.fromDatabase(db);
 
     const result = await importLinkedinRelations(ws, {
       relations: [
@@ -39,12 +39,12 @@ describe("importLinkedinRelations", () => {
     await expect(countValues(ws, "source_keys")).resolves.toBe(1);
     await expect(countRecords(ws, "companies")).resolves.toBe(0);
     await expect(referenceCount(ws, "people", "company", "companies")).resolves.toBe(0);
-    await lix.close();
+    await db.close();
   });
 
   it("imports companies from LinkedIn relation rows and links people", async () => {
-    const lix = await openTestWorkspace();
-    const ws = Workspace.fromLix(lix);
+    const db = await openTestWorkspace();
+    const ws = Workspace.fromDatabase(db);
 
     const relations = [
       relation({
@@ -72,12 +72,12 @@ describe("importLinkedinRelations", () => {
     await expect(valueFor(ws, "companies", "linkedin_url")).resolves.toBe("linkedin.com/company/analytical-engines");
     await expect(referenceCount(ws, "people", "company", "companies")).resolves.toBe(1);
     await expect(referenceCount(ws, "companies", "team", "people")).resolves.toBe(1);
-    await lix.close();
+    await db.close();
   });
 
   it("is idempotent across repeated imports", async () => {
-    const lix = await openTestWorkspace();
-    const ws = Workspace.fromLix(lix);
+    const db = await openTestWorkspace();
+    const ws = Workspace.fromDatabase(db);
     const relations = [
       relation({
         member_id: "member-1",
@@ -96,12 +96,12 @@ describe("importLinkedinRelations", () => {
     expect(second.stats.people_updated).toBe(0);
     await expect(countRecords(ws, "people")).resolves.toBe(1);
     await expect(countAllValues(ws)).resolves.toBe(valuesAfterFirstImport);
-    await lix.close();
+    await db.close();
   });
 
   it("dedupes by LinkedIn URL before relation source key", async () => {
-    const lix = await openTestWorkspace();
-    const ws = Workspace.fromLix(lix);
+    const db = await openTestWorkspace();
+    const ws = Workspace.fromDatabase(db);
 
     await importLinkedinRelations(ws, {
       relations: [
@@ -120,15 +120,15 @@ describe("importLinkedinRelations", () => {
 
     await expect(countRecords(ws, "people")).resolves.toBe(1);
     await expect(countValues(ws, "source_keys")).resolves.toBe(2);
-    await lix.close();
+    await db.close();
   });
 
   it("does not overwrite richer existing person fields", async () => {
-    const lix = await openTestWorkspace();
-    const ws = Workspace.fromLix(lix);
+    const db = await openTestWorkspace();
+    const ws = Workspace.fromDatabase(db);
     const personId = "person-existing";
-    await insertRecord(lix, "people", personId);
-    await addMultiValue(lix, {
+    await insertRecord(db, "people", personId);
+    await addMultiValue(db, {
       object_slug: "people",
       record_id: personId,
       attribute_slug: "source_keys",
@@ -137,7 +137,7 @@ describe("importLinkedinRelations", () => {
       source: "test",
       provenance: {},
     });
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "people",
       record_id: personId,
       attribute_slug: "linkedin_url",
@@ -146,7 +146,7 @@ describe("importLinkedinRelations", () => {
       source: "test",
       provenance: {},
     });
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "people",
       record_id: personId,
       attribute_slug: "name",
@@ -155,7 +155,7 @@ describe("importLinkedinRelations", () => {
       source: "test",
       provenance: {},
     });
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "people",
       record_id: personId,
       attribute_slug: "job_title",
@@ -183,7 +183,7 @@ describe("importLinkedinRelations", () => {
     await expect(valueFor(ws, "people", "job_title")).resolves.toBe("Mathematician");
     await expect(valueFor(ws, "people", "linkedin_connected_at")).resolves.toBe("2025-03-15T15:16:09.000Z");
     await expect(countValues(ws, "source_keys")).resolves.toBe(2);
-    await lix.close();
+    await db.close();
   });
 });
 
@@ -199,7 +199,7 @@ function relation(overrides: Partial<LinkedinRelation>): LinkedinRelation {
 
 async function valueFor(ws: Workspace, objectSlug: string, attributeSlug: string): Promise<string | null> {
   const result = await exec(
-    ws.lix,
+    ws.db,
     `SELECT value_json
      FROM acrm_value
      WHERE object_slug = $1
@@ -223,7 +223,7 @@ async function referenceCount(
   refObject: string,
 ): Promise<number> {
   const result = await exec(
-    ws.lix,
+    ws.db,
     `SELECT COUNT(*) AS n
      FROM acrm_value
      WHERE object_slug = $1
@@ -237,7 +237,7 @@ async function referenceCount(
 
 async function countRecords(ws: Workspace, objectSlug: string): Promise<number> {
   const result = await exec(
-    ws.lix,
+    ws.db,
     "SELECT COUNT(*) AS n FROM acrm_record WHERE object_slug = $1",
     [objectSlug],
   );
@@ -246,7 +246,7 @@ async function countRecords(ws: Workspace, objectSlug: string): Promise<number> 
 
 async function countValues(ws: Workspace, attributeSlug: string): Promise<number> {
   const result = await exec(
-    ws.lix,
+    ws.db,
     `SELECT COUNT(*) AS n
      FROM acrm_value
      WHERE object_slug = 'people'
@@ -259,7 +259,7 @@ async function countValues(ws: Workspace, attributeSlug: string): Promise<number
 
 async function countAllValues(ws: Workspace): Promise<number> {
   const result = await exec(
-    ws.lix,
+    ws.db,
     "SELECT COUNT(*) AS n FROM acrm_value WHERE active_until IS NULL",
   );
   return Number(result.rows[0]?.n ?? 0);

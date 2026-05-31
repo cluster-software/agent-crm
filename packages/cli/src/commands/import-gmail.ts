@@ -1,10 +1,8 @@
 import type { Command } from "commander";
 import { spawn } from "node:child_process";
-import { basename, dirname } from "node:path";
-import { AcrmError, ERR } from "@agent-crm/sdk";
-import { resolveWorkspacePath } from "../workspace-resolve.js";
+import { AcrmError, ERR, type AcrmDatabase } from "@agent-crm/sdk";
+import { resolveWorkspacePath, workspaceDisplayName } from "../workspace-resolve.js";
 import { fail, isJson, ok, setJsonMode } from "../output/json.js";
-import { loadDotenv } from "../lib/dotenv.js";
 import {
   DEFAULT_SYNC_ENGINE_URL,
   ensureCloudWorkspaceMetadataForWorkspace,
@@ -78,7 +76,12 @@ export function attachGmailSubcommand(parent: Command): void {
     });
 }
 
-async function runImportGmail(opts: { workspace?: string; orgId?: string } & GmailSyncPreferences): Promise<{
+async function runImportGmail(opts: {
+  workspace?: string;
+  db?: AcrmDatabase;
+  workspaceName?: string;
+  orgId?: string;
+} & GmailSyncPreferences): Promise<{
   auth_url: string;
   workspace_id: string;
   cluster_org_id: string | null;
@@ -86,28 +89,26 @@ async function runImportGmail(opts: { workspace?: string; orgId?: string } & Gma
   gmail_sync_preferences?: GmailSyncPreferences;
 }> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
-  const workspaceDir = dirname(workspaceFile);
-  loadDotenv(workspaceDir);
-  loadDotenv(process.cwd());
+  const workspaceName = workspaceDisplayName(opts.workspaceName);
 
   const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
     clusterOrgId: opts.orgId ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
-  });
+  }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   await registerCloudWorkspace({
     syncEngineUrl,
     workspaceId: metadata.workspaceId,
     clientToken: metadata.clientToken,
-    workspaceName: basename(workspaceDir),
+    workspaceName,
   });
   return {
     auth_url: gmailConnectUrl({
       syncEngineUrl,
       workspaceId: metadata.workspaceId,
       clusterOrgId: metadata.clusterOrgId,
-      workspaceName: basename(workspaceDir),
+      workspaceName,
       backfillDays: opts.backfillDays,
       backfillSince: opts.backfillSince,
       excludeNewsletters: opts.excludeNewsletters,

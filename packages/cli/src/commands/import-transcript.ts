@@ -4,13 +4,12 @@ import type { Command } from "commander";
 import {
   AcrmError,
   ERR,
-  Workspace,
   importTranscript,
   parseTranscriptPayload,
   type TranscriptImportResult,
   type TranscriptPayload,
 } from "@agent-crm/sdk";
-import { resolveWorkspacePath } from "../workspace-resolve.js";
+import { openResolvedWorkspace, resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, ok, setJsonMode } from "../output/json.js";
 
 type Opts = {
@@ -113,7 +112,7 @@ async function runImportTranscript(opts: {
 }): Promise<TranscriptImportResult> {
   const payload = await loadPayload(opts);
 
-  const ws = await Workspace.open(resolveWorkspacePath(opts.workspace));
+  const ws = await openResolvedWorkspace(resolveWorkspacePath(opts.workspace));
   try {
     return await importTranscript(ws, payload);
   } finally {

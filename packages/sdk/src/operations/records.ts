@@ -1,4 +1,4 @@
-import type { Lix } from "@lix-js/sdk";
+import type { AcrmDatabase, JsonValue } from "../db/types.js";
 import { exec } from "../db/execute.js";
 import {
   addMultiValue,
@@ -23,7 +23,7 @@ type ValueRow = {
   id: string;
   attribute_slug: string;
   attribute_type: string;
-  value_json: string;
+  value_json: unknown;
   normalized_key: string | null;
   ref_object: string | null;
   ref_record_id: string | null;
@@ -141,7 +141,7 @@ export async function planDedupe(
   workspace: Workspace,
   input: PlanDedupeInput,
 ): Promise<DedupePlan> {
-  const lix = workspace.lix;
+  const db = workspace.db;
   const { object_slug, keep_record_id, discard_record_id } = input;
   const resolver: ConflictResolver = input.resolveConflict ?? "keep";
 
@@ -152,17 +152,17 @@ export async function planDedupe(
     );
   }
 
-  await assertRecordExists(lix, object_slug, keep_record_id, "keep");
-  await assertRecordExists(lix, object_slug, discard_record_id, "discard");
+  await assertRecordExists(db, object_slug, keep_record_id, "keep");
+  await assertRecordExists(db, object_slug, discard_record_id, "discard");
 
-  const attrs = await loadAttributeMeta(lix, object_slug);
+  const attrs = await loadAttributeMeta(db, object_slug);
   const discardValues = await loadActiveValues(
-    lix,
+    db,
     object_slug,
     discard_record_id,
   );
   const keeperValues = await loadActiveValues(
-    lix,
+    db,
     object_slug,
     keep_record_id,
   );
@@ -253,10 +253,10 @@ export async function planDedupe(
     }
   }
 
-  const inbound = await loadInboundRefs(lix, object_slug, discard_record_id);
+  const inbound = await loadInboundRefs(db, object_slug, discard_record_id);
 
   const keeperInboundKeys = new Set<string>();
-  const keeperInbound = await loadInboundRefs(lix, object_slug, keep_record_id);
+  const keeperInbound = await loadInboundRefs(db, object_slug, keep_record_id);
   for (const k of keeperInbound) {
     keeperInboundKeys.add(`${k.object_slug}|${k.record_id}|${k.attribute_slug}`);
   }
@@ -311,7 +311,7 @@ export async function applyDedupe(
   workspace: Workspace,
   plan: DedupePlan,
 ): Promise<DedupeResult> {
-  const lix = workspace.lix;
+  const db = workspace.db;
   const { object_slug, keep_record_id, discard_record_id, items } = plan;
 
   let movedCount = 0;
@@ -325,7 +325,7 @@ export async function applyDedupe(
       case "move_multi":
       case "move_single_empty_keeper": {
         await exec(
-          lix,
+          db,
           `UPDATE acrm_value SET record_id = $1 WHERE id = $2`,
           [keep_record_id, item.from_value_id],
         );
@@ -334,7 +334,7 @@ export async function applyDedupe(
       }
       case "drop_multi_duplicate": {
         await exec(
-          lix,
+          db,
           `UPDATE acrm_value SET active_until = $1 WHERE id = $2`,
           [ts, item.from_value_id],
         );
@@ -343,7 +343,7 @@ export async function applyDedupe(
       }
       case "single_conflict_keep_wins": {
         await exec(
-          lix,
+          db,
           `UPDATE acrm_value SET active_until = $1 WHERE id = $2`,
           [ts, item.dropped_value_id],
         );
@@ -352,12 +352,12 @@ export async function applyDedupe(
       }
       case "single_conflict_discard_wins": {
         await exec(
-          lix,
+          db,
           `UPDATE acrm_value SET active_until = $1 WHERE id = $2`,
           [ts, item.dropped_value_id],
         );
         await exec(
-          lix,
+          db,
           `UPDATE acrm_value SET record_id = $1 WHERE id = $2`,
           [keep_record_id, item.kept_value_id],
         );
@@ -367,40 +367,32 @@ export async function applyDedupe(
       }
       case "inbound_redirect": {
         // Rewrite both columns: the indexed `ref_record_id` column and the
-        // embedded `target_record_id` field inside value_json. Lix's
-        // DataFusion dialect doesn't expose JSON UPDATE, so we round-trip
-        // through JS.
+        // embedded `target_record_id` field inside value_json. Keep this
+        // dialect-neutral by round-tripping through JS.
         const cur = await exec(
-          lix,
+          db,
           `SELECT value_json FROM acrm_value WHERE id = $1`,
           [item.value_id],
         );
-        const raw = cur.rows[0]?.value_json as string | undefined;
+        const raw = cur.rows[0]?.value_json;
         let nextJson = raw;
-        if (raw) {
-          try {
-            const obj = JSON.parse(raw) as Record<string, unknown>;
-            if (typeof obj.target_record_id === "string") {
-              obj.target_record_id = keep_record_id;
-              nextJson = JSON.stringify(obj);
-            }
-          } catch {
-            // Leave value_json untouched if it's not the expected shape.
-          }
+        const obj = recordJson(raw);
+        if (obj && typeof obj.target_record_id === "string") {
+          nextJson = { ...obj, target_record_id: keep_record_id };
         }
         await exec(
-          lix,
+          db,
           `UPDATE acrm_value
            SET ref_record_id = $1, value_json = $2
            WHERE id = $3`,
-          [keep_record_id, nextJson ?? null, item.value_id],
+          [keep_record_id, (nextJson ?? null) as JsonValue, item.value_id],
         );
         redirectedCount++;
         break;
       }
       case "inbound_drop_duplicate": {
         await exec(
-          lix,
+          db,
           `UPDATE acrm_value SET active_until = $1 WHERE id = $2`,
           [ts, item.value_id],
         );
@@ -411,7 +403,7 @@ export async function applyDedupe(
   }
 
   await exec(
-    lix,
+    db,
     `DELETE FROM acrm_record WHERE object_slug = $1 AND record_id = $2`,
     [object_slug, discard_record_id],
   );
@@ -472,13 +464,13 @@ export async function dedupeRecords(
 }
 
 async function assertRecordExists(
-  lix: Lix,
+  db: AcrmDatabase,
   object_slug: string,
   record_id: string,
   side: "keep" | "discard",
 ): Promise<void> {
   const r = await exec(
-    lix,
+    db,
     `SELECT 1 FROM acrm_record WHERE object_slug = $1 AND record_id = $2`,
     [object_slug, record_id],
   );
@@ -491,11 +483,11 @@ async function assertRecordExists(
 }
 
 async function loadAttributeMeta(
-  lix: Lix,
+  db: AcrmDatabase,
   object_slug: string,
 ): Promise<Map<string, AttributeMeta>> {
   const r = await exec(
-    lix,
+    db,
     `SELECT attribute_slug, attribute_type, is_multivalued
      FROM acrm_attribute WHERE object_slug = $1`,
     [object_slug],
@@ -511,12 +503,12 @@ async function loadAttributeMeta(
 }
 
 async function loadActiveValues(
-  lix: Lix,
+  db: AcrmDatabase,
   object_slug: string,
   record_id: string,
 ): Promise<ValueRow[]> {
   const r = await exec(
-    lix,
+    db,
     `SELECT v.id, v.attribute_slug, a.attribute_type, v.value_json,
             v.normalized_key, v.ref_object, v.ref_record_id
      FROM acrm_value v
@@ -529,7 +521,7 @@ async function loadActiveValues(
     id: row.id as string,
     attribute_slug: row.attribute_slug as string,
     attribute_type: row.attribute_type as string,
-    value_json: (row.value_json as string | null) ?? "",
+    value_json: row.value_json ?? null,
     normalized_key: (row.normalized_key as string | null) ?? null,
     ref_object: (row.ref_object as string | null) ?? null,
     ref_record_id: (row.ref_record_id as string | null) ?? null,
@@ -537,12 +529,12 @@ async function loadActiveValues(
 }
 
 async function loadInboundRefs(
-  lix: Lix,
+  db: AcrmDatabase,
   ref_object: string,
   ref_record_id: string,
 ): Promise<InboundRow[]> {
   const r = await exec(
-    lix,
+    db,
     `SELECT v.id, v.object_slug, v.record_id, v.attribute_slug, a.attribute_type,
             v.value_json, v.normalized_key, v.ref_object, v.ref_record_id
      FROM acrm_value v
@@ -557,7 +549,7 @@ async function loadInboundRefs(
     record_id: row.record_id as string,
     attribute_slug: row.attribute_slug as string,
     attribute_type: row.attribute_type as string,
-    value_json: (row.value_json as string | null) ?? "",
+    value_json: row.value_json ?? null,
     normalized_key: (row.normalized_key as string | null) ?? null,
     ref_object: (row.ref_object as string | null) ?? null,
     ref_record_id: (row.ref_record_id as string | null) ?? null,
@@ -577,16 +569,28 @@ function sameValue(a: ValueRow, b: ValueRow): boolean {
   if (a.normalized_key && b.normalized_key) {
     return a.normalized_key === b.normalized_key;
   }
-  return a.value_json === b.value_json;
+  return jsonKey(a.value_json) === jsonKey(b.value_json);
 }
 
-function safeJson(raw: string): unknown {
+function safeJson(raw: unknown): unknown {
+  if (typeof raw !== "string") return raw ?? null;
   if (!raw) return null;
   try {
     return JSON.parse(raw);
   } catch {
     return raw;
   }
+}
+
+function recordJson(raw: unknown): Record<string, unknown> | null {
+  const parsed = safeJson(raw);
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : null;
+}
+
+function jsonKey(raw: unknown): string {
+  return JSON.stringify(safeJson(raw));
 }
 
 type AttributeRow = {
@@ -616,11 +620,11 @@ export type UpdateRecordResult = {
 };
 
 async function assertObjectRegistered(
-  lix: Lix,
+  db: AcrmDatabase,
   object_slug: string,
 ): Promise<void> {
   await assertObjectExists(
-    lix,
+    db,
     object_slug,
     `unknown object: ${object_slug}. Register it via createObject() or check existing objects with a SELECT against acrm_object.`,
   );
@@ -662,7 +666,7 @@ function coerceFieldValue(
 // to catch invalid enum values, unparseable emails, etc.; doing it before any
 // write means we never leave a half-populated record behind.
 async function prepareFields(
-  lix: Lix,
+  db: AcrmDatabase,
   object_slug: string,
   fields: string[],
 ): Promise<PreparedField[]> {
@@ -670,7 +674,7 @@ async function prepareFields(
   const attrMeta = new Map<string, AttributeRow>();
   for (const f of parsed) {
     if (attrMeta.has(f.slug)) continue;
-    const attr = await loadCatalogAttribute(lix, object_slug, f.slug);
+    const attr = await loadCatalogAttribute(db, object_slug, f.slug);
     if (!attr) {
       throw new AcrmError(
         `unknown attribute: ${object_slug}.${f.slug}. Register it via addAttribute() or check the workspace schema.`,
@@ -693,7 +697,7 @@ async function prepareFields(
 }
 
 async function applyFields(
-  lix: Lix,
+  db: AcrmDatabase,
   object_slug: string,
   record_id: string,
   prepared: PreparedField[],
@@ -703,7 +707,7 @@ async function applyFields(
   let n = 0;
   for (const e of prepared) {
     if (e.attr.is_multivalued) {
-      await addMultiValue(lix, {
+      await addMultiValue(db, {
         object_slug,
         record_id,
         attribute_slug: e.slug,
@@ -713,7 +717,7 @@ async function applyFields(
         provenance,
       });
     } else {
-      await setSingleValue(lix, {
+      await setSingleValue(db, {
         object_slug,
         record_id,
         attribute_slug: e.slug,
@@ -732,16 +736,16 @@ export async function createRecord(
   workspace: Workspace,
   args: { object_slug: string; fields: string[]; source?: string },
 ): Promise<CreateRecordResult> {
-  const lix = workspace.lix;
+  const db = workspace.db;
   const { object_slug, fields } = args;
   const source = args.source ?? "sdk:records-create";
 
-  await assertObjectRegistered(lix, object_slug);
-  const prepared = await prepareFields(lix, object_slug, fields);
+  await assertObjectRegistered(db, object_slug);
+  const prepared = await prepareFields(db, object_slug, fields);
 
-  const record_id = await generateUuid(lix);
-  await insertRecord(lix, object_slug, record_id);
-  const inserted = await applyFields(lix, object_slug, record_id, prepared, source);
+  const record_id = await generateUuid(db);
+  await insertRecord(db, object_slug, record_id);
+  const inserted = await applyFields(db, object_slug, record_id, prepared, source);
 
   return {
     created: true,
@@ -760,14 +764,14 @@ export async function updateRecord(
     source?: string;
   },
 ): Promise<UpdateRecordResult> {
-  const lix = workspace.lix;
+  const db = workspace.db;
   const { object_slug, record_id, fields } = args;
   const source = args.source ?? "sdk:records-update";
 
-  await assertObjectRegistered(lix, object_slug);
+  await assertObjectRegistered(db, object_slug);
 
   const exists = await exec(
-    lix,
+    db,
     "SELECT record_id FROM acrm_record WHERE object_slug = $1 AND record_id = $2",
     [object_slug, record_id],
   );
@@ -778,7 +782,7 @@ export async function updateRecord(
     );
   }
 
-  const prepared = await prepareFields(lix, object_slug, fields);
+  const prepared = await prepareFields(db, object_slug, fields);
   if (prepared.length === 0) {
     throw new AcrmError(
       "no fields provided (nothing to update)",
@@ -786,7 +790,7 @@ export async function updateRecord(
     );
   }
 
-  const changed = await applyFields(lix, object_slug, record_id, prepared, source);
+  const changed = await applyFields(db, object_slug, record_id, prepared, source);
 
   return {
     updated: true,

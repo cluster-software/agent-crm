@@ -1,4 +1,4 @@
-import type { Lix, LixRuntimeValue } from "@lix-js/sdk";
+import type { AcrmDatabase, SqlValue } from "./types.js";
 import { exec } from "./execute.js";
 import { prepareValueInsert } from "./value-row.js";
 import { generateUuid } from "../lib/ids.js";
@@ -16,13 +16,13 @@ function needsConfig(type: AttributeType): boolean {
 }
 
 export async function findRecordByUnique(
-  lix: Lix,
+  db: AcrmDatabase,
   object_slug: string,
   attribute_slug: string,
   normalized_key: string,
 ): Promise<string | null> {
   const r = await exec(
-    lix,
+    db,
     `SELECT record_id FROM acrm_value
      WHERE object_slug = $1 AND attribute_slug = $2
        AND normalized_key = $3 AND active_until IS NULL
@@ -33,11 +33,11 @@ export async function findRecordByUnique(
 }
 
 export async function findCompanyByName(
-  lix: Lix,
+  db: AcrmDatabase,
   name: string,
 ): Promise<string | null> {
   const r = await exec(
-    lix,
+    db,
     `SELECT record_id FROM acrm_value
      WHERE object_slug = 'companies' AND attribute_slug = 'name'
        AND active_until IS NULL
@@ -49,19 +49,19 @@ export async function findCompanyByName(
 }
 
 export async function insertRecord(
-  lix: Lix,
+  db: AcrmDatabase,
   object_slug: string,
   record_id: string,
 ): Promise<void> {
   await exec(
-    lix,
+    db,
     "INSERT INTO acrm_record (object_slug, record_id) VALUES ($1, $2)",
     [object_slug, record_id],
   );
 }
 
 export async function insertValue(
-  lix: Lix,
+  db: AcrmDatabase,
   args: {
     object_slug: string;
     record_id: string;
@@ -72,13 +72,14 @@ export async function insertValue(
     provenance: Record<string, unknown>;
   },
 ): Promise<void> {
-  const row = prepareValueInsert(await generateUuid(lix), args);
-  const params: LixRuntimeValue[] = [
+  const row = prepareValueInsert(await generateUuid(db), args);
+  const params: SqlValue[] = [
     row.id,
     row.object_slug,
     row.record_id,
     row.attribute_slug,
     row.value_json,
+    row.active_from,
     row.normalized_key,
     row.ref_object,
     row.ref_record_id,
@@ -86,17 +87,17 @@ export async function insertValue(
     row.provenance_json,
   ];
   await exec(
-    lix,
+    db,
     `INSERT INTO acrm_value
       (id, object_slug, record_id, attribute_slug, value_json,
-       normalized_key, ref_object, ref_record_id, source, provenance_json)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+       active_from, normalized_key, ref_object, ref_record_id, source, provenance_json)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     params,
   );
 }
 
 export async function setSingleValue(
-  lix: Lix,
+  db: AcrmDatabase,
   args: {
     object_slug: string;
     record_id: string;
@@ -108,20 +109,20 @@ export async function setSingleValue(
   },
 ): Promise<void> {
   const config = needsConfig(args.attribute_type)
-    ? await loadAttributeConfig(lix, args.object_slug, args.attribute_slug)
+    ? await loadAttributeConfig(db, args.object_slug, args.attribute_slug)
     : undefined;
   const value_json = encode(args.attribute_type, args.value, config);
   await exec(
-    lix,
+    db,
     `UPDATE acrm_value SET active_until = $1
      WHERE object_slug = $2 AND record_id = $3 AND attribute_slug = $4 AND active_until IS NULL`,
     [nowIso(), args.object_slug, args.record_id, args.attribute_slug],
   );
-  await insertValue(lix, { ...args, value_json });
+  await insertValue(db, { ...args, value_json });
 }
 
 export async function addMultiValue(
-  lix: Lix,
+  db: AcrmDatabase,
   args: {
     object_slug: string;
     record_id: string;
@@ -133,13 +134,13 @@ export async function addMultiValue(
   },
 ): Promise<void> {
   const config = needsConfig(args.attribute_type)
-    ? await loadAttributeConfig(lix, args.object_slug, args.attribute_slug)
+    ? await loadAttributeConfig(db, args.object_slug, args.attribute_slug)
     : undefined;
   const value_json = encode(args.attribute_type, args.value, config);
   const normalized = normalizeUniqueKey(args.attribute_type, value_json);
   if (normalized) {
     const exists = await exec(
-      lix,
+      db,
       `SELECT 1 FROM acrm_value
        WHERE object_slug = $1 AND record_id = $2 AND attribute_slug = $3
          AND normalized_key = $4 AND active_until IS NULL LIMIT 1`,
@@ -147,5 +148,5 @@ export async function addMultiValue(
     );
     if (exists.rows.length) return;
   }
-  await insertValue(lix, { ...args, value_json });
+  await insertValue(db, { ...args, value_json });
 }

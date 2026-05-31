@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { writeSignalJobStateSync, type SignalObjectSlug, type SignalRecordRef } from "@agent-crm/sdk";
+import { localWorkspaceDir } from "./workspace-resolve.js";
 
 export type ImportSignalResult =
   | { background: BackgroundSignalRun; warning?: never }
@@ -23,7 +24,7 @@ const DEFAULT_BACKGROUND_SIGNAL_CONCURRENCY = 10;
 const MAX_IMPORT_SIGNAL_RECORDS = 1000;
 
 export function signalsDirForWorkspace(workspaceFile: string): string {
-  return path.join(path.dirname(workspaceFile), "signals");
+  return path.join(localWorkspaceDir(workspaceFile), "signals");
 }
 
 export function startMissingSignalsForRecords(
@@ -82,7 +83,7 @@ function startBackgroundJobs(
     const fd = openSync(log_path, "a");
     try {
       const child = spawn(process.execPath, signalRunArgs(workspaceFile, object_slug, record_ids), {
-        cwd: path.dirname(workspaceFile),
+        cwd: localWorkspaceDir(workspaceFile),
         detached: true,
         env: {
           ...process.env,
@@ -167,7 +168,7 @@ function backgroundSignalConcurrency(): number {
 }
 
 function createLogPath(workspaceFile: string, jobId: string): string {
-  const dir = path.join(path.dirname(workspaceFile), ".cache", "signals");
+  const dir = path.join(localWorkspaceDir(workspaceFile), ".cache", "signals");
   mkdirSync(dir, { recursive: true });
   return path.join(dir, `${jobId}.log`);
 }

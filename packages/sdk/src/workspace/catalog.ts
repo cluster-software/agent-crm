@@ -1,4 +1,4 @@
-import type { Lix } from "@lix-js/sdk";
+import type { AcrmDatabase } from "../db/types.js";
 import { exec } from "../db/execute.js";
 import type { AttributeConfig, AttributeType } from "../domain/values.js";
 import { AcrmError, ERR } from "../lib/errors.js";
@@ -36,11 +36,11 @@ export function parseAttributeConfig(raw: unknown): AttributeConfig | undefined 
 }
 
 export async function loadObject(
-  lix: Lix,
+  db: AcrmDatabase,
   object_slug: string,
 ): Promise<ObjectDefinition | null> {
   const r = await exec(
-    lix,
+    db,
     "SELECT object_slug, singular_name, plural_name FROM acrm_object WHERE object_slug = $1",
     [object_slug],
   );
@@ -54,11 +54,11 @@ export async function loadObject(
 }
 
 export async function assertObjectExists(
-  lix: Lix,
+  db: AcrmDatabase,
   object_slug: string,
   message?: string,
 ): Promise<void> {
-  const obj = await loadObject(lix, object_slug);
+  const obj = await loadObject(db, object_slug);
   if (obj) return;
   throw new AcrmError(
     message ?? `unknown object: ${object_slug}. Register it first via createObject().`,
@@ -67,12 +67,12 @@ export async function assertObjectExists(
 }
 
 export async function loadAttribute(
-  lix: Lix,
+  db: AcrmDatabase,
   object_slug: string,
   attribute_slug: string,
 ): Promise<AttributeDefinition | null> {
   const r = await exec(
-    lix,
+    db,
     `SELECT object_slug, attribute_slug, attribute_type,
             is_multivalued, is_unique, config_json
      FROM acrm_attribute
@@ -93,9 +93,9 @@ export async function loadAttribute(
 }
 
 export async function loadAttributeConfig(
-  lix: Lix,
+  db: AcrmDatabase,
   object_slug: string,
   attribute_slug: string,
 ): Promise<AttributeConfig | undefined> {
-  return (await loadAttribute(lix, object_slug, attribute_slug))?.config;
+  return (await loadAttribute(db, object_slug, attribute_slug))?.config;
 }

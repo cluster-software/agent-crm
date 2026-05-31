@@ -1,4 +1,4 @@
-import type { LixRuntimeValue } from "@lix-js/sdk";
+import type { SqlValue } from "../db/types.js";
 import { exec } from "../db/execute.js";
 import type { AttributeType, StatusOption } from "../domain/values.js";
 import { AcrmError, ERR } from "../lib/errors.js";
@@ -25,14 +25,14 @@ export async function createObject(
   workspace: Workspace,
   input: CreateObjectInput,
 ): Promise<CreateObjectResult> {
-  if (await loadObject(workspace.lix, input.object_slug)) {
+  if (await loadObject(workspace.db, input.object_slug)) {
     throw new AcrmError(
       `object already exists: ${input.object_slug}`,
       ERR.UNIQUE_VIOLATION,
     );
   }
   await exec(
-    workspace.lix,
+    workspace.db,
     "INSERT INTO acrm_object (object_slug, singular_name, plural_name) VALUES ($1, $2, $3)",
     [input.object_slug, input.singular_name, input.plural_name],
   );
@@ -66,17 +66,17 @@ export async function addAttribute(
   workspace: Workspace,
   input: AddAttributeInput,
 ): Promise<AddAttributeResult> {
-  await assertObjectExists(workspace.lix, input.object_slug);
+  await assertObjectExists(workspace.db, input.object_slug);
   if (input.config && input.config.target_object) {
-    await assertObjectExists(workspace.lix, input.config.target_object as string);
+    await assertObjectExists(workspace.db, input.config.target_object as string);
   }
-  if (await loadAttribute(workspace.lix, input.object_slug, input.attribute_slug)) {
+  if (await loadAttribute(workspace.db, input.object_slug, input.attribute_slug)) {
     throw new AcrmError(
       `attribute already exists: ${input.object_slug}.${input.attribute_slug}`,
       ERR.UNIQUE_VIOLATION,
     );
   }
-  const params: LixRuntimeValue[] = [
+  const params: SqlValue[] = [
     input.object_slug,
     input.attribute_slug,
     input.title,
@@ -86,7 +86,7 @@ export async function addAttribute(
     input.config ? JSON.stringify(input.config) : null,
   ];
   await exec(
-    workspace.lix,
+    workspace.db,
     `INSERT INTO acrm_attribute
       (object_slug, attribute_slug, title, attribute_type, is_multivalued, is_unique, config_json)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -122,7 +122,7 @@ export async function editAttributeOptions(
   input: EditAttributeOptionsInput,
 ): Promise<EditAttributeOptionsResult> {
   const attr = await loadAttribute(
-    workspace.lix,
+    workspace.db,
     input.object_slug,
     input.attribute_slug,
   );
@@ -165,7 +165,7 @@ export async function editAttributeOptions(
     options: next,
   };
   await exec(
-    workspace.lix,
+    workspace.db,
     "UPDATE acrm_attribute SET config_json = $1 WHERE object_slug = $2 AND attribute_slug = $3",
     [JSON.stringify(nextConfig), input.object_slug, input.attribute_slug],
   );

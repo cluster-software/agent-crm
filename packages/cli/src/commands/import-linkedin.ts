@@ -3,17 +3,17 @@ import type { Command } from "commander";
 import {
   AcrmError,
   ERR,
-  Workspace,
   importCommunicationBatch,
   importLinkedinRelations,
   importLinkedinProfile,
   normalizeLinkedinUrl,
+  type AcrmDatabase,
   type CommunicationImportResult,
   type ImportLinkedinRelationsResult,
   type LinkedinImportResult,
   type LinkedinRelation,
 } from "@agent-crm/sdk";
-import { resolveWorkspacePath } from "../workspace-resolve.js";
+import { localWorkspaceDir, openResolvedWorkspace, resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, ok, setJsonMode } from "../output/json.js";
 import { loadDotenv } from "../lib/dotenv.js";
 import {
@@ -98,7 +98,7 @@ export function attachLinkedinSubcommand(parent: Command): void {
     });
 }
 
-async function runImportLinkedinNetwork(opts: { workspace?: string; cutoffDate?: string }): Promise<{
+async function runImportLinkedinNetwork(opts: { workspace?: string; db?: AcrmDatabase; cutoffDate?: string }): Promise<{
   workspace_id: string;
   sync_engine_url: string;
   stats: ImportLinkedinRelationsResult["stats"];
@@ -112,7 +112,7 @@ async function runImportLinkedinNetwork(opts: { workspace?: string; cutoffDate?:
   message_backfill_warning?: string;
 }> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
-  const workspaceDir = path.dirname(workspaceFile);
+  const workspaceDir = localWorkspaceDir(workspaceFile);
   loadDotenv(workspaceDir);
   loadDotenv(process.cwd());
 
@@ -120,7 +120,7 @@ async function runImportLinkedinNetwork(opts: { workspace?: string; cutoffDate?:
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
     clusterOrgId: process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
-  });
+  }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   const { relations } = await fetchCloudLinkedinRelationsExport({
     syncEngineUrl,
@@ -128,7 +128,7 @@ async function runImportLinkedinNetwork(opts: { workspace?: string; cutoffDate?:
     clientToken: metadata.clientToken,
     cutoffDate: opts.cutoffDate,
   });
-  const ws = await Workspace.open(workspaceFile);
+  const ws = await openResolvedWorkspace(workspaceFile, opts.db);
   try {
     const result = await importLinkedinRelations(ws, { relations });
     let stats = result.stats;
@@ -221,13 +221,13 @@ function uniqueStrings(values: Array<string | null>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value)))];
 }
 
-async function runSyncLinkedin(opts: { workspace?: string }): Promise<{
+async function runSyncLinkedin(opts: { workspace?: string; db?: AcrmDatabase }): Promise<{
   workspace_id: string;
   sync_engine_url: string;
   stats: CommunicationImportResult["stats"];
 }> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
-  const workspaceDir = path.dirname(workspaceFile);
+  const workspaceDir = localWorkspaceDir(workspaceFile);
   loadDotenv(workspaceDir);
   loadDotenv(process.cwd());
 
@@ -235,7 +235,7 @@ async function runSyncLinkedin(opts: { workspace?: string }): Promise<{
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
     clusterOrgId: process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
-  });
+  }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   const batch = await fetchCloudCommunicationExport({
     syncEngineUrl,
@@ -243,7 +243,7 @@ async function runSyncLinkedin(opts: { workspace?: string }): Promise<{
     clientToken: metadata.clientToken,
     provider: "linkedin",
   });
-  const ws = await Workspace.open(workspaceFile);
+  const ws = await openResolvedWorkspace(workspaceFile, opts.db);
   try {
     const result = await importCommunicationBatch(ws, batch);
     return {
@@ -258,10 +258,10 @@ async function runSyncLinkedin(opts: { workspace?: string }): Promise<{
 
 async function runImportLinkedin(
   urlOrSlug: string,
-  opts: { workspace?: string; refresh?: boolean; noCache?: boolean; noSignals?: boolean },
+  opts: { workspace?: string; db?: AcrmDatabase; refresh?: boolean; noCache?: boolean; noSignals?: boolean },
 ): Promise<LinkedinImportResult & { signals_background?: BackgroundSignalRun; signals_warning?: string }> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
-  const workspaceDir = path.dirname(workspaceFile);
+  const workspaceDir = localWorkspaceDir(workspaceFile);
   loadDotenv(workspaceDir);
   loadDotenv(process.cwd());
 
@@ -278,7 +278,7 @@ async function runImportLinkedin(
   const cacheDir = path.join(workspaceDir, ".cache", "linkedin");
 
   let result: LinkedinImportResult | null = null;
-  const ws = await Workspace.open(workspaceFile);
+  const ws = await openResolvedWorkspace(workspaceFile, opts.db);
   let records: Array<{ object_slug: "people" | "companies"; record_id: string }> = [];
   try {
     result = await importLinkedinProfile(ws, {

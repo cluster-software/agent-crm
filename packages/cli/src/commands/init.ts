@@ -1,32 +1,35 @@
-import path from "node:path";
 import type { Command } from "commander";
-import { AcrmError, ERR, Workspace, generateUuid } from "@agent-crm/sdk";
+import {
+  AcrmError,
+  ERR,
+  Workspace,
+  ensureWorkspaceIdentity,
+} from "@agent-crm/sdk";
 import { fail, isJson, ok, setJsonMode } from "../output/json.js";
+import { resolveDatabaseConfig } from "../workspace-resolve.js";
 
 export function registerInit(program: Command): void {
   program
-    .command("init <name>")
-    .description("create a new .acrm file in the current directory (e.g. `acrm init cluster.acrm`)")
-    .action(async (name: string) => {
-      const root = program.opts() as { json?: boolean };
+    .command("init [databaseUrl]")
+    .description("initialize the Agent CRM EAV schema in a Postgres-compatible database")
+    .action(async (databaseUrl: string | undefined) => {
+      const root = program.opts() as { json?: boolean; workspace?: string };
       setJsonMode(root.json);
       try {
-        const workspacePath = path.resolve(
-          name.endsWith(".acrm") ? name : name + ".acrm",
+        const workspace = await Workspace.create(
+          resolveDatabaseConfig(databaseUrl ?? root.workspace),
         );
-        const workspace = await Workspace.create(workspacePath);
-        const workspaceId = await generateUuid(workspace.lix);
         try {
+          const workspaceId = await ensureWorkspaceIdentity(workspace);
           ok({
             initialized: true,
             workspace_id: workspaceId,
-            workspace_path: workspacePath,
           });
           if (!isJson()) {
             const bold = process.env.NO_COLOR ? "" : "\x1b[1m";
             const reset = process.env.NO_COLOR ? "" : "\x1b[0m";
             process.stdout.write(
-              `\nCreated ${workspacePath}\nNext steps:\n  ${bold}acrm import csv <path>${reset}          load your leads\n  ${bold}acrm connect granola${reset}            connect Granola transcripts (optional)\n`,
+              `\nInitialized Agent CRM schema\nNext steps:\n  ${bold}acrm import csv <path>${reset}          load your leads\n  ${bold}acrm connect granola${reset}            connect Granola transcripts (optional)\n`,
             );
           }
         } finally {
