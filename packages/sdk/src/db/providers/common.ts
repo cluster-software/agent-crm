@@ -46,6 +46,13 @@ export function createPostgresCompatibleProvider(
       ) {
         connectionOptions.ssl = { rejectUnauthorized: false };
       }
+      const channelBinding = parsed.searchParams.get("channel_binding")?.toLowerCase();
+      if (
+        (channelBinding === "require" || channelBinding === "prefer") &&
+        pool?.enableChannelBinding === undefined
+      ) {
+        connectionOptions.enableChannelBinding = true;
+      }
       return connectionOptions;
     },
     connect: (config) => PostgresDatabase.connect(config.connectionOptions),

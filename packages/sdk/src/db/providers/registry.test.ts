@@ -110,6 +110,27 @@ describe("database provider registry", () => {
     expect(poolSsl.connectionOptions.ssl).toBe(true);
   });
 
+  it("maps channel binding URL params into node-postgres options", () => {
+    const required = resolveDatabaseProviderConfig({
+      databaseUrl: "postgres://user:pass@ep-blue-1.us-east-1.aws.neon.tech/db?sslmode=require&channel_binding=require",
+    });
+    const preferred = resolveDatabaseProviderConfig({
+      databaseUrl: "postgres://user:pass@ep-blue-1.us-east-1.aws.neon.tech/db?channel_binding=prefer",
+    });
+    const disabled = resolveDatabaseProviderConfig({
+      databaseUrl: "postgres://user:pass@ep-blue-1.us-east-1.aws.neon.tech/db?channel_binding=disable",
+    });
+    const poolOverride = resolveDatabaseProviderConfig({
+      databaseUrl: "postgres://user:pass@ep-blue-1.us-east-1.aws.neon.tech/db?channel_binding=require",
+      pool: { enableChannelBinding: false },
+    });
+
+    expect(required.connectionOptions.enableChannelBinding).toBe(true);
+    expect(preferred.connectionOptions.enableChannelBinding).toBe(true);
+    expect(disabled.connectionOptions.enableChannelBinding).toBeUndefined();
+    expect(poolOverride.connectionOptions.enableChannelBinding).toBe(false);
+  });
+
   it("rejects unsupported providers and non-Postgres URLs", () => {
     expect(() => getDatabaseProvider("mysql")).toThrow("unsupported database provider");
     expect(() => resolveDatabaseProviderConfig({

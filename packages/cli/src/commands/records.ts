@@ -249,10 +249,8 @@ What it does:
      record already had an active ref to the keeper.
   3. Deletes the discarded record from \`acrm_record\`.
 
-Note: this command currently applies the validated plan as a series of writes
-rather than one workspace transaction. Use \`--dry-run\` to inspect the plan.
-If a step fails midway, re-run the command — the operation is idempotent once
-the duplicate row has been redirected.
+Note: the final merge writes run in one workspace transaction. Use \`--dry-run\`
+to inspect the validated plan before applying it.
 `,
     )
     .action(async (object: string, opts: DedupeOpts) => {

@@ -36,6 +36,22 @@ async function expectAcrmDatabaseContract(db: AcrmDatabase): Promise<void> {
   });
   expect(committed.rows).toEqual([{ value: "ok" }]);
 
+  const rollbackTable = `acrm_provider_contract_rollback_${Date.now()}_${Math.trunc(
+    Math.random() * 1_000_000,
+  )}`;
+  await db.execute(`CREATE TABLE ${rollbackTable} (value text)`);
+  try {
+    await expect(db.transaction(async (tx) => {
+      await tx.execute(`INSERT INTO ${rollbackTable} (value) VALUES ($1)`, ["rolled back"]);
+      throw new Error("rollback");
+    })).rejects.toThrow("rollback");
+
+    const rolledBack = await db.execute(`SELECT value FROM ${rollbackTable}`);
+    expect(rolledBack.rows).toEqual([]);
+  } finally {
+    await db.execute(`DROP TABLE IF EXISTS ${rollbackTable}`);
+  }
+
   await expect(db.transaction(async (tx) => {
     await tx.execute("CREATE TEMP TABLE acrm_provider_contract_rollback (value text)");
     throw new Error("rollback");

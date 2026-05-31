@@ -6,6 +6,7 @@ import {
 } from "../db/value-row.js";
 import {
   encode,
+  normalizeLookupKey,
   normalizeDomain,
   normalizeLinkedinUrl,
   type AttributeType,
@@ -116,7 +117,16 @@ export async function importLinkedinRelations(
     relations.push(normalized);
   }
 
-  const db = workspace.db;
+  return await workspace.db.transaction((db) =>
+    importNormalizedLinkedinRelations(db, relations, stats)
+  );
+}
+
+async function importNormalizedLinkedinRelations(
+  db: Workspace["db"],
+  relations: NormalizedRelation[],
+  stats: ImportLinkedinRelationsResult["stats"],
+): Promise<ImportLinkedinRelationsResult> {
   const sourceIndex = await loadPeopleBySourceKeys(db, relations.map((relation) => relation.sourceKey));
   const plannedSourceIndex = new Map(sourceIndex);
   const linkedinIndex = await loadPeopleByLinkedinUrl(
@@ -150,9 +160,9 @@ export async function importLinkedinRelations(
 
   for (const company of companies) {
     const existingRecordId =
-      (company.linkedinUrl ? plannedCompanyLinkedinIndex.get(company.linkedinUrl) : undefined) ??
+      (company.linkedinUrl ? plannedCompanyLinkedinIndex.get(lookupIndexKey(company.linkedinUrl)) : undefined) ??
       (company.domain ? plannedCompanyDomainIndex.get(company.domain) : undefined) ??
-      plannedCompanySourceIndex.get(company.sourceKey) ??
+      plannedCompanySourceIndex.get(lookupIndexKey(company.sourceKey)) ??
       plannedCompanyNameIndex.get(company.name.toLowerCase());
     const recordId = existingRecordId ?? uuidv7();
     const created = existingRecordId == null;
@@ -160,8 +170,8 @@ export async function importLinkedinRelations(
       recordsToCreate.push({ object_slug: "companies", record_id: recordId });
       createdCompanyIds.add(recordId);
     }
-    plannedCompanySourceIndex.set(company.sourceKey, recordId);
-    if (company.linkedinUrl) plannedCompanyLinkedinIndex.set(company.linkedinUrl, recordId);
+    plannedCompanySourceIndex.set(lookupIndexKey(company.sourceKey), recordId);
+    if (company.linkedinUrl) plannedCompanyLinkedinIndex.set(lookupIndexKey(company.linkedinUrl), recordId);
     if (company.domain) plannedCompanyDomainIndex.set(company.domain, recordId);
     plannedCompanyNameIndex.set(company.name.toLowerCase(), recordId);
     touchedCompanyIds.add(recordId);
@@ -173,16 +183,16 @@ export async function importLinkedinRelations(
 
   for (const relation of relations) {
     const existingRecordId =
-      (relation.linkedinUrl ? plannedLinkedinIndex.get(relation.linkedinUrl) : undefined) ??
-      plannedSourceIndex.get(relation.sourceKey);
+      (relation.linkedinUrl ? plannedLinkedinIndex.get(lookupIndexKey(relation.linkedinUrl)) : undefined) ??
+      plannedSourceIndex.get(lookupIndexKey(relation.sourceKey));
     const recordId = existingRecordId ?? uuidv7();
     const created = existingRecordId == null;
     if (created) {
       recordsToCreate.push({ object_slug: "people", record_id: recordId });
       createdRecordIds.add(recordId);
     }
-    plannedSourceIndex.set(relation.sourceKey, recordId);
-    if (relation.linkedinUrl) plannedLinkedinIndex.set(relation.linkedinUrl, recordId);
+    plannedSourceIndex.set(lookupIndexKey(relation.sourceKey), recordId);
+    if (relation.linkedinUrl) plannedLinkedinIndex.set(lookupIndexKey(relation.linkedinUrl), recordId);
     touchedRecordIds.add(recordId);
     plans.push({ relation, plan: { objectSlug: "people", recordId, created } });
   }
@@ -477,7 +487,7 @@ async function loadPeopleBySourceKeys(
   sourceKeys: string[],
 ): Promise<Map<string, string>> {
   const index = new Map<string, string>();
-  for (const chunk of chunks(unique(sourceKeys), SELECT_CHUNK_SIZE)) {
+  for (const chunk of chunks(unique(sourceKeys.map(lookupIndexKey)), SELECT_CHUNK_SIZE)) {
     const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
     const result = await exec(
       db,
@@ -503,7 +513,7 @@ async function loadPeopleByLinkedinUrl(
   linkedinUrls: string[],
 ): Promise<Map<string, string>> {
   const index = new Map<string, string>();
-  for (const chunk of chunks(unique(linkedinUrls), SELECT_CHUNK_SIZE)) {
+  for (const chunk of chunks(unique(linkedinUrls.map(lookupIndexKey)), SELECT_CHUNK_SIZE)) {
     const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
     const result = await exec(
       db,
@@ -529,7 +539,7 @@ async function loadCompaniesBySourceKeys(
   sourceKeys: string[],
 ): Promise<Map<string, string>> {
   const index = new Map<string, string>();
-  for (const chunk of chunks(unique(sourceKeys), SELECT_CHUNK_SIZE)) {
+  for (const chunk of chunks(unique(sourceKeys.map(lookupIndexKey)), SELECT_CHUNK_SIZE)) {
     const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
     const result = await exec(
       db,
@@ -555,7 +565,7 @@ async function loadCompaniesByLinkedinUrl(
   linkedinUrls: string[],
 ): Promise<Map<string, string>> {
   const index = new Map<string, string>();
-  for (const chunk of chunks(unique(linkedinUrls), SELECT_CHUNK_SIZE)) {
+  for (const chunk of chunks(unique(linkedinUrls.map(lookupIndexKey)), SELECT_CHUNK_SIZE)) {
     const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
     const result = await exec(
       db,
@@ -930,6 +940,10 @@ function uniqueCompanies(companies: NormalizedCompany[]): NormalizedCompany[] {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function lookupIndexKey(value: string): string {
+  return normalizeLookupKey(value) ?? value;
 }
 
 function chunks<T>(values: T[], size: number): T[][] {

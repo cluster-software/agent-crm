@@ -1,33 +1,16 @@
 import {
-  findCompanyByName,
-  findRecordByUnique,
-  insertRecord,
-  setSingleValue,
-} from "../db/upsert.js";
-import { normalizeLinkedinUrl } from "../domain/values.js";
-import {
   loadFromCacheOrFetch,
   normalizeLinkedinInput,
 } from "../integrations/apify-linkedin.js";
-import {
-  mapProfile,
-  type MappedProfile,
-} from "../integrations/linkedin-mapping.js";
-import { AcrmError, ERR } from "../lib/errors.js";
-import { generateUuid } from "../lib/ids.js";
+import { mapProfile } from "../integrations/linkedin-mapping.js";
 import { nowIso } from "../lib/time.js";
 import type { Workspace } from "../workspace.js";
+import {
+  upsertMappedLinkedinProfile,
+  type LinkedinProfileUpsertResult,
+} from "./profile-upserts.js";
 
-const SOURCE = "linkedin-import";
-
-export type LinkedinImportResult = {
-  person_record_id: string;
-  company_record_id: string | null;
-  created: { person: boolean; company: boolean };
-  cache_path: string | null;
-  cache_hit: boolean;
-  mapped: MappedProfile;
-};
+export type LinkedinImportResult = LinkedinProfileUpsertResult;
 
 export type ImportLinkedinProfileArgs = {
   urlOrSlug: string;
@@ -44,7 +27,6 @@ export async function importLinkedinProfile(
   workspace: Workspace,
   args: ImportLinkedinProfileArgs,
 ): Promise<LinkedinImportResult> {
-  const db = workspace.db;
   const { urlOrSlug, token, cacheDir, refresh, noCache } = args;
   const { url, publicId } = normalizeLinkedinInput(urlOrSlug);
 
@@ -66,129 +48,13 @@ export async function importLinkedinProfile(
     cache_hit: cacheHit,
   };
 
-  // Company first so the person can reference it.
-  let companyId: string | null = null;
-  let companyCreated = false;
-  if (mapped.company.name) {
-    companyId = await findCompanyByName(db, mapped.company.name);
-    if (!companyId) {
-      companyId = await generateUuid(db);
-      await insertRecord(db, "companies", companyId);
-      await setSingleValue(db, {
-        object_slug: "companies",
-        record_id: companyId,
-        attribute_slug: "name",
-        attribute_type: "text",
-        value: mapped.company.name,
-        source: SOURCE,
-        provenance,
-      });
-      companyCreated = true;
-    }
-    if (mapped.company.linkedin_url) {
-      const cl = normalizeLinkedinUrl(mapped.company.linkedin_url);
-      if (cl) {
-        await setSingleValue(db, {
-          object_slug: "companies",
-          record_id: companyId,
-          attribute_slug: "linkedin_url",
-          attribute_type: "url",
-          value: cl,
-          source: SOURCE,
-          provenance,
-        });
-      }
-    }
-  }
-
-  // Person — dedupe by LinkedIn URL.
-  const linkedinKey = mapped.person.linkedin_url
-    ? normalizeLinkedinUrl(mapped.person.linkedin_url)
-    : normalizeLinkedinUrl(url);
-  if (!linkedinKey) {
-    throw new AcrmError(
-      "could not derive a normalized LinkedIn URL from the profile",
-      ERR.INVALID_INPUT,
-    );
-  }
-
-  let personId = await findRecordByUnique(
-    db,
-    "people",
-    "linkedin_url",
-    linkedinKey,
+  return await workspace.db.transaction((db) =>
+    upsertMappedLinkedinProfile(db, {
+      url,
+      cachePath,
+      cacheHit,
+      mapped,
+      provenance,
+    })
   );
-  let personCreated = false;
-  if (!personId) {
-    personId = await generateUuid(db);
-    await insertRecord(db, "people", personId);
-    personCreated = true;
-  }
-
-  await setSingleValue(db, {
-    object_slug: "people",
-    record_id: personId,
-    attribute_slug: "linkedin_url",
-    attribute_type: "url",
-    value: linkedinKey,
-    source: SOURCE,
-    provenance,
-  });
-
-  if (mapped.person.name) {
-    await setSingleValue(db, {
-      object_slug: "people",
-      record_id: personId,
-      attribute_slug: "name",
-      attribute_type: "personal-name",
-      value: mapped.person.name,
-      source: SOURCE,
-      provenance,
-    });
-  }
-
-  if (mapped.person.profile_picture_url) {
-    await setSingleValue(db, {
-      object_slug: "people",
-      record_id: personId,
-      attribute_slug: "profile_picture_url",
-      attribute_type: "url",
-      value: mapped.person.profile_picture_url,
-      source: SOURCE,
-      provenance,
-    });
-  }
-
-  if (mapped.person.job_title) {
-    await setSingleValue(db, {
-      object_slug: "people",
-      record_id: personId,
-      attribute_slug: "job_title",
-      attribute_type: "text",
-      value: mapped.person.job_title,
-      source: SOURCE,
-      provenance,
-    });
-  }
-
-  if (companyId) {
-    await setSingleValue(db, {
-      object_slug: "people",
-      record_id: personId,
-      attribute_slug: "company",
-      attribute_type: "record-reference",
-      value: { target_object: "companies", target_record_id: companyId },
-      source: SOURCE,
-      provenance,
-    });
-  }
-
-  return {
-    person_record_id: personId,
-    company_record_id: companyId,
-    created: { person: personCreated, company: companyCreated },
-    cache_path: cachePath,
-    cache_hit: cacheHit,
-    mapped,
-  };
 }

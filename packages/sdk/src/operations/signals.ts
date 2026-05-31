@@ -13,7 +13,7 @@ import {
 } from "./schema.js";
 import { setSingleValue } from "../db/upsert.js";
 import { loadAttribute } from "../workspace/catalog.js";
-import type { Workspace } from "../workspace.js";
+import { Workspace } from "../workspace.js";
 
 export type SignalObjectSlug = "people" | "companies";
 export type SignalRunMode = "missing" | "force";
@@ -203,6 +203,15 @@ export async function loadSignalDefinitions(
 }
 
 export async function ensureSignalAttributes(
+  workspace: Workspace,
+  definitions: SignalDefinition[],
+): Promise<SignalSyncResult> {
+  return await workspace.db.transaction((db) =>
+    ensureSignalAttributesInWorkspace(Workspace.fromDatabase(db), definitions)
+  );
+}
+
+async function ensureSignalAttributesInWorkspace(
   workspace: Workspace,
   definitions: SignalDefinition[],
 ): Promise<SignalSyncResult> {
@@ -880,30 +889,32 @@ async function runOneSignal(
   const ran_at = nowIso();
   let written = 0;
 
-  for (const output of outputs) {
-    if (!requestedKeys.has(output.key)) continue;
-    const definitionOutput = outputByKey.get(output.key)!;
-    await setSingleValue(workspace.db, {
-      object_slug: definition.object_slug,
-      record_id: record.record_id,
-      attribute_slug: definitionOutput.attribute,
-      attribute_type: definitionOutput.type,
-      value: output.value,
-      source: `signal:${definition.slug}`,
-      provenance: {
-        signal_slug: definition.slug,
-        output_key: output.key,
-        ran_at,
-        definition_hash: definition.definition_hash,
-        confidence: output.confidence,
-        citations: output.citations,
-        reasoning: output.reasoning,
-        ...(output.notes ? { notes: output.notes } : {}),
-        uncited: output.citations.length === 0,
-      },
-    });
-    written++;
-  }
+  await workspace.db.transaction(async (db) => {
+    for (const output of outputs) {
+      if (!requestedKeys.has(output.key)) continue;
+      const definitionOutput = outputByKey.get(output.key)!;
+      await setSingleValue(db, {
+        object_slug: definition.object_slug,
+        record_id: record.record_id,
+        attribute_slug: definitionOutput.attribute,
+        attribute_type: definitionOutput.type,
+        value: output.value,
+        source: `signal:${definition.slug}`,
+        provenance: {
+          signal_slug: definition.slug,
+          output_key: output.key,
+          ran_at,
+          definition_hash: definition.definition_hash,
+          confidence: output.confidence,
+          citations: output.citations,
+          reasoning: output.reasoning,
+          ...(output.notes ? { notes: output.notes } : {}),
+          uncited: output.citations.length === 0,
+        },
+      });
+      written++;
+    }
+  });
   return {
     values_written: written,
     ...runnerTurnMetricFields(metrics),

@@ -62,7 +62,13 @@ export async function importTranscript(
   workspace: Workspace,
   payload: TranscriptPayload,
 ): Promise<TranscriptImportResult> {
-  const db = workspace.db;
+  return await workspace.db.transaction((db) => importTranscriptInDatabase(db, payload));
+}
+
+async function importTranscriptInDatabase(
+  db: Workspace["db"],
+  payload: TranscriptPayload,
+): Promise<TranscriptImportResult> {
   const resolved: ResolvedParticipant[] = [];
   const unresolved: UnresolvedParticipant[] = [];
 

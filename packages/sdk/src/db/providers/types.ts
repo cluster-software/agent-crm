@@ -1,4 +1,3 @@
-import type { PoolConfig } from "pg";
 import type { AcrmDatabase } from "../types.js";
 import type { PostgresConnectionOptions } from "../postgres.js";
 
@@ -6,7 +5,7 @@ export type DatabaseProviderName = "postgres" | "neon" | "supabase";
 
 export type DatabaseProviderEnv = Record<string, string | undefined>;
 
-export type DatabasePoolOptions = Omit<PoolConfig, "connectionString">;
+export type DatabasePoolOptions = Omit<PostgresConnectionOptions, "connectionString">;
 
 export type DatabaseProviderResolveInput = {
   databaseUrl?: string;

@@ -311,7 +311,13 @@ export async function applyDedupe(
   workspace: Workspace,
   plan: DedupePlan,
 ): Promise<DedupeResult> {
-  const db = workspace.db;
+  return await workspace.db.transaction((db) => applyDedupeInDatabase(db, plan));
+}
+
+async function applyDedupeInDatabase(
+  db: AcrmDatabase,
+  plan: DedupePlan,
+): Promise<DedupeResult> {
   const { object_slug, keep_record_id, discard_record_id, items } = plan;
 
   let movedCount = 0;
@@ -736,23 +742,25 @@ export async function createRecord(
   workspace: Workspace,
   args: { object_slug: string; fields: string[]; source?: string },
 ): Promise<CreateRecordResult> {
-  const db = workspace.db;
   const { object_slug, fields } = args;
   const source = args.source ?? "sdk:records-create";
 
+  const db = workspace.db;
   await assertObjectRegistered(db, object_slug);
   const prepared = await prepareFields(db, object_slug, fields);
 
-  const record_id = await generateUuid(db);
-  await insertRecord(db, object_slug, record_id);
-  const inserted = await applyFields(db, object_slug, record_id, prepared, source);
+  return await workspace.db.transaction(async (tx) => {
+    const record_id = await generateUuid(tx);
+    await insertRecord(tx, object_slug, record_id);
+    const inserted = await applyFields(tx, object_slug, record_id, prepared, source);
 
-  return {
-    created: true,
-    object_slug,
-    record_id,
-    values_inserted: inserted,
-  };
+    return {
+      created: true,
+      object_slug,
+      record_id,
+      values_inserted: inserted,
+    };
+  });
 }
 
 export async function updateRecord(
@@ -764,24 +772,11 @@ export async function updateRecord(
     source?: string;
   },
 ): Promise<UpdateRecordResult> {
-  const db = workspace.db;
   const { object_slug, record_id, fields } = args;
   const source = args.source ?? "sdk:records-update";
 
+  const db = workspace.db;
   await assertObjectRegistered(db, object_slug);
-
-  const exists = await exec(
-    db,
-    "SELECT record_id FROM acrm_record WHERE object_slug = $1 AND record_id = $2",
-    [object_slug, record_id],
-  );
-  if (!exists.rows.length) {
-    throw new AcrmError(
-      `record not found: ${object_slug}/${record_id}`,
-      ERR.NOT_FOUND,
-    );
-  }
-
   const prepared = await prepareFields(db, object_slug, fields);
   if (prepared.length === 0) {
     throw new AcrmError(
@@ -790,12 +785,26 @@ export async function updateRecord(
     );
   }
 
-  const changed = await applyFields(db, object_slug, record_id, prepared, source);
+  return await workspace.db.transaction(async (tx) => {
+    const exists = await exec(
+      tx,
+      "SELECT record_id FROM acrm_record WHERE object_slug = $1 AND record_id = $2",
+      [object_slug, record_id],
+    );
+    if (!exists.rows.length) {
+      throw new AcrmError(
+        `record not found: ${object_slug}/${record_id}`,
+        ERR.NOT_FOUND,
+      );
+    }
 
-  return {
-    updated: true,
-    object_slug,
-    record_id,
-    values_changed: changed,
-  };
+    const changed = await applyFields(tx, object_slug, record_id, prepared, source);
+
+    return {
+      updated: true,
+      object_slug,
+      record_id,
+      values_changed: changed,
+    };
+  });
 }

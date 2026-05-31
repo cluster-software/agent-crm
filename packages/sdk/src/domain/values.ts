@@ -2,6 +2,8 @@ import {
   parsePhoneNumberFromString,
   type CountryCode,
 } from "libphonenumber-js/min";
+import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import { AcrmError, ERR } from "../lib/errors.js";
 
 export type AttributeType =
@@ -36,6 +38,9 @@ export type AttributeConfig = {
   // intentionally not typed here — they're consumed elsewhere.
   [key: string]: unknown;
 };
+
+const MAX_NORMALIZED_KEY_BYTES = 1024;
+const NORMALIZED_KEY_HASH_PREFIX = "sha256:";
 
 export function resolveStatusOption(
   raw: string,
@@ -154,12 +159,22 @@ export function normalizeUniqueKey(
     case "domain":
       return (value.domain as string | undefined)?.toLowerCase() ?? null;
     case "url":
-      return (value.value as string | undefined)?.toLowerCase() ?? null;
+      return boundedNormalizedKey((value.value as string | undefined)?.toLowerCase());
     case "text":
-      return (value.value as string | undefined) ?? null;
+      return boundedNormalizedKey(value.value as string | undefined);
     default:
       return null;
   }
+}
+
+export function normalizeLookupKey(value: string | null | undefined): string | null {
+  return boundedNormalizedKey(value ?? undefined);
+}
+
+function boundedNormalizedKey(value: string | undefined): string | null {
+  if (!value) return null;
+  if (Buffer.byteLength(value, "utf8") <= MAX_NORMALIZED_KEY_BYTES) return value;
+  return `${NORMALIZED_KEY_HASH_PREFIX}${createHash("sha256").update(value).digest("hex")}`;
 }
 
 export function recordReferenceTarget(

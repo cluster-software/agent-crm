@@ -96,7 +96,13 @@ export async function importGoogleContacts(
   workspace: Workspace,
   args: ImportGoogleContactsArgs,
 ): Promise<ImportGoogleContactsResult> {
-  const db = workspace.db;
+  return await workspace.db.transaction((db) => importGoogleContactsInDatabase(db, args));
+}
+
+async function importGoogleContactsInDatabase(
+  db: Workspace["db"],
+  args: ImportGoogleContactsArgs,
+): Promise<ImportGoogleContactsResult> {
   const stats: ImportGoogleContactsStats = {
     contacts_seen: 0,
     people_created: 0,
