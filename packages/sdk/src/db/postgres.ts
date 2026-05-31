@@ -21,10 +21,15 @@ export type PostgresConnectionOptions = PoolConfig & {
   connectionString: string;
 };
 
+type TransactionState = "root" | "active" | "passthrough";
+
 export class PostgresDatabase implements AcrmDatabase {
+  private static nextSavepointId = 1;
+
   private constructor(
     private readonly queryable: Queryable,
     private readonly closeFn: (() => Promise<void>) | null,
+    private readonly transactionState: TransactionState = "root",
   ) {}
 
   static connect(options: string | PostgresConnectionOptions): PostgresDatabase {
@@ -35,7 +40,7 @@ export class PostgresDatabase implements AcrmDatabase {
   }
 
   static fromClient(client: PoolClient): PostgresDatabase {
-    return new PostgresDatabase(client, null);
+    return new PostgresDatabase(client, null, "passthrough");
   }
 
   static fromQueryable(
@@ -57,10 +62,19 @@ export class PostgresDatabase implements AcrmDatabase {
   }
 
   async transaction<T>(fn: (db: AcrmDatabase) => Promise<T>): Promise<T> {
+    if (this.transactionState === "passthrough") {
+      return await fn(this);
+    }
+
+    if (this.transactionState === "active") {
+      return await this.savepoint(fn);
+    }
+
     if (!("connect" in this.queryable)) {
       await this.queryable.query("BEGIN");
+      const tx = new PostgresDatabase(this.queryable, null, "active");
       try {
-        const result = await fn(this);
+        const result = await fn(tx);
         await this.queryable.query("COMMIT");
         return result;
       } catch (error) {
@@ -71,7 +85,7 @@ export class PostgresDatabase implements AcrmDatabase {
 
     const pool = this.queryable as PgPool;
     const client = await pool.connect();
-    const tx = PostgresDatabase.fromClient(client);
+    const tx = new PostgresDatabase(client, null, "active");
     try {
       await client.query("BEGIN");
       const result = await fn(tx);
@@ -87,5 +101,20 @@ export class PostgresDatabase implements AcrmDatabase {
 
   async close(): Promise<void> {
     await this.closeFn?.();
+  }
+
+  private async savepoint<T>(fn: (db: AcrmDatabase) => Promise<T>): Promise<T> {
+    const name = `acrm_sp_${PostgresDatabase.nextSavepointId++}`;
+    await this.queryable.query(`SAVEPOINT ${name}`);
+    const tx = new PostgresDatabase(this.queryable, null, "active");
+    try {
+      const result = await fn(tx);
+      await this.queryable.query(`RELEASE SAVEPOINT ${name}`);
+      return result;
+    } catch (error) {
+      await this.queryable.query(`ROLLBACK TO SAVEPOINT ${name}`).catch(() => undefined);
+      await this.queryable.query(`RELEASE SAVEPOINT ${name}`).catch(() => undefined);
+      throw error;
+    }
   }
 }

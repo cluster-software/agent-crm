@@ -19,7 +19,7 @@ describe("PostgresDatabase", () => {
     ]);
   });
 
-  it("rolls back failed client-backed transactions", async () => {
+  it("rolls back failed queryable-backed transactions", async () => {
     const client = new TransactionalQueryable();
     const db = PostgresDatabase.fromQueryable(client);
 
@@ -30,6 +30,65 @@ describe("PostgresDatabase", () => {
       "BEGIN",
       "INSERT INTO tx_probe (value) VALUES ($1)",
       "ROLLBACK",
+      "SELECT value FROM tx_probe",
+    ]);
+  });
+
+  it("does not commit an outer pool-backed transaction from a nested transaction", async () => {
+    const pool = new TransactionalPool();
+    const db = PostgresDatabase.fromQueryable(pool);
+
+    await db.execute("CREATE TABLE tx_probe (value text)");
+
+    await expect(db.transaction(async (tx) => {
+      await tx.execute("INSERT INTO tx_probe (value) VALUES ($1)", ["outer"]);
+      await tx.transaction(async (nested) => {
+        await nested.execute("INSERT INTO tx_probe (value) VALUES ($1)", ["nested"]);
+      });
+      throw new Error("outer rollback");
+    })).rejects.toThrow("outer rollback");
+
+    const result = await db.execute("SELECT value FROM tx_probe");
+    expect(result.rows).toEqual([]);
+    expect(pool.queries).toEqual([
+      "CREATE TABLE tx_probe (value text)",
+      "BEGIN",
+      "INSERT INTO tx_probe (value) VALUES ($1)",
+      expect.stringMatching(/^SAVEPOINT acrm_sp_\d+$/),
+      "INSERT INTO tx_probe (value) VALUES ($1)",
+      expect.stringMatching(/^RELEASE SAVEPOINT acrm_sp_\d+$/),
+      "ROLLBACK",
+      "SELECT value FROM tx_probe",
+    ]);
+  });
+
+  it("rolls back failed nested transactions to a savepoint", async () => {
+    const pool = new TransactionalPool();
+    const db = PostgresDatabase.fromQueryable(pool);
+
+    await db.execute("CREATE TABLE tx_probe (value text)");
+
+    await db.transaction(async (tx) => {
+      await tx.execute("INSERT INTO tx_probe (value) VALUES ($1)", ["outer"]);
+      await expect(tx.transaction(async (nested) => {
+        await nested.execute("INSERT INTO tx_probe (value) VALUES ($1)", ["nested"]);
+        throw new Error("nested rollback");
+      })).rejects.toThrow("nested rollback");
+      await tx.execute("INSERT INTO tx_probe (value) VALUES ($1)", ["after"]);
+    });
+
+    const result = await db.execute("SELECT value FROM tx_probe");
+    expect(result.rows).toEqual([{ value: "outer" }, { value: "after" }]);
+    expect(pool.queries).toEqual([
+      "CREATE TABLE tx_probe (value text)",
+      "BEGIN",
+      "INSERT INTO tx_probe (value) VALUES ($1)",
+      expect.stringMatching(/^SAVEPOINT acrm_sp_\d+$/),
+      "INSERT INTO tx_probe (value) VALUES ($1)",
+      expect.stringMatching(/^ROLLBACK TO SAVEPOINT acrm_sp_\d+$/),
+      expect.stringMatching(/^RELEASE SAVEPOINT acrm_sp_\d+$/),
+      "INSERT INTO tx_probe (value) VALUES ($1)",
+      "COMMIT",
       "SELECT value FROM tx_probe",
     ]);
   });
@@ -51,6 +110,7 @@ class TransactionalQueryable implements Queryable {
   readonly queries: string[] = [];
   private rows: string[] = [];
   private transactionRows: string[] | null = null;
+  private readonly savepoints = new Map<string, string[]>();
 
   async query(
     sql: string,
@@ -65,10 +125,27 @@ class TransactionalQueryable implements Queryable {
     if (sql === "COMMIT") {
       if (this.transactionRows) this.rows = this.transactionRows;
       this.transactionRows = null;
+      this.savepoints.clear();
       return { rows: [], rowCount: null };
     }
     if (sql === "ROLLBACK") {
       this.transactionRows = null;
+      this.savepoints.clear();
+      return { rows: [], rowCount: null };
+    }
+    const savepoint = sql.match(/^SAVEPOINT ([a-zA-Z0-9_]+)$/);
+    if (savepoint) {
+      this.savepoints.set(savepoint[1]!, [...this.activeRows()]);
+      return { rows: [], rowCount: null };
+    }
+    const rollbackToSavepoint = sql.match(/^ROLLBACK TO SAVEPOINT ([a-zA-Z0-9_]+)$/);
+    if (rollbackToSavepoint) {
+      this.transactionRows = [...(this.savepoints.get(rollbackToSavepoint[1]!) ?? [])];
+      return { rows: [], rowCount: null };
+    }
+    const releaseSavepoint = sql.match(/^RELEASE SAVEPOINT ([a-zA-Z0-9_]+)$/);
+    if (releaseSavepoint) {
+      this.savepoints.delete(releaseSavepoint[1]!);
       return { rows: [], rowCount: null };
     }
     if (/^CREATE TABLE tx_probe\b/i.test(sql)) {
@@ -79,9 +156,10 @@ class TransactionalQueryable implements Queryable {
       return { rows: [], rowCount: 1 };
     }
     if (/^SELECT value FROM tx_probe\b/i.test(sql)) {
+      const rows = this.activeRows();
       return {
-        rows: this.rows.map((value) => ({ value })),
-        rowCount: this.rows.length,
+        rows: rows.map((value) => ({ value })),
+        rowCount: rows.length,
       };
     }
 
