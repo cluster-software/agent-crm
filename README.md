@@ -18,60 +18,6 @@ Let Claude run sales for you. Claude needs a source of truth but existing CRMs a
 
 Solution: Agent CRM. Headless, scriptable, with a CLI for Claude to interact with.
 
-```txt
-                    ┌──────────────┐
-                    │  Custom UIs  │
-                    └──────┬───────┘
-                           │
-┌────────────┐      ┌──────▼──────┐      ┌───────────────┐
-│ AI Agents  ├─────►│  .acrm      │◄─────┤ CLI / Scripts │
-└────────────┘      └─────────────┘      └───────────────┘
-```
-
-## What's in a `.acrm` file?
-
-A `.acrm` file is a **SQLite database** with a [change-history layer](https://lix.dev) on top. That means:
-
-- **No proprietary format.** Open it with any lix client and your data is right there in standard tables.
-- **Every write is a versioned checkpoint.** Like git for your CRM — branch to run an experiment, diff to see what changed, revert if Claude mangles a row.
-- **It's just a file.** Copy it, email it, commit it, sync it through Google Drive. No server, no account, no migration tool needed if you ever walk away.
-
-If you can read SQLite, you can read your CRM. That's the whole guarantee.
-
-## Quickstart
-
-Install the CLI:
-
-```bash
-npm install -g @agent-crm/cli
-```
-
-Create your first `.acrm` file and let Claude rip on it:
-
-```bash
-claude --dangerously-skip-permissions
-```
-
-Create an .acrm file
-
-```bash
-! acrm init pipeline.acrm
-```
-
-Then import your CSVs
-
-```bash
-! acrm import csv ./leads.csv
-```
-
-## Why Agent CRM
-- **🧩 Headless:** Ships as a CLI.
-- **⚒️ Skills based:** Claude writes skills against the CLI (transcript ingestion, stale-deal sweeps, weekly reports) as `.md` files.
-- **🧱 Modeled:** uses Attio's data model out of the box — `people`, `companies`, `deals`, `posts`, `transcripts`, and communication records. Typed, related, queryable with plain SQL. Fixed schema = predictable agent edits.
-- **🔀 Version controlled:** every change is a checkpoint on a branch. Diff, merge, revert, time-travel.
-- **🔌 Pluggable transcript providers:** `transcripts` are vendor-agnostic. Drop a `transcript-provider-<vendor>` skill into `~/.claude/skills/` to plug in Granola, Otter, Fireflies, Fathom, Zoom, manual paste, or anything else.
-
-
 ## Use cases
 
 A grab-bag of jobs Agent CRM handles today. Each is a skill or a CLI command — bring your own, or use the ones we ship.
@@ -95,5 +41,3 @@ A grab-bag of jobs Agent CRM handles today. Each is a skill or a CLI command —
 **Plug in a new transcript provider.** Adapters are themselves skills. Drop a `transcript-provider-<vendor>` SKILL.md into `~/.claude/skills/` following the contract in [`docs/transcript-provider-protocol.md`](docs/transcript-provider-protocol.md) (Otter, Fireflies, Fathom, Zoom). Native providers can also add first-class CLI imports like `acrm import granola`.
 
 **Write your own skill.** Ask Claude for _"a skill that reads my call transcripts, updates deal stages, and posts a summary to Slack"_ and it writes a `.md` file into `~/.claude/skills/`. No code.
-
-**Query with plain SQL.** `acrm execute "SELECT ..."` runs against the Attio-style schema. It's just SQLite — bring any client you like.
