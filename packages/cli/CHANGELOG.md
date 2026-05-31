@@ -1,5 +1,16 @@
 # @agent-crm/cli
 
+## 1.0.1
+
+### Patch Changes
+
+- 0468999: Fix Postgres imports by avoiding oversized normalized-key index entries for long text values and making SDK write operations transactional so failed value inserts do not leave partial record shells.
+
+  Honor direct SDK Postgres connection strings with `channel_binding=require`, and update the records dedupe help text to match its transactional behavior.
+
+- Updated dependencies [0468999]
+  - @agent-crm/sdk@1.0.1
+
 ## 1.0.0
 
 ### Major Changes
