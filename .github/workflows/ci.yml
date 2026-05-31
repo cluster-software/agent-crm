@@ -91,6 +91,20 @@ jobs:
     # smoke-test gate (SDK alone exports its API; CLI+SDK install together
     # and `acrm` works end to end). Runs in parallel with build and tests.
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: acrm_smoke
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d acrm_smoke"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -114,10 +128,8 @@ jobs:
           npm pack --workspace @agent-crm/sdk --pack-destination "$RUNNER_TEMP"
           npm pack --workspace @agent-crm/cli --pack-destination "$RUNNER_TEMP"
       - name: SDK tarball installs and exports its public API
-        # `--ignore-scripts` skips better-sqlite3's ~30s native build. This
-        # smoke check only verifies the SDK module loads and exports a
-        # non-empty named-export set; it never opens a Lix, so no native
-        # binding is needed.
+        # This smoke check only verifies the SDK module loads and exports a
+        # non-empty named-export set; it does not need a database connection.
         run: |
           dir=$(mktemp -d)
           cd "$dir"
@@ -126,9 +138,9 @@ jobs:
             "$RUNNER_TEMP"/agent-crm-sdk-*.tgz
           node -e "import('@agent-crm/sdk').then(m => { const k = Object.keys(m); if (k.length === 0) { throw new Error('SDK exported zero names'); } console.log('SDK exports:', k.length, 'names'); })"
       - name: CLI + SDK tarballs install together and acrm runs
-        # Real install (scripts enabled) so better-sqlite3's postinstall and
-        # CLI's skills installer both run end to end — that's the bug class
-        # this check is specifically here to catch.
+        # Real install (scripts enabled) so CLI postinstall hooks run end to end.
+        env:
+          ACRM_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/acrm_smoke
         run: |
           dir=$(mktemp -d)
           cd "$dir"
@@ -137,11 +149,9 @@ jobs:
             "$RUNNER_TEMP"/agent-crm-sdk-*.tgz \
             "$RUNNER_TEMP"/agent-crm-cli-*.tgz
           ./node_modules/.bin/acrm --version
-          ./node_modules/.bin/acrm init smoke.acrm
+          ./node_modules/.bin/acrm init
           ./node_modules/.bin/acrm records create people \
             --field name=Smoke \
-            --field email_addresses=smoke@test.com \
-            --workspace smoke.acrm
+            --field email_addresses=smoke@test.com
           ./node_modules/.bin/acrm execute \
-            "select count(*) as n from acrm_record" \
-            --workspace smoke.acrm
+            "select count(*) as n from acrm_record"
