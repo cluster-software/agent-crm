@@ -19,6 +19,9 @@ export type Queryable = {
 
 export type PostgresConnectionOptions = PoolConfig & {
   connectionString: string;
+  // Supported by node-postgres at runtime; older @types/pg releases do not
+  // expose it yet.
+  enableChannelBinding?: boolean;
 };
 
 type TransactionState = "root" | "active" | "passthrough";
