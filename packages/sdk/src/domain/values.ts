@@ -2,6 +2,7 @@ import {
   parsePhoneNumberFromString,
   type CountryCode,
 } from "libphonenumber-js/min";
+import { Buffer } from "node:buffer";
 import { AcrmError, ERR } from "../lib/errors.js";
 
 export type AttributeType =
@@ -36,6 +37,8 @@ export type AttributeConfig = {
   // intentionally not typed here — they're consumed elsewhere.
   [key: string]: unknown;
 };
+
+const MAX_NORMALIZED_KEY_BYTES = 1024;
 
 export function resolveStatusOption(
   raw: string,
@@ -154,12 +157,17 @@ export function normalizeUniqueKey(
     case "domain":
       return (value.domain as string | undefined)?.toLowerCase() ?? null;
     case "url":
-      return (value.value as string | undefined)?.toLowerCase() ?? null;
+      return boundedNormalizedKey((value.value as string | undefined)?.toLowerCase());
     case "text":
-      return (value.value as string | undefined) ?? null;
+      return boundedNormalizedKey(value.value as string | undefined);
     default:
       return null;
   }
+}
+
+function boundedNormalizedKey(value: string | undefined): string | null {
+  if (!value) return null;
+  return Buffer.byteLength(value, "utf8") <= MAX_NORMALIZED_KEY_BYTES ? value : null;
 }
 
 export function recordReferenceTarget(

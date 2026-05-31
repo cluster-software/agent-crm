@@ -136,7 +136,15 @@ export async function importCommunicationBatch(
   await ensureCommunicationSchema(workspace);
 
   const normalizedBatch = normalizeCommunicationBatch(batch);
-  const db = workspace.db;
+  return await workspace.db.transaction(async (db) =>
+    importNormalizedCommunicationBatch(db, normalizedBatch)
+  );
+}
+
+async function importNormalizedCommunicationBatch(
+  db: Workspace["db"],
+  normalizedBatch: CommunicationImportBatch,
+): Promise<CommunicationImportResult> {
   const stats: CommunicationImportResult["stats"] = {
     people_seen: normalizedBatch.people.length,
     people_created: 0,

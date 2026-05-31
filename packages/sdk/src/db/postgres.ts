@@ -58,7 +58,15 @@ export class PostgresDatabase implements AcrmDatabase {
 
   async transaction<T>(fn: (db: AcrmDatabase) => Promise<T>): Promise<T> {
     if (!("connect" in this.queryable)) {
-      return await fn(this);
+      await this.queryable.query("BEGIN");
+      try {
+        const result = await fn(this);
+        await this.queryable.query("COMMIT");
+        return result;
+      } catch (error) {
+        await this.queryable.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      }
     }
 
     const pool = this.queryable as PgPool;
