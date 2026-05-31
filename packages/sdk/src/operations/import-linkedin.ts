@@ -44,7 +44,6 @@ export async function importLinkedinProfile(
   workspace: Workspace,
   args: ImportLinkedinProfileArgs,
 ): Promise<LinkedinImportResult> {
-  const db = workspace.db;
   const { urlOrSlug, token, cacheDir, refresh, noCache } = args;
   const { url, publicId } = normalizeLinkedinInput(urlOrSlug);
 
@@ -65,6 +64,29 @@ export async function importLinkedinProfile(
     fetched_at: nowIso(),
     cache_hit: cacheHit,
   };
+
+  return await workspace.db.transaction((db) =>
+    importMappedLinkedinProfile(db, {
+      url,
+      cachePath,
+      cacheHit,
+      mapped,
+      provenance,
+    })
+  );
+}
+
+async function importMappedLinkedinProfile(
+  db: Workspace["db"],
+  args: {
+    url: string;
+    cachePath: string | null;
+    cacheHit: boolean;
+    mapped: MappedProfile;
+    provenance: Record<string, unknown>;
+  },
+): Promise<LinkedinImportResult> {
+  const { url, cachePath, cacheHit, mapped, provenance } = args;
 
   // Company first so the person can reference it.
   let companyId: string | null = null;

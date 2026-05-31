@@ -116,7 +116,16 @@ export async function importLinkedinRelations(
     relations.push(normalized);
   }
 
-  const db = workspace.db;
+  return await workspace.db.transaction((db) =>
+    importNormalizedLinkedinRelations(db, relations, stats)
+  );
+}
+
+async function importNormalizedLinkedinRelations(
+  db: Workspace["db"],
+  relations: NormalizedRelation[],
+  stats: ImportLinkedinRelationsResult["stats"],
+): Promise<ImportLinkedinRelationsResult> {
   const sourceIndex = await loadPeopleBySourceKeys(db, relations.map((relation) => relation.sourceKey));
   const plannedSourceIndex = new Map(sourceIndex);
   const linkedinIndex = await loadPeopleByLinkedinUrl(

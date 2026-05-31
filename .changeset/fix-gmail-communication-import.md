@@ -2,4 +2,4 @@
 "@agent-crm/sdk": patch
 ---
 
-Fix Gmail communication imports against Postgres by avoiding oversized normalized-key index entries for long text values and making the import write transactionally.
+Fix Postgres imports by avoiding oversized normalized-key index entries for long text values and making Gmail and LinkedIn import writes transactional.
