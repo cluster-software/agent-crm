@@ -3,7 +3,6 @@ import type { Command } from "commander";
 import {
   AcrmError,
   ERR,
-  Workspace,
   applyDedupe,
   createRecord,
   dedupeRecords,
@@ -12,7 +11,7 @@ import {
   type ConflictResolver,
   type DedupePolicy,
 } from "@agent-crm/sdk";
-import { resolveWorkspacePath } from "../workspace-resolve.js";
+import { openResolvedWorkspace, resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, isJson, ok, setJsonMode } from "../output/json.js";
 
 type Prefer = "keep" | "discard" | "interactive";
@@ -74,7 +73,7 @@ export function registerRecords(program: Command): void {
   // Namespace `records` carves out room for future per-record operations
   // (archive, restore, show, list) without crowding the top-level surface.
   // `dedupe` is the verb agents and humans reach for when two rows describe
-  // the same entity — chosen over `merge` to keep clear of lix's branch /
+  // the same entity — chosen over `merge` to keep clear of db's branch /
   // version merge terminology.
   const records = program
     .command("records")
@@ -132,7 +131,7 @@ to wire up references.
       const root = program.opts() as { json?: boolean; workspace?: string };
       setJsonMode(root.json);
       try {
-        const ws = await Workspace.open(resolveWorkspacePath(root.workspace));
+        const ws = await openResolvedWorkspace(resolveWorkspacePath(root.workspace));
         try {
           const result = await createRecord(ws, {
             object_slug: object,
@@ -195,7 +194,7 @@ missing record_id all fail loudly without touching the workspace.
         const root = program.opts() as { json?: boolean; workspace?: string };
         setJsonMode(root.json);
         try {
-          const ws = await Workspace.open(resolveWorkspacePath(root.workspace));
+          const ws = await openResolvedWorkspace(resolveWorkspacePath(root.workspace));
           try {
             const result = await updateRecord(ws, {
               object_slug: object,
@@ -250,10 +249,10 @@ What it does:
      record already had an active ref to the keeper.
   3. Deletes the discarded record from \`acrm_record\`.
 
-Note: lix does not currently expose BEGIN/COMMIT, so this command is not a
-single SQL transaction. It validates the full plan before any mutation
-(use \`--dry-run\` to inspect). If a step fails midway, re-run the command —
-the operation is idempotent once the duplicate row has been redirected.
+Note: this command currently applies the validated plan as a series of writes
+rather than one workspace transaction. Use \`--dry-run\` to inspect the plan.
+If a step fails midway, re-run the command — the operation is idempotent once
+the duplicate row has been redirected.
 `,
     )
     .action(async (object: string, opts: DedupeOpts) => {
@@ -261,7 +260,7 @@ the operation is idempotent once the duplicate row has been redirected.
       setJsonMode(root.json);
       try {
         const prefer = parsePrefer(opts.prefer);
-        const ws = await Workspace.open(resolveWorkspacePath(root.workspace));
+        const ws = await openResolvedWorkspace(resolveWorkspacePath(root.workspace));
         try {
           let result;
           if (prefer === "interactive") {

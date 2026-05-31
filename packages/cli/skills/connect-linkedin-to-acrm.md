@@ -1,17 +1,17 @@
 ---
 name: connect-linkedin-to-acrm
-description: Connect LinkedIn to an Agent CRM / ACRM workspace through the hosted sync engine, then optionally import existing LinkedIn contacts. Use when the user asks to connect, integrate, hook up, sync, import, or troubleshoot LinkedIn with Agent CRM, ACRM, or an `.acrm` workspace.
+description: Connect LinkedIn to an Agent CRM / ACRM Postgres workspace through the hosted sync engine, then optionally import existing LinkedIn contacts. Use when the user asks to connect, integrate, hook up, sync, import, or troubleshoot LinkedIn with Agent CRM or ACRM.
 ---
 
 # connect-linkedin-to-acrm
 
-Use this when the user wants LinkedIn connected to their current `.acrm` workspace or wants to import existing LinkedIn contacts.
+Use this when the user wants LinkedIn connected to their current Postgres workspace or wants to import existing LinkedIn contacts.
 
 ## What this does
 
 This is the hosted LinkedIn sync flow:
 
-1. The local workspace gets a cloud workspace binding in `.agent-crm-cloud.json`.
+1. The workspace gets a cloud workspace binding in `acrm_metadata`.
 2. The user opens Agent CRM's hosted LinkedIn connect page.
 3. Future LinkedIn messages and contacts sync automatically after connection.
 4. The user chooses whether to import existing 1st-degree LinkedIn relations.
@@ -19,19 +19,19 @@ This is the hosted LinkedIn sync flow:
 
 ## Run
 
-First resolve the workspace. Prefer the user's active/open `.acrm` workspace or the current working directory. If the workspace is unclear, run:
+First resolve the workspace. Prefer `ACRM_DATABASE_URL`, `NEON_DATABASE_URL`, `SUPABASE_DATABASE_URL`, or `DATABASE_URL` from the current shell or `.env` in the current project directory. If the workspace is unclear, ask the user for a Postgres-compatible connection string or have them set:
 
 ```sh
-find . -maxdepth 2 -name '*.acrm' -print
+export ACRM_DATABASE_URL='postgres://...'
 ```
 
-If no workspace is found, ask which `.acrm` file to use or initialize one:
+If the database has not been initialized, run:
 
 ```sh
-acrm init workspace.acrm
+acrm init
 ```
 
-Run commands from the directory containing the active `.acrm` file and omit `-w` when there is a single obvious workspace. If you must run from a different directory or there are multiple `.acrm` files, pass the absolute path directly with `-w /path/to/workspace.acrm`.
+Run commands from the project directory that contains `.env` and local signal/cache files. If you must target a different database, pass the URL directly with `-w '<postgres-url>'`.
 
 Do not set or re-export a `WORKSPACE` shell variable. Tool calls usually run in fresh shells, so repeated exports add noise without preserving useful state.
 
@@ -102,9 +102,7 @@ connected, stop the background command and send the user back to the connect
 flow above.
 
 Existing people are written first. Message-history backfill then starts in the
-hosted engine for the imported people without blocking local people import. The
-desktop app pulls stored LinkedIn message chunks into the local `.acrm`
-workspace automatically. For a few hundred contacts, the final JSON can still
+hosted engine for the imported people without blocking people import. For a few hundred contacts, the final JSON can still
 take another 1-2 minutes while company LinkedIn URLs fill in; do not cancel it
 just because the people already appeared.
 
@@ -115,8 +113,8 @@ If `acrm import linkedin` says LinkedIn is not connected, send the user back to 
 Do not run `acrm --json import linkedin --sync` in the normal connect/import
 flow. Future LinkedIn messages and contacts sync automatically. Use `--sync`
 only for debugging or importing already-stored hosted message history into the
-local `.acrm` file. Run it only when the user explicitly asks to pull messages
-locally or the current task needs local `.acrm` queries over stored messages. In
+Postgres workspace. Run it only when the user explicitly asks to pull messages
+or the current task needs SQL queries over stored messages. In
 that case, run `--sync` for the resolved workspace by default; it imports stored
 messages for every active LinkedIn account enabled for that workspace, not just
 the most recently connected profile. Check `communication_messages_seen` /

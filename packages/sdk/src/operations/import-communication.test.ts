@@ -1,8 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { newDb } from "pg-mem";
 import { describe, expect, it } from "vitest";
 import { exec } from "../db/execute.js";
+import { PostgresDatabase } from "../db/postgres.js";
+import { uuidv7 } from "../lib/uuidv7.js";
 import { Workspace } from "../workspace.js";
 import { importCommunicationBatch, type CommunicationImportBatch } from "./import-communication.js";
 
@@ -79,17 +79,21 @@ describe("importCommunicationBatch", () => {
 });
 
 async function withWorkspace(run: (workspace: Workspace) => Promise<void>): Promise<void> {
-  const dir = await mkdtemp(path.join(tmpdir(), "acrm-import-communication-"));
+  const mem = newDb({ noAstCoverageCheck: true });
+  mem.public.registerFunction({
+    name: "gen_random_uuid",
+    returns: "text",
+    implementation: () => uuidv7(),
+  });
+  const pg = mem.adapters.createPg();
+  const pool = new pg.Pool();
+  const db = PostgresDatabase.fromQueryable(pool, () => pool.end());
+  const workspace = await Workspace.create({ db });
   try {
-    const workspacePath = path.join(dir, "test.acrm");
-    const workspace = await Workspace.create(workspacePath);
-    try {
-      await run(workspace);
-    } finally {
-      await workspace.close();
-    }
+    await run(workspace);
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await workspace.close();
+    await db.close();
   }
 }
 
@@ -143,7 +147,7 @@ function duplicateCommunicationBatch(): CommunicationImportBatch {
 
 async function recordCount(workspace: Workspace, objectSlug: string): Promise<number> {
   const result = await exec(
-    workspace.lix,
+    workspace.db,
     "SELECT COUNT(*) AS count FROM acrm_record WHERE object_slug = $1",
     [objectSlug],
   );
@@ -156,7 +160,7 @@ async function activeValueCount(
   attributeSlug: string,
 ): Promise<number> {
   const result = await exec(
-    workspace.lix,
+    workspace.db,
     `SELECT COUNT(*) AS count
      FROM acrm_value
      WHERE active_until IS NULL
@@ -173,7 +177,7 @@ async function singleDisplayValue(
   attributeSlug: string,
 ): Promise<string | null> {
   const result = await exec(
-    workspace.lix,
+    workspace.db,
     `SELECT value_json
      FROM acrm_value
      WHERE active_until IS NULL
@@ -183,19 +187,16 @@ async function singleDisplayValue(
     [objectSlug, attributeSlug],
   );
   const value = result.rows[0]?.value_json;
-  if (typeof value === "string") {
-    const parsed = JSON.parse(value) as unknown;
-    if (parsed && typeof parsed === "object" && "full_name" in parsed) {
-      const fullName = (parsed as { full_name?: unknown }).full_name;
-      return typeof fullName === "string" ? fullName : null;
-    }
-    if (parsed && typeof parsed === "object" && "value" in parsed) {
-      const display = (parsed as { value?: unknown }).value;
-      return typeof display === "string" ? display : null;
-    }
-    return typeof parsed === "string" ? parsed : null;
+  const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
+  if (parsed && typeof parsed === "object" && "full_name" in parsed) {
+    const fullName = (parsed as { full_name?: unknown }).full_name;
+    return typeof fullName === "string" ? fullName : null;
   }
-  return null;
+  if (parsed && typeof parsed === "object" && "value" in parsed) {
+    const display = (parsed as { value?: unknown }).value;
+    return typeof display === "string" ? display : null;
+  }
+  return typeof parsed === "string" ? parsed : null;
 }
 
 async function singleJsonValue(
@@ -204,7 +205,7 @@ async function singleJsonValue(
   attributeSlug: string,
 ): Promise<unknown> {
   const result = await exec(
-    workspace.lix,
+    workspace.db,
     `SELECT value_json
      FROM acrm_value
      WHERE active_until IS NULL

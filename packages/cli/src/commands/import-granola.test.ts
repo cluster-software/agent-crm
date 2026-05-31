@@ -1,10 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Workspace } from "@agent-crm/sdk";
-import { attachGranolaSubcommand } from "./import-granola.js";
+import { __test as granolaCommandTest } from "./import-granola.js";
+import { openTestWorkspace } from "../test/open-test-db.js";
+
+const TEST_DATABASE_URL = "postgres://user:pass@localhost/acrm_test";
 
 describe("import granola command", () => {
   const oldSyncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL;
@@ -16,10 +14,7 @@ describe("import granola command", () => {
   });
 
   it("does not start backfill when --no-backfill is passed", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "acrm-granola-import-"));
-    const workspacePath = join(dir, "workspace.acrm");
-    const ws = await Workspace.create(workspacePath);
-    await ws.close();
+    const db = await openTestWorkspace();
     process.env.ACRM_SYNC_ENGINE_URL = "https://sync.example.com";
     const fetchMock = vi.fn(async (url: string) => {
       if (url.includes("/register")) return Response.json({ ok: true });
@@ -31,28 +26,17 @@ describe("import granola command", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     try {
-      const root = new Command();
-      root.exitOverride();
-      root.option("--workspace <path>");
-      root.option("--json");
-      attachGranolaSubcommand(root.command("import"));
-
-      await root.parseAsync([
-        "node",
-        "acrm",
-        "--workspace",
-        workspacePath,
-        "--json",
-        "import",
-        "granola",
-        "--no-backfill"
-      ]);
+      await granolaCommandTest.runImportGranola({
+        workspace: TEST_DATABASE_URL,
+        db,
+        startBackfill: false,
+      });
 
       expect(fetchMock.mock.calls.some(([url]) =>
         String(url).includes("/integrations/granola/backfill")
       )).toBe(false);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await db.close();
     }
   });
 });

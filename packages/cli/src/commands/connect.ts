@@ -1,10 +1,8 @@
-import path from "node:path";
 import { spawn } from "node:child_process";
 import type { Command } from "commander";
-import { AcrmError, ERR } from "@agent-crm/sdk";
-import { resolveWorkspacePath } from "../workspace-resolve.js";
+import { AcrmError, ERR, type AcrmDatabase } from "@agent-crm/sdk";
+import { resolveWorkspacePath, workspaceDisplayName } from "../workspace-resolve.js";
 import { fail, isJson, ok, setJsonMode } from "../output/json.js";
-import { loadDotenv } from "../lib/dotenv.js";
 import {
   type CloudIntegrationProviderStatus,
   DEFAULT_SYNC_ENGINE_URL,
@@ -33,6 +31,12 @@ type GranolaConnectOpts = {
   cutoffDate?: string;
   open?: boolean;
   status?: boolean;
+};
+
+type CommandWorkspaceOpts = {
+  workspace?: string;
+  db?: AcrmDatabase;
+  workspaceName?: string;
 };
 
 export function registerConnect(program: Command): void {
@@ -147,7 +151,7 @@ function getOrCreateConnectCommand(program: Command): Command {
   if (existing) return existing;
   return program
     .command("connect")
-    .description("connect external accounts to this .acrm workspace");
+    .description("connect external accounts to this Postgres workspace");
 }
 
 type LinkedinConnectResult = {
@@ -166,23 +170,21 @@ type LinkedinConnectResult = {
   linkedin: CliProviderStatus;
 };
 
-async function runConnectLinkedin(opts: { workspace?: string; orgId?: string }): Promise<LinkedinConnectResult> {
+async function runConnectLinkedin(opts: CommandWorkspaceOpts & { orgId?: string }): Promise<LinkedinConnectResult> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
-  const workspaceDir = path.dirname(workspaceFile);
-  loadDotenv(workspaceDir);
-  loadDotenv(process.cwd());
+  const workspaceName = workspaceDisplayName(opts.workspaceName);
 
   const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
     clusterOrgId: opts.orgId ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
-  });
+  }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   await registerCloudWorkspace({
     syncEngineUrl,
     workspaceId: metadata.workspaceId,
     clientToken: metadata.clientToken,
-    workspaceName: path.basename(workspaceDir),
+    workspaceName,
   });
   const status = await fetchCloudIntegrationStatus({
     syncEngineUrl,
@@ -208,7 +210,7 @@ async function runConnectLinkedin(opts: { workspace?: string; orgId?: string }):
       syncEngineUrl,
       workspaceId: metadata.workspaceId,
       clusterOrgId: metadata.clusterOrgId,
-      workspaceName: path.basename(workspaceDir),
+      workspaceName,
     }),
     workspace_id: metadata.workspaceId,
     cluster_org_id: metadata.clusterOrgId ?? null,
@@ -217,21 +219,18 @@ async function runConnectLinkedin(opts: { workspace?: string; orgId?: string }):
   };
 }
 
-async function runConnectLinkedinStatus(opts: { workspace?: string }): Promise<{
+async function runConnectLinkedinStatus(opts: CommandWorkspaceOpts): Promise<{
   workspace_id: string;
   sync_engine_url: string;
   linkedin: CliProviderStatus;
 }> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
-  const workspaceDir = path.dirname(workspaceFile);
-  loadDotenv(workspaceDir);
-  loadDotenv(process.cwd());
 
   const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
     clusterOrgId: process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
-  });
+  }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   const status = await fetchCloudIntegrationStatus({
     syncEngineUrl,
@@ -262,6 +261,8 @@ function linkedinConnectUrl(input: {
 
 async function runConnectGranola(opts: {
   workspace?: string;
+  db?: AcrmDatabase;
+  workspaceName?: string;
   apiKey?: string;
   apiKeyStdin?: boolean;
   cutoffDate?: string;
@@ -274,27 +275,25 @@ async function runConnectGranola(opts: {
   account?: unknown;
 }> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
-  const workspaceDir = path.dirname(workspaceFile);
-  loadDotenv(workspaceDir);
-  loadDotenv(process.cwd());
+  const workspaceName = workspaceDisplayName(opts.workspaceName);
 
   const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
-  });
+  }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   await registerCloudWorkspace({
     syncEngineUrl,
     workspaceId: metadata.workspaceId,
     clientToken: metadata.clientToken,
-    workspaceName: path.basename(workspaceDir),
+    workspaceName,
   });
   const apiKey = opts.apiKeyStdin ? await readStdinSecret() : opts.apiKey;
   const auth_url = granolaConnectUrl({
     syncEngineUrl,
     workspaceId: metadata.workspaceId,
     clientToken: metadata.clientToken,
-    workspaceName: path.basename(workspaceDir),
+    workspaceName,
   });
   if (!apiKey) {
     return {
@@ -322,21 +321,18 @@ async function runConnectGranola(opts: {
   };
 }
 
-async function runConnectGranolaStatus(opts: { workspace?: string }): Promise<{
+async function runConnectGranolaStatus(opts: CommandWorkspaceOpts): Promise<{
   workspace_id: string;
   sync_engine_url: string;
   granola: CliProviderStatus;
 }> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
-  const workspaceDir = path.dirname(workspaceFile);
-  loadDotenv(workspaceDir);
-  loadDotenv(process.cwd());
 
   const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
     clusterOrgId: process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
-  });
+  }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   const status = await fetchCloudIntegrationStatus({
     syncEngineUrl,

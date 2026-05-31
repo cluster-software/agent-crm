@@ -1,4 +1,4 @@
-import type { Lix } from "@lix-js/sdk";
+import type { AcrmDatabase } from "../db/types.js";
 import { exec } from "../db/execute.js";
 import {
   findRecordByUnique,
@@ -54,7 +54,7 @@ export async function importXProfile(
   workspace: Workspace,
   args: ImportXProfileArgs,
 ): Promise<XImportResult> {
-  const lix = workspace.lix;
+  const db = workspace.db;
   const { handleOrUrl, token, cacheDir, refresh, noCache } = args;
   const { handle } = normalizeXInput(handleOrUrl);
 
@@ -84,19 +84,19 @@ export async function importXProfile(
   }
 
   let personId = await findRecordByUnique(
-    lix,
+    db,
     "people",
     "twitter_url",
     twitterKey,
   );
   let personCreated = false;
   if (!personId) {
-    personId = await generateUuid(lix);
-    await insertRecord(lix, "people", personId);
+    personId = await generateUuid(db);
+    await insertRecord(db, "people", personId);
     personCreated = true;
   }
 
-  await setSingleValue(lix, {
+  await setSingleValue(db, {
     object_slug: "people",
     record_id: personId,
     attribute_slug: "twitter_url",
@@ -107,7 +107,7 @@ export async function importXProfile(
   });
 
   if (mapped.person.name) {
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "people",
       record_id: personId,
       attribute_slug: "name",
@@ -121,7 +121,7 @@ export async function importXProfile(
   const bio = pickBio(profile);
   const missing: string[] = [];
   for (const attr of ENRICHABLE) {
-    if (!(await hasActiveValue(lix, "people", personId, attr))) {
+    if (!(await hasActiveValue(db, "people", personId, attr))) {
       missing.push(attr);
     }
   }
@@ -182,13 +182,13 @@ function expandTcoUrls(bio: string, profile: XProfile): string {
 }
 
 async function hasActiveValue(
-  lix: Lix,
+  db: AcrmDatabase,
   object_slug: string,
   record_id: string,
   attribute_slug: string,
 ): Promise<boolean> {
   const r = await exec(
-    lix,
+    db,
     `SELECT 1 FROM acrm_value
      WHERE object_slug = $1 AND record_id = $2 AND attribute_slug = $3
        AND active_until IS NULL LIMIT 1`,

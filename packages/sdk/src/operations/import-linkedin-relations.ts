@@ -1,4 +1,4 @@
-import type { LixRuntimeValue } from "@lix-js/sdk";
+import type { SqlValue } from "../db/types.js";
 import { exec } from "../db/execute.js";
 import {
   prepareValueInsert,
@@ -116,28 +116,28 @@ export async function importLinkedinRelations(
     relations.push(normalized);
   }
 
-  const lix = workspace.lix;
-  const sourceIndex = await loadPeopleBySourceKeys(lix, relations.map((relation) => relation.sourceKey));
+  const db = workspace.db;
+  const sourceIndex = await loadPeopleBySourceKeys(db, relations.map((relation) => relation.sourceKey));
   const plannedSourceIndex = new Map(sourceIndex);
   const linkedinIndex = await loadPeopleByLinkedinUrl(
-    lix,
+    db,
     relations.map((relation) => relation.linkedinUrl).filter((url): url is string => Boolean(url)),
   );
   const plannedLinkedinIndex = new Map(linkedinIndex);
   const companies = uniqueCompanies(relations.map((relation) => relation.company).filter((company): company is NormalizedCompany => Boolean(company)));
-  const companySourceIndex = await loadCompaniesBySourceKeys(lix, companies.map((company) => company.sourceKey));
+  const companySourceIndex = await loadCompaniesBySourceKeys(db, companies.map((company) => company.sourceKey));
   const plannedCompanySourceIndex = new Map(companySourceIndex);
   const companyLinkedinIndex = await loadCompaniesByLinkedinUrl(
-    lix,
+    db,
     companies.map((company) => company.linkedinUrl).filter((url): url is string => Boolean(url)),
   );
   const plannedCompanyLinkedinIndex = new Map(companyLinkedinIndex);
   const companyDomainIndex = await loadCompaniesByDomain(
-    lix,
+    db,
     companies.map((company) => company.domain).filter((domain): domain is string => Boolean(domain)),
   );
   const plannedCompanyDomainIndex = new Map(companyDomainIndex);
-  const companyNameIndex = await loadCompaniesByName(lix, companies.map((company) => company.name));
+  const companyNameIndex = await loadCompaniesByName(db, companies.map((company) => company.name));
   const plannedCompanyNameIndex = new Map(companyNameIndex);
 
   const recordsToCreate: Array<{ object_slug: ObjectSlug; record_id: string }> = [];
@@ -190,11 +190,11 @@ export async function importLinkedinRelations(
   stats.people_created = createdRecordIds.size;
   stats.companies_created = createdCompanyIds.size;
 
-  const existingValues = await loadExistingValues(lix, {
+  const existingValues = await loadExistingValues(db, {
     people: [...touchedRecordIds],
     companies: [...touchedCompanyIds],
   });
-  const writer = new LinkedinRelationWriteBatcher(lix);
+  const writer = new LinkedinRelationWriteBatcher(db);
   const changedExistingRecordIds = new Set<string>();
   const changedExistingCompanyIds = new Set<string>();
 
@@ -283,8 +283,8 @@ export async function importLinkedinRelations(
 }
 
 async function ensurePeopleSchema(workspace: Workspace): Promise<void> {
-  await seedObjects(workspace.lix);
-  await seedAttributes(workspace.lix);
+  await seedObjects(workspace.db);
+  await seedAttributes(workspace.db);
 }
 
 function normalizeRelation(relation: LinkedinRelation): NormalizedRelation | null {
@@ -473,14 +473,14 @@ function companyProvenance(company: NormalizedCompany): Record<string, unknown> 
 }
 
 async function loadPeopleBySourceKeys(
-  lix: Workspace["lix"],
+  db: Workspace["db"],
   sourceKeys: string[],
 ): Promise<Map<string, string>> {
   const index = new Map<string, string>();
   for (const chunk of chunks(unique(sourceKeys), SELECT_CHUNK_SIZE)) {
     const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
     const result = await exec(
-      lix,
+      db,
       `SELECT record_id, normalized_key
        FROM acrm_value
        WHERE active_until IS NULL
@@ -499,14 +499,14 @@ async function loadPeopleBySourceKeys(
 }
 
 async function loadPeopleByLinkedinUrl(
-  lix: Workspace["lix"],
+  db: Workspace["db"],
   linkedinUrls: string[],
 ): Promise<Map<string, string>> {
   const index = new Map<string, string>();
   for (const chunk of chunks(unique(linkedinUrls), SELECT_CHUNK_SIZE)) {
     const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
     const result = await exec(
-      lix,
+      db,
       `SELECT record_id, normalized_key
        FROM acrm_value
        WHERE active_until IS NULL
@@ -525,14 +525,14 @@ async function loadPeopleByLinkedinUrl(
 }
 
 async function loadCompaniesBySourceKeys(
-  lix: Workspace["lix"],
+  db: Workspace["db"],
   sourceKeys: string[],
 ): Promise<Map<string, string>> {
   const index = new Map<string, string>();
   for (const chunk of chunks(unique(sourceKeys), SELECT_CHUNK_SIZE)) {
     const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
     const result = await exec(
-      lix,
+      db,
       `SELECT record_id, normalized_key
        FROM acrm_value
        WHERE active_until IS NULL
@@ -551,14 +551,14 @@ async function loadCompaniesBySourceKeys(
 }
 
 async function loadCompaniesByLinkedinUrl(
-  lix: Workspace["lix"],
+  db: Workspace["db"],
   linkedinUrls: string[],
 ): Promise<Map<string, string>> {
   const index = new Map<string, string>();
   for (const chunk of chunks(unique(linkedinUrls), SELECT_CHUNK_SIZE)) {
     const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
     const result = await exec(
-      lix,
+      db,
       `SELECT record_id, normalized_key
        FROM acrm_value
        WHERE active_until IS NULL
@@ -577,14 +577,14 @@ async function loadCompaniesByLinkedinUrl(
 }
 
 async function loadCompaniesByDomain(
-  lix: Workspace["lix"],
+  db: Workspace["db"],
   domains: string[],
 ): Promise<Map<string, string>> {
   const index = new Map<string, string>();
   for (const chunk of chunks(unique(domains), SELECT_CHUNK_SIZE)) {
     const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
     const result = await exec(
-      lix,
+      db,
       `SELECT record_id, normalized_key
        FROM acrm_value
        WHERE active_until IS NULL
@@ -603,14 +603,14 @@ async function loadCompaniesByDomain(
 }
 
 async function loadCompaniesByName(
-  lix: Workspace["lix"],
+  db: Workspace["db"],
   names: string[],
 ): Promise<Map<string, string>> {
   const index = new Map<string, string>();
   for (const chunk of chunks(unique(names.map((name) => name.toLowerCase())), SELECT_CHUNK_SIZE)) {
     const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
     const result = await exec(
-      lix,
+      db,
       `SELECT record_id, LOWER(normalized_key) AS normalized_key
        FROM acrm_value
        WHERE active_until IS NULL
@@ -629,7 +629,7 @@ async function loadCompaniesByName(
 }
 
 async function loadExistingValues(
-  lix: Workspace["lix"],
+  db: Workspace["db"],
   records: Record<ObjectSlug, string[]>,
 ): Promise<ExistingValues> {
   const existing: ExistingValues = {
@@ -640,7 +640,7 @@ async function loadExistingValues(
     for (const chunk of chunks(records[objectSlug], SELECT_CHUNK_SIZE)) {
       const placeholders = chunk.map((_, index) => `$${index + 2}`).join(", ");
       const result = await exec(
-        lix,
+        db,
         `SELECT object_slug, record_id, attribute_slug, value_json,
                 normalized_key, ref_object, ref_record_id
          FROM acrm_value
@@ -765,7 +765,7 @@ class LinkedinRelationWriteBatcher {
   private records: Array<{ object_slug: ObjectSlug; record_id: string }> = [];
   private values: PreparedValueInsert[] = [];
 
-  constructor(private readonly lix: Workspace["lix"]) {}
+  constructor(private readonly db: Workspace["db"]) {}
 
   enqueueRecord(record: { object_slug: ObjectSlug; record_id: string }): void {
     this.records.push(record);
@@ -801,9 +801,9 @@ class LinkedinRelationWriteBatcher {
       const placeholders = chunk
         .map((_, index) => `($${index * 2 + 1}, $${index * 2 + 2})`)
         .join(", ");
-      const params: LixRuntimeValue[] = chunk.flatMap((record) => [record.object_slug, record.record_id]);
+      const params: SqlValue[] = chunk.flatMap((record) => [record.object_slug, record.record_id]);
       await exec(
-        this.lix,
+        this.db,
         `INSERT INTO acrm_record (object_slug, record_id) VALUES ${placeholders}`,
         params,
       );
@@ -812,7 +812,7 @@ class LinkedinRelationWriteBatcher {
   }
 
   private async flushValues(): Promise<void> {
-    const COLS = 10;
+    const COLS = 11;
     for (const chunk of chunks(this.values, MAX_BATCH_ROWS)) {
       const placeholders = chunk
         .map((_, index) => {
@@ -820,12 +820,13 @@ class LinkedinRelationWriteBatcher {
           return `(${Array.from({ length: COLS }, (_, offset) => `$${base + offset + 1}`).join(", ")})`;
         })
         .join(", ");
-      const params: LixRuntimeValue[] = chunk.flatMap((value) => [
+      const params: SqlValue[] = chunk.flatMap((value) => [
         value.id,
         value.object_slug,
         value.record_id,
         value.attribute_slug,
         value.value_json,
+        value.active_from,
         value.normalized_key,
         value.ref_object,
         value.ref_record_id,
@@ -833,10 +834,10 @@ class LinkedinRelationWriteBatcher {
         value.provenance_json,
       ]);
       await exec(
-        this.lix,
+        this.db,
         `INSERT INTO acrm_value
           (id, object_slug, record_id, attribute_slug, value_json,
-           normalized_key, ref_object, ref_record_id, source, provenance_json)
+           active_from, normalized_key, ref_object, ref_record_id, source, provenance_json)
          VALUES ${placeholders}`,
         params,
       );

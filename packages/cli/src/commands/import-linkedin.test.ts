@@ -1,6 +1,3 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ERR, Workspace, exec, type AcrmError } from "@agent-crm/sdk";
 import { __test as linkedinCommandTest } from "./import-linkedin.js";
@@ -8,6 +5,9 @@ import {
   LINKEDIN_NOT_CONNECTED_HINT,
   LINKEDIN_NOT_CONNECTED_MESSAGE,
 } from "../lib/cloud-workspace.js";
+import { openTestWorkspace } from "../test/open-test-db.js";
+
+const TEST_DATABASE_URL = "postgres://user:pass@localhost/acrm_test";
 
 describe("import linkedin command", () => {
   const oldSyncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL;
@@ -19,10 +19,7 @@ describe("import linkedin command", () => {
   });
 
   it("imports relations from the hosted sync-engine export endpoint", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "acrm-linkedin-import-"));
-    const workspacePath = join(dir, "workspace.acrm");
-    const ws = await Workspace.create(workspacePath);
-    await ws.close();
+    const db = await openTestWorkspace();
     process.env.ACRM_SYNC_ENGINE_URL = "https://sync.example.com";
     const baseRelation = {
       object: "UserRelation",
@@ -66,7 +63,8 @@ describe("import linkedin command", () => {
 
     try {
       const result = await linkedinCommandTest.runImportLinkedinNetwork({
-        workspace: workspacePath,
+        workspace: TEST_DATABASE_URL,
+        db,
       });
 
       expect(result.stats.people_created).toBe(1);
@@ -91,7 +89,7 @@ describe("import linkedin command", () => {
         },
       });
       expect(enrichedUrl).toContain("enrich_companies=1");
-      const reopened = await Workspace.open(workspacePath);
+      const reopened = Workspace.fromDatabase(db);
       try {
         await expect(singleValue(reopened, "linkedin_url")).resolves.toBe("linkedin.com/in/ada-lovelace");
         await expect(singleValue(reopened, "profile_picture_url")).resolves.toBe("https://media.example.com/ada.jpg");
@@ -101,15 +99,12 @@ describe("import linkedin command", () => {
         await reopened.close();
       }
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await db.close();
     }
   });
 
   it("passes cutoff-date to the relations export endpoint", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "acrm-linkedin-import-"));
-    const workspacePath = join(dir, "workspace.acrm");
-    const ws = await Workspace.create(workspacePath);
-    await ws.close();
+    const db = await openTestWorkspace();
     process.env.ACRM_SYNC_ENGINE_URL = "https://sync.example.com";
     const fetchMock = vi.fn(async () => Response.json({
       ok: true,
@@ -118,28 +113,23 @@ describe("import linkedin command", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     try {
-      await linkedinCommandTest.runImportLinkedinNetwork({
-        workspace: workspacePath,
+      const result = await linkedinCommandTest.runImportLinkedinNetwork({
+        workspace: TEST_DATABASE_URL,
+        db,
         cutoffDate: "2026-04-25",
       });
 
       const [url] = fetchMock.mock.calls[0] as [string];
-      const metadata = JSON.parse(await readFile(join(dir, ".agent-crm-cloud.json"), "utf8")) as {
-        workspaceId: string;
-      };
       expect(url).toBe(
-        `https://sync.example.com/workspaces/${encodeURIComponent(metadata.workspaceId)}/integrations/linkedin/relations/export?cutoff_date=2026-04-25`,
+        `https://sync.example.com/workspaces/${encodeURIComponent(result.workspace_id)}/integrations/linkedin/relations/export?cutoff_date=2026-04-25`,
       );
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await db.close();
     }
   });
 
   it("returns the helpful connect error when LinkedIn is not connected", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "acrm-linkedin-import-"));
-    const workspacePath = join(dir, "workspace.acrm");
-    const ws = await Workspace.create(workspacePath);
-    await ws.close();
+    const db = await openTestWorkspace();
     process.env.ACRM_SYNC_ENGINE_URL = "https://sync.example.com";
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({
       ok: false,
@@ -148,14 +138,14 @@ describe("import linkedin command", () => {
 
     try {
       await expect(
-        linkedinCommandTest.runImportLinkedinNetwork({ workspace: workspacePath }),
+        linkedinCommandTest.runImportLinkedinNetwork({ workspace: TEST_DATABASE_URL, db }),
       ).rejects.toMatchObject({
         message: LINKEDIN_NOT_CONNECTED_MESSAGE,
         code: ERR.INVALID_INPUT,
         hint: LINKEDIN_NOT_CONNECTED_HINT,
       } satisfies Partial<AcrmError>);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await db.close();
     }
   });
 });
@@ -166,7 +156,7 @@ async function singleValue(
   objectSlug = "people",
 ): Promise<string | null> {
   const result = await exec(
-    ws.lix,
+    ws.db,
     `SELECT value_json
      FROM acrm_value
      WHERE object_slug = $2

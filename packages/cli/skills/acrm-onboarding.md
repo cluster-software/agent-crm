@@ -1,11 +1,11 @@
 ---
 name: acrm-onboarding
-description: Onboard a new Agent CRM user in an existing `.acrm` workspace — walk them through picking a first data source (Gmail / LinkedIn sync / CSV / LinkedIn or X profile) and importing it. Trigger phrasings — "onboard me", "set up agent crm", "get started with acrm", "I'm new to acrm", or a bare `/acrm-onboarding`.
+description: Onboard a new Agent CRM user in an existing Postgres workspace — walk them through picking a first data source (Gmail / LinkedIn sync / CSV / LinkedIn or X profile) and importing it. Trigger phrasings — "onboard me", "set up agent crm", "get started with acrm", "I'm new to acrm", or a bare `/acrm-onboarding`.
 ---
 
 # acrm-onboarding
 
-The first-run flow for Agent CRM. Goal: in one conversation, help a user populate their existing `.acrm` workspace with real contacts so the rest of the skills have something to chew on.
+The first-run flow for Agent CRM. Goal: in one conversation, help a user populate their existing Postgres workspace with real contacts so the rest of the skills have something to chew on.
 
 ## Run
 
@@ -86,13 +86,13 @@ Your browser should now be open to connect Gmail.
 Pick your Google account and click Allow.
 
 After you finish Google OAuth, Agent CRM's hosted sync engine will start
-importing Gmail in the background. The Agent CRM app will then pull
-people, threads, and messages into your local `.acrm` workspace.
+importing Gmail in the background. Agent CRM will write people, threads, and
+messages into the shared Postgres workspace.
 ```
 
 What `acrm import gmail` does now:
 
-1. Reads or creates `.agent-crm-cloud.json` next to the local workspace.
+1. Reads or creates the hosted sync metadata in `acrm_metadata`.
 2. Registers the cloud workspace with the hosted sync engine.
 3. Opens the hosted Gmail connect page in the user's default browser. That
    page checks Cluster auth, resolves the org from the signed-in email domain,
@@ -102,8 +102,7 @@ What `acrm import gmail` does now:
 5. Returns the hosted connect URL as `data.auth_url` for fallback/debugging.
 
 After OAuth, the sync engine redirects to a "Gmail sync started" page and
-imports Gmail in the background. Gmail data is written to the cloud
-workspace, then the Electron app pulls it into the local `.acrm` file as:
+imports Gmail in the background. Gmail data is written to the workspace as:
 
 ```text
 people
@@ -136,7 +135,7 @@ Ask the user for the URL (or `@handle` for X). Sniff the platform from the URL a
 - LinkedIn profile URL (`linkedin.com/in/<slug>`) → `acrm import linkedin '<url>'`
 - X / Twitter profile (`x.com/<handle>`, `twitter.com/<handle>`, or bare `@handle`) → `acrm import x '<handle>'`
 
-Both require `APIFY_API_TOKEN` in `.env` next to the workspace. If missing, the CLI prints an exact fix — relay it to the user. After import, offer to add another profile (loop until they're done).
+Both require `APIFY_API_TOKEN` in `.env` in the current project directory or in the shell environment. If missing, the CLI prints an exact fix — relay it to the user. After import, offer to add another profile (loop until they're done).
 
 ### 4. Confirm + next step
 

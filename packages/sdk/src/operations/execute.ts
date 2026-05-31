@@ -1,4 +1,4 @@
-import type { LixRuntimeValue } from "@lix-js/sdk";
+import type { SqlValue } from "../db/types.js";
 import { exec, type Row } from "../db/execute.js";
 import { parseAttributeConfig } from "../workspace/catalog.js";
 import type { Workspace } from "../workspace.js";
@@ -11,9 +11,9 @@ export type QueryResult = {
 export async function query(
   workspace: Workspace,
   sql: string,
-  params: LixRuntimeValue[] = [],
+  params: SqlValue[] = [],
 ): Promise<QueryResult> {
-  const result = await exec(workspace.lix, sql, params);
+  const result = await exec(workspace.db, sql, params);
   return { rows: result.rows, rowsAffected: result.rowsAffected };
 }
 
@@ -39,13 +39,13 @@ export type SchemaDump = {
 
 export async function dumpSchema(workspace: Workspace): Promise<SchemaDump> {
   const objects = await exec(
-    workspace.lix,
+    workspace.db,
     `SELECT object_slug, singular_name, plural_name
      FROM acrm_object
      ORDER BY object_slug`,
   );
   const attrs = await exec(
-    workspace.lix,
+    workspace.db,
     `SELECT object_slug, attribute_slug, title, attribute_type,
             is_multivalued, is_unique, config_json
      FROM acrm_attribute

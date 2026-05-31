@@ -1,13 +1,12 @@
-import path from "node:path";
 import type { Command } from "commander";
 import {
   AcrmError,
   ERR,
-  Workspace,
   importTranscript,
+  type AcrmDatabase,
   type TranscriptImportResult,
 } from "@agent-crm/sdk";
-import { resolveWorkspacePath } from "../workspace-resolve.js";
+import { localWorkspaceDir, openResolvedWorkspace, resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, ok, setJsonMode } from "../output/json.js";
 import { loadDotenv } from "../lib/dotenv.js";
 import {
@@ -50,6 +49,7 @@ export function attachGranolaSubcommand(parent: Command): void {
 
 async function runImportGranola(opts: {
   workspace?: string;
+  db?: AcrmDatabase;
   cutoffDate?: string;
   startBackfill?: boolean;
 }): Promise<{
@@ -66,7 +66,7 @@ async function runImportGranola(opts: {
   backfill_warning?: string;
 }> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
-  const workspaceDir = path.dirname(workspaceFile);
+  const workspaceDir = localWorkspaceDir(workspaceFile);
   loadDotenv(workspaceDir);
   loadDotenv(process.cwd());
 
@@ -74,7 +74,7 @@ async function runImportGranola(opts: {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
     clusterOrgId: process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
-  });
+  }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   let backfill: { started: number; integration_account_ids: string[] } | undefined;
   let backfillWarning: string | undefined;
@@ -97,7 +97,7 @@ async function runImportGranola(opts: {
     clientToken: metadata.clientToken,
     cutoffDate: opts.cutoffDate,
   });
-  const ws = await Workspace.open(workspaceFile);
+  const ws = await openResolvedWorkspace(workspaceFile, opts.db);
   try {
     const results: TranscriptImportResult[] = [];
     for (const transcript of transcripts) {

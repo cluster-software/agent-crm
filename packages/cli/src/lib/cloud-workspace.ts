@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   AcrmError,
   ERR,
   Workspace,
+  exec,
   ensureWorkspaceIdentity,
+  type AcrmDatabase,
   type CommunicationImportBatch,
   type LinkedinRelation,
   type TranscriptPayload,
@@ -30,6 +32,14 @@ export const GRANOLA_NOT_CONNECTED_HINT = [
 ].join("\n");
 
 const CLOUD_METADATA_FILENAME = ".agent-crm-cloud.json";
+const CLOUD_METADATA_KEYS = {
+  bundle: "cloud.workspace",
+  workspaceId: "cloud.workspace_id",
+  clientToken: "cloud.client_token",
+  clusterOrgId: "cloud.cluster_org_id",
+  localWorkspaceId: "cloud.local_workspace_id",
+  createdAt: "cloud.created_at",
+} as const;
 
 export type CloudMetadata = {
   workspaceId?: string;
@@ -67,122 +77,196 @@ export type CloudIntegrationStatus = {
 };
 
 export function ensureCloudWorkspaceMetadata(
-  workspaceDir: string,
+  db: AcrmDatabase,
   preferred: {
     workspaceId?: string;
     clientToken?: string;
     clusterOrgId?: string;
     localWorkspaceId?: string;
-    workspacePath?: string;
   } = {},
-): { workspaceId: string; clientToken: string; clusterOrgId?: string; localWorkspaceId?: string } {
-  const metadataPath = join(workspaceDir, CLOUD_METADATA_FILENAME);
-  let existing = readCloudMetadata(metadataPath);
-  const localWorkspaceId = preferred.localWorkspaceId || existing.localWorkspaceId;
+): Promise<{ workspaceId: string; clientToken: string; clusterOrgId?: string; localWorkspaceId?: string }> {
+  return ensureCloudWorkspaceMetadataInDatabase(db, preferred);
+}
 
-  if (existing.workspaceId && existing.clientToken && localWorkspaceId) {
-    if (existing.localWorkspaceId && existing.localWorkspaceId !== localWorkspaceId) {
-      archiveCloudMetadata(metadataPath);
-      existing = {};
-    } else if (!existing.localWorkspaceId && shouldRotateLegacySidecar(existing, metadataPath, preferred.workspacePath)) {
-      archiveCloudMetadata(metadataPath);
-      existing = {};
-    }
-  }
+export async function ensureCloudWorkspaceMetadataInDatabase(
+  db: AcrmDatabase,
+  preferred: {
+    workspaceId?: string;
+    clientToken?: string;
+    clusterOrgId?: string;
+    localWorkspaceId?: string;
+  } = {},
+  fallback: {
+    workspaceId?: string;
+    clientToken?: string;
+    clusterOrgId?: string;
+  } = {},
+): Promise<{ workspaceId: string; clientToken: string; clusterOrgId?: string; localWorkspaceId?: string }> {
+  return await db.transaction(async (tx) => {
+    const existing = await readCloudMetadata(tx);
+    const initial = {
+      workspaceId: existing.workspaceId || preferred.workspaceId || fallback.workspaceId || randomUUID(),
+      clientToken: existing.clientToken || preferred.clientToken || fallback.clientToken || randomUUID(),
+      ...(preferred.clusterOrgId || existing.clusterOrgId || fallback.clusterOrgId
+        ? { clusterOrgId: preferred.clusterOrgId || existing.clusterOrgId || fallback.clusterOrgId }
+        : {}),
+      ...(preferred.localWorkspaceId || existing.localWorkspaceId
+        ? { localWorkspaceId: preferred.localWorkspaceId || existing.localWorkspaceId }
+        : {}),
+      createdAt: existing.createdAt ?? new Date().toISOString(),
+    };
 
-  const workspaceId = existing.workspaceId || preferred.workspaceId || randomUUID();
-  const clientToken = existing.clientToken || preferred.clientToken || randomUUID();
-  const clusterOrgId = preferred.clusterOrgId || existing.clusterOrgId;
-  const nextLocalWorkspaceId = localWorkspaceId || existing.localWorkspaceId;
+    await insertCloudMetadataBundleIfMissing(tx, initial);
 
-  if (
-    workspaceId !== existing.workspaceId ||
-    clientToken !== existing.clientToken ||
-    clusterOrgId !== existing.clusterOrgId ||
-    nextLocalWorkspaceId !== existing.localWorkspaceId
-  ) {
-    writeFileSync(
-      metadataPath,
-      `${JSON.stringify({
-        ...existing,
-        workspaceId,
-        clientToken,
-        ...(clusterOrgId ? { clusterOrgId } : {}),
-        ...(nextLocalWorkspaceId ? { localWorkspaceId: nextLocalWorkspaceId } : {}),
-        createdAt: existing.createdAt ?? new Date().toISOString(),
-      }, null, 2)}\n`,
-      "utf8"
-    );
-  }
+    const canonical = await readCloudMetadata(tx);
+    const workspaceId = canonical.workspaceId ?? initial.workspaceId;
+    const clientToken = canonical.clientToken ?? initial.clientToken;
+    const clusterOrgId = preferred.clusterOrgId || canonical.clusterOrgId || fallback.clusterOrgId;
+    const nextLocalWorkspaceId = preferred.localWorkspaceId || canonical.localWorkspaceId;
+    const createdAt = canonical.createdAt ?? initial.createdAt;
 
-  return {
-    workspaceId,
-    clientToken,
-    ...(clusterOrgId ? { clusterOrgId } : {}),
-    ...(nextLocalWorkspaceId ? { localWorkspaceId: nextLocalWorkspaceId } : {}),
-  };
+    await writeCloudMetadata(tx, {
+      workspaceId,
+      clientToken,
+      ...(clusterOrgId ? { clusterOrgId } : {}),
+      ...(nextLocalWorkspaceId ? { localWorkspaceId: nextLocalWorkspaceId } : {}),
+      createdAt,
+    });
+
+    return {
+      workspaceId,
+      clientToken,
+      ...(clusterOrgId ? { clusterOrgId } : {}),
+      ...(nextLocalWorkspaceId ? { localWorkspaceId: nextLocalWorkspaceId } : {}),
+    };
+  });
 }
 
 export async function ensureCloudWorkspaceMetadataForWorkspace(
   workspacePath: string,
   preferred: { workspaceId?: string; clientToken?: string; clusterOrgId?: string } = {},
+  options: { db?: AcrmDatabase; legacyMetadataDir?: string } = {},
 ): Promise<{ workspaceId: string; clientToken: string; clusterOrgId?: string; localWorkspaceId?: string }> {
-  const workspace = await Workspace.open(workspacePath);
+  const workspace = options.db
+    ? await Workspace.open({ db: options.db })
+    : await Workspace.open(workspacePath);
   try {
+    const legacy = options.legacyMetadataDir
+      ? readLegacyCloudMetadata(options.legacyMetadataDir)
+      : {};
     const localWorkspaceId = await ensureWorkspaceIdentity(workspace);
-    return ensureCloudWorkspaceMetadata(dirname(workspacePath), {
-      ...preferred,
+    return await ensureCloudWorkspaceMetadataInDatabase(workspace.db, {
+      workspaceId: preferred.workspaceId,
+      clientToken: preferred.clientToken,
+      clusterOrgId: preferred.clusterOrgId,
       localWorkspaceId,
-      workspacePath,
-    });
+    }, legacy);
   } finally {
     await workspace.close();
   }
 }
 
-function readCloudMetadata(metadataPath: string): CloudMetadata {
+async function readCloudMetadata(db: AcrmDatabase): Promise<CloudMetadata> {
+  const keys = Object.values(CLOUD_METADATA_KEYS);
+  const placeholders = keys.map((_, index) => `$${index + 1}`).join(", ");
+  const result = await exec(
+    db,
+    `SELECT key, value
+     FROM acrm_metadata
+     WHERE key IN (${placeholders})`,
+    keys,
+  );
+  const values = new Map(result.rows.map((row) => [String(row.key), String(row.value)]));
+  const legacy = metadataFromValues(values);
+  const bundle = parseCloudMetadata(values.get(CLOUD_METADATA_KEYS.bundle));
+  return {
+    ...legacy,
+    ...bundle,
+  };
+}
+
+function metadataFromValues(values: Map<string, string>): CloudMetadata {
+  return {
+    ...(values.get(CLOUD_METADATA_KEYS.workspaceId) ? { workspaceId: values.get(CLOUD_METADATA_KEYS.workspaceId) } : {}),
+    ...(values.get(CLOUD_METADATA_KEYS.clientToken) ? { clientToken: values.get(CLOUD_METADATA_KEYS.clientToken) } : {}),
+    ...(values.get(CLOUD_METADATA_KEYS.clusterOrgId) ? { clusterOrgId: values.get(CLOUD_METADATA_KEYS.clusterOrgId) } : {}),
+    ...(values.get(CLOUD_METADATA_KEYS.localWorkspaceId) ? { localWorkspaceId: values.get(CLOUD_METADATA_KEYS.localWorkspaceId) } : {}),
+    ...(values.get(CLOUD_METADATA_KEYS.createdAt) ? { createdAt: values.get(CLOUD_METADATA_KEYS.createdAt) } : {}),
+  };
+}
+
+async function insertCloudMetadataBundleIfMissing(
+  db: AcrmDatabase,
+  metadata: Required<Pick<CloudMetadata, "workspaceId" | "clientToken" | "createdAt">> & CloudMetadata,
+): Promise<void> {
+  await exec(
+    db,
+    `INSERT INTO acrm_metadata (key, value)
+     VALUES ($1, $2)
+     ON CONFLICT (key) DO NOTHING`,
+    [CLOUD_METADATA_KEYS.bundle, serializeCloudMetadata(metadata)],
+  );
+}
+
+async function writeCloudMetadata(db: AcrmDatabase, metadata: Required<Pick<CloudMetadata, "workspaceId" | "clientToken" | "createdAt">> & CloudMetadata): Promise<void> {
+  await exec(
+    db,
+    `INSERT INTO acrm_metadata (key, value)
+     VALUES ($1, $2)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+    [CLOUD_METADATA_KEYS.bundle, serializeCloudMetadata(metadata)],
+  );
+
+  const entries: Array<[string, string | undefined]> = [
+    [CLOUD_METADATA_KEYS.workspaceId, metadata.workspaceId],
+    [CLOUD_METADATA_KEYS.clientToken, metadata.clientToken],
+    [CLOUD_METADATA_KEYS.clusterOrgId, metadata.clusterOrgId],
+    [CLOUD_METADATA_KEYS.localWorkspaceId, metadata.localWorkspaceId],
+    [CLOUD_METADATA_KEYS.createdAt, metadata.createdAt],
+  ];
+  for (const [key, value] of entries) {
+    if (value == null) continue;
+    await exec(
+      db,
+      `INSERT INTO acrm_metadata (key, value)
+       VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [key, value],
+    );
+  }
+}
+
+function readLegacyCloudMetadata(metadataDir: string): CloudMetadata {
   try {
-    const parsed = JSON.parse(readFileSync(metadataPath, "utf8")) as CloudMetadata;
-    return parsed && typeof parsed === "object" ? parsed : {};
+    return parseCloudMetadata(readFileSync(join(metadataDir, CLOUD_METADATA_FILENAME), "utf8"));
   } catch {
     return {};
   }
 }
 
-function shouldRotateLegacySidecar(
-  existing: CloudMetadata,
-  metadataPath: string,
-  workspacePath: string | undefined,
-): boolean {
-  if (existing.localWorkspaceId || !workspacePath || !existsSync(metadataPath) || !existsSync(workspacePath)) {
-    return false;
-  }
-  const sidecarCreatedAt = sidecarTimestamp(existing, metadataPath);
-  if (sidecarCreatedAt == null) return false;
-  const workspaceStat = statSync(workspacePath);
-  const workspaceCreatedAt = Math.max(workspaceStat.birthtimeMs, workspaceStat.mtimeMs);
-  return workspaceCreatedAt > sidecarCreatedAt;
+function serializeCloudMetadata(metadata: CloudMetadata): string {
+  return JSON.stringify(metadata);
 }
 
-function sidecarTimestamp(existing: CloudMetadata, metadataPath: string): number | null {
-  const createdAt = Date.parse(existing.createdAt ?? "");
-  if (!Number.isNaN(createdAt)) return createdAt;
-  const stat = statSync(metadataPath);
-  const timestamp = Math.max(stat.birthtimeMs, stat.mtimeMs);
-  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
+function parseCloudMetadata(value: string | undefined): CloudMetadata {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object") return {};
+    return cleanCloudMetadata(parsed);
+  } catch {
+    return {};
+  }
 }
 
-function archiveCloudMetadata(metadataPath: string): void {
-  if (!existsSync(metadataPath)) return;
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const base = `${metadataPath}.stale-${timestamp}`;
-  let target = base;
-  let suffix = 1;
-  while (existsSync(target)) {
-    target = `${base}-${suffix}`;
-    suffix++;
-  }
-  renameSync(metadataPath, target);
+function cleanCloudMetadata(parsed: Record<string, unknown>): CloudMetadata {
+  return {
+    ...(typeof parsed.workspaceId === "string" && parsed.workspaceId ? { workspaceId: parsed.workspaceId } : {}),
+    ...(typeof parsed.clientToken === "string" && parsed.clientToken ? { clientToken: parsed.clientToken } : {}),
+    ...(typeof parsed.clusterOrgId === "string" && parsed.clusterOrgId ? { clusterOrgId: parsed.clusterOrgId } : {}),
+    ...(typeof parsed.localWorkspaceId === "string" && parsed.localWorkspaceId ? { localWorkspaceId: parsed.localWorkspaceId } : {}),
+    ...(typeof parsed.createdAt === "string" && parsed.createdAt ? { createdAt: parsed.createdAt } : {}),
+  };
 }
 
 export async function registerCloudWorkspace(input: {

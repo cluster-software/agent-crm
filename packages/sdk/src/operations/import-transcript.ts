@@ -1,4 +1,4 @@
-import type { Lix } from "@lix-js/sdk";
+import type { AcrmDatabase } from "../db/types.js";
 import { exec } from "../db/execute.js";
 import {
   addMultiValue,
@@ -62,13 +62,13 @@ export async function importTranscript(
   workspace: Workspace,
   payload: TranscriptPayload,
 ): Promise<TranscriptImportResult> {
-  const lix = workspace.lix;
+  const db = workspace.db;
   const resolved: ResolvedParticipant[] = [];
   const unresolved: UnresolvedParticipant[] = [];
 
   for (const p of payload.participants) {
     const result = await resolvePersonByIdentifiers(
-      (attr, key) => findRecordByUnique(lix, "people", attr, key),
+      (attr, key) => findRecordByUnique(db, "people", attr, key),
       { email: p.email, linkedin_url: p.linkedin_url, twitter_url: p.twitter_url },
     );
 
@@ -76,7 +76,7 @@ export async function importTranscript(
 
     if (result.person_record_id && result.matched_by && result.matched_key) {
       const backfilled = await backfillIdentifiers(
-        lix,
+        db,
         result.person_record_id,
         result.normalized,
         result.matched_by,
@@ -95,7 +95,7 @@ export async function importTranscript(
       // person matched. Create the record now and link as resolved — keeps
       // the transcript walkable from the new person record on day one.
       const personId = await createPersonFromIdentifiers(
-        lix,
+        db,
         result.normalized,
         payload.source,
       );
@@ -120,10 +120,10 @@ export async function importTranscript(
     }
   }
 
-  const { transcriptId, created } = await upsertTranscript(lix, payload);
+  const { transcriptId, created } = await upsertTranscript(db, payload);
 
   for (const r of resolved) {
-    await linkParticipant(lix, transcriptId, r.person_record_id, payload.source);
+    await linkParticipant(db, transcriptId, r.person_record_id, payload.source);
   }
 
   return {
@@ -136,19 +136,19 @@ export async function importTranscript(
 }
 
 async function createPersonFromIdentifiers(
-  lix: Lix,
+  db: AcrmDatabase,
   normalized: NormalizedIdentifiers,
   importSource: string,
 ): Promise<string> {
-  const personId = await generateUuid(lix);
-  await insertRecord(lix, "people", personId);
+  const personId = await generateUuid(db);
+  await insertRecord(db, "people", personId);
   const source = `transcript-import:${importSource}`;
   const provenance = {
     created_at: nowIso(),
     via: "transcript-participant",
   };
   for (const email of normalized.emails) {
-    await addMultiValue(lix, {
+    await addMultiValue(db, {
       object_slug: "people",
       record_id: personId,
       attribute_slug: "email_addresses",
@@ -159,7 +159,7 @@ async function createPersonFromIdentifiers(
     });
   }
   if (normalized.linkedin_url) {
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "people",
       record_id: personId,
       attribute_slug: "linkedin_url",
@@ -170,7 +170,7 @@ async function createPersonFromIdentifiers(
     });
   }
   if (normalized.twitter_url) {
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "people",
       record_id: personId,
       attribute_slug: "twitter_url",
@@ -200,7 +200,7 @@ function normalizedToOut(n: NormalizedIdentifiers): ParticipantIdentifiersOut {
 // twitter_url) are only set when currently empty — we never clobber a value
 // the user has curated.
 async function backfillIdentifiers(
-  lix: Lix,
+  db: AcrmDatabase,
   personId: string,
   normalized: NormalizedIdentifiers,
   matchedBy: IdentifierAttribute,
@@ -215,7 +215,7 @@ async function backfillIdentifiers(
 
   for (const email of normalized.emails) {
     const existing = await exec(
-      lix,
+      db,
       `SELECT 1 FROM acrm_value
        WHERE object_slug = 'people' AND record_id = $1
          AND attribute_slug = 'email_addresses'
@@ -224,7 +224,7 @@ async function backfillIdentifiers(
       [personId, email],
     );
     if (existing.rows.length) continue;
-    await addMultiValue(lix, {
+    await addMultiValue(db, {
       object_slug: "people",
       record_id: personId,
       attribute_slug: "email_addresses",
@@ -240,7 +240,7 @@ async function backfillIdentifiers(
     const key = normalized[attr];
     if (!key) continue;
     const existing = await exec(
-      lix,
+      db,
       `SELECT 1 FROM acrm_value
        WHERE object_slug = 'people' AND record_id = $1
          AND attribute_slug = $2
@@ -248,7 +248,7 @@ async function backfillIdentifiers(
       [personId, attr],
     );
     if (existing.rows.length) continue;
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "people",
       record_id: personId,
       attribute_slug: attr,
@@ -264,7 +264,7 @@ async function backfillIdentifiers(
 }
 
 async function upsertTranscript(
-  lix: Lix,
+  db: AcrmDatabase,
   payload: TranscriptPayload,
 ): Promise<{ transcriptId: string; created: boolean }> {
   const source = `transcript-import:${payload.source}`;
@@ -275,19 +275,19 @@ async function upsertTranscript(
   };
 
   let transcriptId = await findRecordByUnique(
-    lix,
+    db,
     "transcripts",
     "source_id",
     payload.source_id,
   );
   let created = false;
   if (!transcriptId) {
-    transcriptId = await generateUuid(lix);
-    await insertRecord(lix, "transcripts", transcriptId);
+    transcriptId = await generateUuid(db);
+    await insertRecord(db, "transcripts", transcriptId);
     created = true;
   }
 
-  await setSingleValue(lix, {
+  await setSingleValue(db, {
     object_slug: "transcripts",
     record_id: transcriptId,
     attribute_slug: "source",
@@ -297,7 +297,7 @@ async function upsertTranscript(
     provenance,
   });
 
-  await setSingleValue(lix, {
+  await setSingleValue(db, {
     object_slug: "transcripts",
     record_id: transcriptId,
     attribute_slug: "source_id",
@@ -317,7 +317,7 @@ async function upsertTranscript(
   ];
   for (const [slug, type, value] of scalars) {
     if (value === undefined) continue;
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "transcripts",
       record_id: transcriptId,
       attribute_slug: slug,
@@ -332,7 +332,7 @@ async function upsertTranscript(
 }
 
 async function linkParticipant(
-  lix: Lix,
+  db: AcrmDatabase,
   transcriptId: string,
   personId: string,
   importSource: string,
@@ -341,7 +341,7 @@ async function linkParticipant(
   const provenance = { linked_at: nowIso() };
 
   const fwd = await exec(
-    lix,
+    db,
     `SELECT 1 FROM acrm_value
      WHERE object_slug = 'transcripts' AND record_id = $1
        AND attribute_slug = 'participants'
@@ -350,7 +350,7 @@ async function linkParticipant(
     [transcriptId, personId],
   );
   if (!fwd.rows.length) {
-    await addMultiValue(lix, {
+    await addMultiValue(db, {
       object_slug: "transcripts",
       record_id: transcriptId,
       attribute_slug: "participants",
@@ -362,7 +362,7 @@ async function linkParticipant(
   }
 
   const inv = await exec(
-    lix,
+    db,
     `SELECT 1 FROM acrm_value
      WHERE object_slug = 'people' AND record_id = $1
        AND attribute_slug = 'associated_transcripts'
@@ -371,7 +371,7 @@ async function linkParticipant(
     [personId, transcriptId],
   );
   if (!inv.rows.length) {
-    await addMultiValue(lix, {
+    await addMultiValue(db, {
       object_slug: "people",
       record_id: personId,
       attribute_slug: "associated_transcripts",

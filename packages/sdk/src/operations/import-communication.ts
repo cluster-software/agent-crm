@@ -1,4 +1,4 @@
-import type { LixRuntimeValue } from "@lix-js/sdk";
+import type { SqlValue } from "../db/types.js";
 import { exec } from "../db/execute.js";
 import {
   prepareValueInsert,
@@ -136,7 +136,7 @@ export async function importCommunicationBatch(
   await ensureCommunicationSchema(workspace);
 
   const normalizedBatch = normalizeCommunicationBatch(batch);
-  const lix = workspace.lix;
+  const db = workspace.db;
   const stats: CommunicationImportResult["stats"] = {
     people_seen: normalizedBatch.people.length,
     people_created: 0,
@@ -149,14 +149,14 @@ export async function importCommunicationBatch(
   };
 
   const sourceKeys = collectSourceKeys(normalizedBatch);
-  const sourceIndex = await loadSourceKeyIndex(lix, sourceKeys);
+  const sourceIndex = await loadSourceKeyIndex(db, sourceKeys);
   const plannedSourceIndex = new Map(sourceIndex);
-  const emailIndex = await loadPeopleByEmail(lix, normalizedBatch.people);
+  const emailIndex = await loadPeopleByEmail(db, normalizedBatch.people);
   const plannedEmailIndex = new Map(emailIndex);
-  const linkedinIndex = await loadPeopleByLinkedinUrl(lix, normalizedBatch.people);
+  const linkedinIndex = await loadPeopleByLinkedinUrl(db, normalizedBatch.people);
   const plannedLinkedinIndex = new Map(linkedinIndex);
   const companies = normalizedBatch.companies ?? [];
-  const domainIndex = await loadCompaniesByDomain(lix, companies);
+  const domainIndex = await loadCompaniesByDomain(db, companies);
   const plannedDomainIndex = new Map(domainIndex);
 
   const personPlans = new Map<string, RecordPlan>();
@@ -218,8 +218,8 @@ export async function importCommunicationBatch(
     plannedSourceIndex,
     threadSourceByProviderId,
   );
-  const existingValues = await loadExistingValues(lix, touchedRecords);
-  const writer = new CommunicationWriteBatcher(lix);
+  const existingValues = await loadExistingValues(db, touchedRecords);
+  const writer = new CommunicationWriteBatcher(db);
 
   for (const record of recordsToCreate) {
     writer.enqueueRecord({
@@ -368,8 +368,8 @@ export async function importCommunicationBatch(
 }
 
 async function ensureCommunicationSchema(workspace: Workspace): Promise<void> {
-  await seedObjects(workspace.lix);
-  await seedAttributes(workspace.lix);
+  await seedObjects(workspace.db);
+  await seedAttributes(workspace.db);
 }
 
 function normalizeCommunicationBatch(batch: CommunicationImportBatch): CommunicationImportBatch {
@@ -431,14 +431,14 @@ function collectSourceKeys(batch: CommunicationImportBatch): string[] {
 }
 
 async function loadSourceKeyIndex(
-  lix: Workspace["lix"],
+  db: Workspace["db"],
   sourceKeys: string[],
 ): Promise<Map<string, string>> {
   const index = new Map<string, string>();
   for (const chunk of chunks(unique(sourceKeys), SELECT_CHUNK_SIZE)) {
     const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
     const result = await exec(
-      lix,
+      db,
       `SELECT object_slug, record_id, normalized_key
        FROM acrm_value
        WHERE active_until IS NULL
@@ -457,7 +457,7 @@ async function loadSourceKeyIndex(
 }
 
 async function loadPeopleByEmail(
-  lix: Workspace["lix"],
+  db: Workspace["db"],
   people: CommunicationImportPerson[],
 ): Promise<Map<string, string>> {
   const emails = unique(people.map((person) => normalizeEmail(person.email)).filter((email): email is string => Boolean(email)));
@@ -465,7 +465,7 @@ async function loadPeopleByEmail(
   for (const chunk of chunks(emails, SELECT_CHUNK_SIZE)) {
     const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
     const result = await exec(
-      lix,
+      db,
       `SELECT record_id, normalized_key
        FROM acrm_value
        WHERE active_until IS NULL
@@ -484,7 +484,7 @@ async function loadPeopleByEmail(
 }
 
 async function loadPeopleByLinkedinUrl(
-  lix: Workspace["lix"],
+  db: Workspace["db"],
   people: CommunicationImportPerson[],
 ): Promise<Map<string, string>> {
   const urls = unique(people.map((person) => normalizeLinkedinUrlValue(person.linkedinUrl)).filter((url): url is string => Boolean(url)));
@@ -492,7 +492,7 @@ async function loadPeopleByLinkedinUrl(
   for (const chunk of chunks(urls, SELECT_CHUNK_SIZE)) {
     const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
     const result = await exec(
-      lix,
+      db,
       `SELECT record_id, normalized_key
        FROM acrm_value
        WHERE active_until IS NULL
@@ -511,7 +511,7 @@ async function loadPeopleByLinkedinUrl(
 }
 
 async function loadCompaniesByDomain(
-  lix: Workspace["lix"],
+  db: Workspace["db"],
   companies: CommunicationImportCompany[],
 ): Promise<Map<string, string>> {
   const domains = unique(companies.map((company) => normalizeDomain(company.domain)).filter((domain): domain is string => Boolean(domain)));
@@ -519,7 +519,7 @@ async function loadCompaniesByDomain(
   for (const chunk of chunks(domains, SELECT_CHUNK_SIZE)) {
     const placeholders = chunk.map((_, index) => `$${index + 1}`).join(", ");
     const result = await exec(
-      lix,
+      db,
       `SELECT record_id, normalized_key
        FROM acrm_value
        WHERE active_until IS NULL
@@ -589,7 +589,7 @@ function collectTouchedRecords(
 }
 
 async function loadExistingValues(
-  lix: Workspace["lix"],
+  db: Workspace["db"],
   touchedRecords: Map<string, Set<string>>,
 ): Promise<ExistingValues> {
   const existing: ExistingValues = {
@@ -602,7 +602,7 @@ async function loadExistingValues(
     for (const chunk of chunks([...recordIds], SELECT_CHUNK_SIZE)) {
       const placeholders = chunk.map((_, index) => `$${index + 2}`).join(", ");
       const result = await exec(
-        lix,
+        db,
         `SELECT object_slug, record_id, attribute_slug, value_json,
                 normalized_key, ref_object, ref_record_id
          FROM acrm_value
@@ -762,7 +762,7 @@ class CommunicationWriteBatcher {
   private singlesToRetire: Array<{ object_slug: string; record_id: string; attribute_slug: string }> = [];
   private pendingRetireKeys = new Set<string>();
 
-  constructor(private readonly lix: Workspace["lix"]) {}
+  constructor(private readonly db: Workspace["db"]) {}
 
   enqueueRecord(record: { object_slug: string; record_id: string }): void {
     this.records.push(record);
@@ -839,9 +839,9 @@ class CommunicationWriteBatcher {
       const placeholders = chunk
         .map((_, index) => `($${index * 2 + 1}, $${index * 2 + 2})`)
         .join(", ");
-      const params: LixRuntimeValue[] = chunk.flatMap((record) => [record.object_slug, record.record_id]);
+      const params: SqlValue[] = chunk.flatMap((record) => [record.object_slug, record.record_id]);
       await exec(
-        this.lix,
+        this.db,
         `INSERT INTO acrm_record (object_slug, record_id) VALUES ${placeholders}`,
         params,
       );
@@ -858,12 +858,12 @@ class CommunicationWriteBatcher {
           return `(object_slug = $${base} AND record_id = $${base + 1} AND attribute_slug = $${base + 2})`;
         })
         .join(" OR ");
-      const params: LixRuntimeValue[] = [
+      const params: SqlValue[] = [
         now,
         ...chunk.flatMap((target) => [target.object_slug, target.record_id, target.attribute_slug]),
       ];
       await exec(
-        this.lix,
+        this.db,
         `UPDATE acrm_value
          SET active_until = $1
          WHERE active_until IS NULL
@@ -875,7 +875,7 @@ class CommunicationWriteBatcher {
   }
 
   private async flushValues(): Promise<void> {
-    const COLS = 10;
+    const COLS = 11;
     for (const chunk of chunks(this.values, MAX_BATCH_ROWS)) {
       const placeholders = chunk
         .map((_, index) => {
@@ -883,12 +883,13 @@ class CommunicationWriteBatcher {
           return `(${Array.from({ length: COLS }, (_, offset) => `$${base + offset + 1}`).join(", ")})`;
         })
         .join(", ");
-      const params: LixRuntimeValue[] = chunk.flatMap((value) => [
+      const params: SqlValue[] = chunk.flatMap((value) => [
         value.id,
         value.object_slug,
         value.record_id,
         value.attribute_slug,
         value.value_json,
+        value.active_from,
         value.normalized_key,
         value.ref_object,
         value.ref_record_id,
@@ -896,10 +897,10 @@ class CommunicationWriteBatcher {
         value.provenance_json,
       ]);
       await exec(
-        this.lix,
+        this.db,
         `INSERT INTO acrm_value
           (id, object_slug, record_id, attribute_slug, value_json,
-           normalized_key, ref_object, ref_record_id, source, provenance_json)
+           active_from, normalized_key, ref_object, ref_record_id, source, provenance_json)
          VALUES ${placeholders}`,
         params,
       );

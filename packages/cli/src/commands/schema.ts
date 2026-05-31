@@ -2,14 +2,13 @@ import type { Command } from "commander";
 import {
   AcrmError,
   ERR,
-  Workspace,
   addAttribute,
   createObject,
   editAttributeOptions,
   type AttributeType,
   type StatusOption,
 } from "@agent-crm/sdk";
-import { resolveWorkspacePath } from "../workspace-resolve.js";
+import { openResolvedWorkspace, resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, ok, setJsonMode } from "../output/json.js";
 
 const ATTRIBUTE_TYPES: AttributeType[] = [
@@ -155,7 +154,7 @@ Next steps after creation:
           const object_slug = parseSlug(slug, "object slug");
           const plural = opts.plural?.trim() || titleCase(object_slug);
           const singular = opts.singular?.trim() || defaultSingular(plural);
-          const ws = await Workspace.open(resolveWorkspacePath(root.workspace));
+          const ws = await openResolvedWorkspace(resolveWorkspacePath(root.workspace));
           try {
             const result = await createObject(ws, {
               object_slug,
@@ -270,7 +269,7 @@ To edit status/select options after the fact, use \`acrm attribute edit-options\
             currency_code: opts.currencyCode,
           });
 
-          const ws = await Workspace.open(resolveWorkspacePath(root.workspace));
+          const ws = await openResolvedWorkspace(resolveWorkspacePath(root.workspace));
           try {
             const result = await addAttribute(ws, {
               object_slug,
@@ -329,7 +328,7 @@ rewrite existing values — historical rows continue to reference the old id.
           );
         }
 
-        const ws = await Workspace.open(resolveWorkspacePath(root.workspace));
+        const ws = await openResolvedWorkspace(resolveWorkspacePath(root.workspace));
         try {
           const result =
             verb === "add"

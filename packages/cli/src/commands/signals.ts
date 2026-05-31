@@ -3,16 +3,16 @@ import type { Command } from "commander";
 import {
   AcrmError,
   ERR,
-  Workspace,
   ensureSignalAttributes,
   finishSignalJob,
   loadSignalDefinitions,
   runSignals,
+  type Workspace,
   type SignalObjectSlug,
 } from "@agent-crm/sdk";
 import { fail, ok, setJsonMode } from "../output/json.js";
 import { signalsDirForWorkspace } from "../signals.js";
-import { resolveWorkspacePath } from "../workspace-resolve.js";
+import { openResolvedWorkspace, resolveWorkspacePath } from "../workspace-resolve.js";
 
 function collect(value: string, previous: string[]): string[] {
   return [...(previous ?? []), value];
@@ -87,7 +87,7 @@ export function registerSignals(program: Command): void {
         const definitions = await loadSignalDefinitions(
           signalsDirForWorkspace(workspaceFile),
         );
-        ws = await Workspace.open(workspaceFile);
+        ws = await openResolvedWorkspace(workspaceFile);
         const result = await ensureSignalAttributes(ws, definitions);
         ok(result);
       } catch (e) {
@@ -144,7 +144,7 @@ Default runner:
             );
           }
           workspaceFile = resolveWorkspacePath(root.workspace);
-          ws = await Workspace.open(workspaceFile);
+          ws = await openResolvedWorkspace(workspaceFile);
           const result = await runSignals(ws, {
             signalsDir: signalsDirForWorkspace(workspaceFile),
             mode: opts.force ? "force" : "missing",

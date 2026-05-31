@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { Lix } from "@lix-js/sdk";
-import { openTestWorkspace } from "../test/open-test-lix.js";
+import type { AcrmDatabase } from "-crm/sdk";
+import { openTestWorkspace } from "../test/open-test-db.js";
 import { exec } from "@agent-crm/sdk";
 import { importTranscript, Workspace } from "@agent-crm/sdk";
 
-async function emailsFor(lix: Lix, personId: string): Promise<string[]> {
+async function emailsFor(db: AcrmDatabase, personId: string): Promise<string[]> {
   const r = await exec(
-    lix,
+    db,
     `SELECT normalized_key FROM acrm_value
      WHERE object_slug = 'people' AND record_id = $1
        AND attribute_slug = 'email_addresses' AND active_until IS NULL
@@ -17,12 +17,12 @@ async function emailsFor(lix: Lix, personId: string): Promise<string[]> {
 }
 
 async function singleValueFor(
-  lix: Lix,
+  db: AcrmDatabase,
   personId: string,
   attribute_slug: string,
 ): Promise<string | null> {
   const r = await exec(
-    lix,
+    db,
     `SELECT normalized_key FROM acrm_value
      WHERE object_slug = 'people' AND record_id = $1
        AND attribute_slug = $2 AND active_until IS NULL
@@ -42,8 +42,8 @@ const basePayload = {
 
 describe("auto-create unresolved participants", () => {
   it("creates a person from email when no record matches", async () => {
-    const lix = await openTestWorkspace();
-    const result = await importTranscript(Workspace.fromLix(lix), {
+    const db = await openTestWorkspace();
+    const result = await importTranscript(Workspace.fromDatabase(db), {
       ...basePayload,
       participants: [{ email: "newperson@acme.com" }],
     });
@@ -54,30 +54,30 @@ describe("auto-create unresolved participants", () => {
     expect(r.created).toBe(true);
     expect(r.matched_by).toBe("created");
     expect(r.matched_key).toBe("newperson@acme.com");
-    expect(await emailsFor(lix, r.person_record_id)).toEqual([
+    expect(await emailsFor(db, r.person_record_id)).toEqual([
       "newperson@acme.com",
     ]);
-    await lix.close();
+    await db.close();
   });
 
   it("creates a person from linkedin_url alone", async () => {
-    const lix = await openTestWorkspace();
-    const result = await importTranscript(Workspace.fromLix(lix), {
+    const db = await openTestWorkspace();
+    const result = await importTranscript(Workspace.fromDatabase(db), {
       ...basePayload,
       participants: [{ linkedin_url: "linkedin.com/in/newperson" }],
     });
 
     const r = result.participants.resolved[0]!;
     expect(r.created).toBe(true);
-    expect(await singleValueFor(lix, r.person_record_id, "linkedin_url")).toBe(
+    expect(await singleValueFor(db, r.person_record_id, "linkedin_url")).toBe(
       "linkedin.com/in/newperson",
     );
-    await lix.close();
+    await db.close();
   });
 
   it("creates with every identifier the payload supplies", async () => {
-    const lix = await openTestWorkspace();
-    const result = await importTranscript(Workspace.fromLix(lix), {
+    const db = await openTestWorkspace();
+    const result = await importTranscript(Workspace.fromDatabase(db), {
       ...basePayload,
       participants: [
         {
@@ -89,21 +89,21 @@ describe("auto-create unresolved participants", () => {
     });
     const r = result.participants.resolved[0]!;
     expect(r.created).toBe(true);
-    expect(await emailsFor(lix, r.person_record_id)).toEqual([
+    expect(await emailsFor(db, r.person_record_id)).toEqual([
       "carol@acme.com",
     ]);
-    expect(await singleValueFor(lix, r.person_record_id, "linkedin_url")).toBe(
+    expect(await singleValueFor(db, r.person_record_id, "linkedin_url")).toBe(
       "linkedin.com/in/carol",
     );
-    expect(await singleValueFor(lix, r.person_record_id, "twitter_url")).toBe(
+    expect(await singleValueFor(db, r.person_record_id, "twitter_url")).toBe(
       "x.com/carol",
     );
-    await lix.close();
+    await db.close();
   });
 
   it("links the created person to the transcript via both directions", async () => {
-    const lix = await openTestWorkspace();
-    const result = await importTranscript(Workspace.fromLix(lix), {
+    const db = await openTestWorkspace();
+    const result = await importTranscript(Workspace.fromDatabase(db), {
       ...basePayload,
       source_id: "linked-meeting",
       participants: [{ email: "linked@acme.com" }],
@@ -113,7 +113,7 @@ describe("auto-create unresolved participants", () => {
     const transcriptId = result.transcript_record_id;
 
     const fwd = await exec(
-      lix,
+      db,
       `SELECT 1 FROM acrm_value
        WHERE object_slug='transcripts' AND record_id=$1
          AND attribute_slug='participants'
@@ -124,7 +124,7 @@ describe("auto-create unresolved participants", () => {
     expect(fwd.rows).toHaveLength(1);
 
     const inv = await exec(
-      lix,
+      db,
       `SELECT 1 FROM acrm_value
        WHERE object_slug='people' AND record_id=$1
          AND attribute_slug='associated_transcripts'
@@ -133,12 +133,12 @@ describe("auto-create unresolved participants", () => {
       [personId, transcriptId],
     );
     expect(inv.rows).toHaveLength(1);
-    await lix.close();
+    await db.close();
   });
 
   it("does not create a duplicate when the same identifier is imported twice", async () => {
-    const lix = await openTestWorkspace();
-    const first = await importTranscript(Workspace.fromLix(lix), {
+    const db = await openTestWorkspace();
+    const first = await importTranscript(Workspace.fromDatabase(db), {
       ...basePayload,
       source_id: "dup-test",
       participants: [{ email: "dup@acme.com" }],
@@ -148,7 +148,7 @@ describe("auto-create unresolved participants", () => {
 
     // Re-import the same meeting with the same participant: should now
     // *match* the person we just created, not create a second copy.
-    const second = await importTranscript(Workspace.fromLix(lix), {
+    const second = await importTranscript(Workspace.fromDatabase(db), {
       ...basePayload,
       source_id: "dup-test",
       participants: [{ email: "dup@acme.com" }],
@@ -163,12 +163,12 @@ describe("auto-create unresolved participants", () => {
 
     // And exactly one person record exists with that email.
     const r = await exec(
-      lix,
+      db,
       `SELECT COUNT(DISTINCT record_id) AS n FROM acrm_value
        WHERE object_slug='people' AND attribute_slug='email_addresses'
          AND normalized_key='dup@acme.com' AND active_until IS NULL`,
     );
     expect(Number(r.rows[0]?.n)).toBe(1);
-    await lix.close();
+    await db.close();
   });
 });

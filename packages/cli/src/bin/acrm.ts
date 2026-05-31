@@ -34,10 +34,10 @@ const program = new Command();
 program
   .name("acrm")
   .description(
-    "Headless CRM for Claude Code. Stores people (keyed by email, LinkedIn URL, or Twitter/X URL), companies (keyed by domain), deals, posts (LinkedIn/X posts linked to their author), and transcripts (meeting/call transcripts linked to attendees by email) in a portable .acrm file.",
+    "Headless, cloud-first CRM for Claude Code. Stores people (keyed by email, LinkedIn URL, or Twitter/X URL), companies (keyed by domain), deals, posts (LinkedIn/X posts linked to their author), and transcripts (meeting/call transcripts linked to attendees by email) in Neon, Supabase, or Postgres.",
   )
   .version(pkg.version)
-  .option("-w, --workspace <path>", "path to .acrm file (default: walk up from cwd)")
+  .option("-w, --workspace <url>", "Postgres-compatible database URL (default: ACRM_DATABASE_URL, NEON_DATABASE_URL, SUPABASE_DATABASE_URL, or DATABASE_URL)")
   .option("--json", "force JSON output (default when stdout is not a TTY)")
   .addHelpText(
     "after",
@@ -61,7 +61,7 @@ Data model:
   \`deals.stage\` enum is locked to sales values (lead/in_progress/won/lost).
 
 Typical flow:
-  acrm init <name>.acrm           create a workspace
+  acrm init                       initialize the EAV schema in Neon, Supabase, or Postgres
   acrm connect linkedin           connect LinkedIn through Agent CRM's hosted sync engine
   acrm import csv ./leads.csv     load people + companies (and deals if columns present)
   acrm import gmail               connect Gmail through Agent CRM's hosted sync engine
@@ -83,10 +83,10 @@ Custom schema:
       --option sourced --option screen --option onsite --option offer
   acrm attribute edit-options deals.stage add custom_value       extend a built-in enum
 
-SQL engine: DataFusion (NOT SQLite/Postgres)
-  - Use $1, $2 placeholders. The '?' placeholder is rejected.
-  - No sqlite_master — use information_schema for introspection.
-  - For JSON columns, use lix_json_get / lix_json_get_text (NOT json_extract).
+SQL engine: Postgres-compatible providers (Neon, Supabase, Postgres)
+  - Use $1, $2 placeholders.
+  - Use information_schema for introspection.
+  - For jsonb columns, use value_json -> 'key' or value_json ->> 'key'.
   - See \`acrm execute --help\` for the full dialect reference.
 
 Introspection (run via \`acrm execute "<sql>"\`):
@@ -96,7 +96,7 @@ Introspection (run via \`acrm execute "<sql>"\`):
   SELECT object_slug, attribute_slug, attribute_type FROM acrm_attribute
   SELECT object_slug, COUNT(*) FROM acrm_record GROUP BY object_slug
 
-JSON value shapes per attribute_type (key for lix_json_get_text):
+JSON value shapes per attribute_type (key for ->>):
   text / url / number   {"value": ...}
   date                  {"date": ...}        timestamp     {"timestamp": ...}
   personal-name         {"full_name": ..., "first_name": ..., "last_name": ...}

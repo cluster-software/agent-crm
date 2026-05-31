@@ -7,7 +7,7 @@ import {
   Workspace,
   importCsv,
 } from "@agent-crm/sdk";
-import { resolveWorkspacePath } from "../workspace-resolve.js";
+import { openResolvedWorkspace, resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, isJson, ok, setJsonMode } from "../output/json.js";
 import { startMissingSignalsForRecords } from "../signals.js";
 
@@ -19,7 +19,7 @@ export function getOrCreateImportCommand(program: Command): Command {
   return program
     .command("import")
     .description(
-      "import data into the .acrm file (creates people + companies; deals only when the CSV has deal columns)",
+      "import data into the Postgres workspace (creates people + companies; deals only when the CSV has deal columns)",
     );
 }
 
@@ -104,7 +104,7 @@ Identity:
             }
           };
 
-          ws = await Workspace.open(resolveWorkspacePath(root.workspace));
+          ws = await openResolvedWorkspace(resolveWorkspacePath(root.workspace));
 
           let lastTick = 0;
           let pendingAtFlush = 0;

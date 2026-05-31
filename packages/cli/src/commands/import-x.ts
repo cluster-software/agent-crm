@@ -3,11 +3,11 @@ import type { Command } from "commander";
 import {
   AcrmError,
   ERR,
-  Workspace,
   importXProfile,
+  type AcrmDatabase,
   type XImportResult,
 } from "@agent-crm/sdk";
-import { resolveWorkspacePath } from "../workspace-resolve.js";
+import { localWorkspaceDir, openResolvedWorkspace, resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, ok, setJsonMode } from "../output/json.js";
 import { loadDotenv } from "../lib/dotenv.js";
 import { type BackgroundSignalRun, startMissingSignalsForRecords } from "../signals.js";
@@ -55,10 +55,10 @@ export function attachXSubcommand(parent: Command): void {
 
 async function runImportX(
   handleOrUrl: string,
-  opts: { workspace?: string; refresh?: boolean; noCache?: boolean; noSignals?: boolean },
+  opts: { workspace?: string; db?: AcrmDatabase; refresh?: boolean; noCache?: boolean; noSignals?: boolean },
 ): Promise<XImportResult & { signals_background?: BackgroundSignalRun; signals_warning?: string }> {
   const workspaceFile = resolveWorkspacePath(opts.workspace);
-  const workspaceDir = path.dirname(workspaceFile);
+  const workspaceDir = localWorkspaceDir(workspaceFile);
   loadDotenv(workspaceDir);
   loadDotenv(process.cwd());
 
@@ -76,7 +76,7 @@ async function runImportX(
 
   let result: XImportResult | null = null;
   let records: Array<{ object_slug: "people"; record_id: string }> = [];
-  const ws = await Workspace.open(workspaceFile);
+  const ws = await openResolvedWorkspace(workspaceFile, opts.db);
   try {
     result = await importXProfile(ws, {
       handleOrUrl,

@@ -3,12 +3,12 @@ import type { Command } from "commander";
 import {
   AcrmError,
   ERR,
-  Workspace,
   importPost,
   normalizePostUrl,
+  type AcrmDatabase,
   type PostImportResult,
 } from "@agent-crm/sdk";
-import { resolveWorkspacePath } from "../workspace-resolve.js";
+import { localWorkspaceDir, openResolvedWorkspace, resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, ok, setJsonMode } from "../output/json.js";
 import { loadDotenv } from "../lib/dotenv.js";
 import { type BackgroundSignalRun, startMissingSignalsForRecords } from "../signals.js";
@@ -84,7 +84,7 @@ repeat runs free.
 
 async function runImportPost(
   rawUrl: string,
-  opts: { workspace?: string; refresh?: boolean; noCache?: boolean; noSignals?: boolean },
+  opts: { workspace?: string; db?: AcrmDatabase; refresh?: boolean; noCache?: boolean; noSignals?: boolean },
 ): Promise<PostImportResult & { signals_background?: BackgroundSignalRun; signals_warning?: string }> {
   const sniffed = normalizePostUrl(rawUrl);
   if (!sniffed) {
@@ -96,7 +96,7 @@ async function runImportPost(
   const { platform } = sniffed;
 
   const workspaceFile = resolveWorkspacePath(opts.workspace);
-  const workspaceDir = path.dirname(workspaceFile);
+  const workspaceDir = localWorkspaceDir(workspaceFile);
   loadDotenv(workspaceDir);
   loadDotenv(process.cwd());
 
@@ -123,7 +123,7 @@ async function runImportPost(
 
   let result: PostImportResult | null = null;
   let records: Array<{ object_slug: "people" | "companies"; record_id: string }> = [];
-  const ws = await Workspace.open(workspaceFile);
+  const ws = await openResolvedWorkspace(workspaceFile, opts.db);
   try {
     result = await importPost(ws, {
       rawUrl,

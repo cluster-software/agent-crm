@@ -1,4 +1,4 @@
-import type { Lix, LixRuntimeValue } from "@lix-js/sdk";
+import type { AcrmDatabase, SqlValue } from "../db/types.js";
 import { exec } from "../db/execute.js";
 
 type ObjectSeed = {
@@ -118,31 +118,21 @@ const ATTRIBUTES: AttributeSeed[] = [
   { object_slug: "communication_messages", attribute_slug: "participants", title: "Participants", attribute_type: "record-reference", is_multivalued: true, is_unique: false, config: { target_object: "people", inverse: "communication_messages" } },
 ];
 
-export async function seedObjects(lix: Lix): Promise<void> {
+export async function seedObjects(db: AcrmDatabase): Promise<void> {
   for (const o of OBJECTS) {
-    const have = await exec(
-      lix,
-      "SELECT object_slug FROM acrm_object WHERE object_slug = $1",
-      [o.object_slug],
-    );
-    if (have.rows.length) continue;
     await exec(
-      lix,
-      "INSERT INTO acrm_object (object_slug, singular_name, plural_name) VALUES ($1, $2, $3)",
+      db,
+      `INSERT INTO acrm_object (object_slug, singular_name, plural_name)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (object_slug) DO NOTHING`,
       [o.object_slug, o.singular_name, o.plural_name],
     );
   }
 }
 
-export async function seedAttributes(lix: Lix): Promise<void> {
+export async function seedAttributes(db: AcrmDatabase): Promise<void> {
   for (const a of ATTRIBUTES) {
-    const have = await exec(
-      lix,
-      "SELECT attribute_slug FROM acrm_attribute WHERE object_slug = $1 AND attribute_slug = $2",
-      [a.object_slug, a.attribute_slug],
-    );
-    if (have.rows.length) continue;
-    const params: LixRuntimeValue[] = [
+    const params: SqlValue[] = [
       a.object_slug,
       a.attribute_slug,
       a.title,
@@ -152,10 +142,11 @@ export async function seedAttributes(lix: Lix): Promise<void> {
       a.config ? JSON.stringify(a.config) : null,
     ];
     await exec(
-      lix,
+      db,
       `INSERT INTO acrm_attribute
         (object_slug, attribute_slug, title, attribute_type, is_multivalued, is_unique, config_json)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (object_slug, attribute_slug) DO NOTHING`,
       params,
     );
   }

@@ -1,12 +1,11 @@
-import type { Lix, LixRuntimeValue } from "@lix-js/sdk";
-import { isLixError } from "@lix-js/sdk";
-import { AcrmError } from "../lib/errors.js";
+import { AcrmError, ERR } from "../lib/errors.js";
+import type { AcrmDatabase, Row, SqlValue } from "./types.js";
 
-export type Row = Record<string, unknown>;
+export type { Row };
 
 // Object slugs seeded by `acrm init`. When a user/agent reaches for one of
-// these as a SQL table, the LIX_TABLE_NOT_FOUND hint is upgraded to call out
-// the EAV shape with a copy-paste fix.
+// these as a SQL table, the missing-table hint is upgraded to call out the EAV
+// shape with a copy-paste fix.
 const KNOWN_OBJECT_SLUGS = new Set([
   "people",
   "companies",
@@ -16,12 +15,8 @@ const KNOWN_OBJECT_SLUGS = new Set([
 ]);
 
 function extractMissingTableName(message: string): string | null {
-  // Lix surfaces messages like:
-  //   "Error during planning: table 'datafusion.public.people' not found"
-  // We want just the tail identifier ("people"). Accept dot-qualified names
-  // inside the quoted segment, then peel off the schema prefix.
   const quoted = /['"`]([A-Za-z_][\w.]*)['"`]/.exec(message);
-  const bare = quoted ? null : /\btable\s+([A-Za-z_][\w.]*)/i.exec(message);
+  const bare = quoted ? null : /\b(?:table|relation)\s+([A-Za-z_][\w.]*)/i.exec(message);
   const m = quoted ?? bare;
   if (!m) return null;
   const raw = m[1] ?? "";
@@ -30,26 +25,19 @@ function extractMissingTableName(message: string): string | null {
 }
 
 export async function exec(
-  lix: Lix,
+  db: AcrmDatabase,
   sql: string,
-  params: ReadonlyArray<LixRuntimeValue> = [],
+  params: ReadonlyArray<SqlValue> = [],
 ): Promise<{ rows: Row[]; rowsAffected: number }> {
   try {
-    const result = await lix.execute(sql, params);
-    const rows: Row[] = result.rows.map((r) => r.toObject());
-    return { rows, rowsAffected: result.rowsAffected };
+    return await db.execute(sql, params);
   } catch (e) {
-    if (isLixError(e)) {
-      // Surface the engine's own code + hint instead of collapsing to a single
-      // ACRM_ERROR_*. The lix engine speaks Postgres-style errors:
-      // `message` says what's wrong, `hint` (when present) says how to fix it.
-      let hint = e.hint;
-      if (e.code === "LIX_TABLE_NOT_FOUND") {
+    if (isDatabaseError(e)) {
+      const code = e.code ?? (isMissingRelationError(e.message) ? "42P01" : undefined);
+      let hint: string | undefined = e.hint;
+      if (code === "42P01") {
         const slug = extractMissingTableName(e.message);
         if (slug && KNOWN_OBJECT_SLUGS.has(slug)) {
-          // Catch the exact mistake at the moment it happens, with the exact
-          // fix inline. Agents reaching for `select * from people` learn the
-          // EAV shape from the error rather than from the docs after the fact.
           hint =
             `\`${slug}\` is an object_slug, not a table. Try: ` +
             `\`SELECT record_id FROM acrm_record WHERE object_slug='${slug}'\`. ` +
@@ -59,28 +47,49 @@ export async function exec(
           hint = `Records are EAV: try \`acrm execute "SELECT object_slug, COUNT(*) FROM acrm_record GROUP BY object_slug"\` to see what's loaded, then query acrm_value for attribute values.`;
         }
       }
-      throw new AcrmError(e.message, e.code, hint, e.details);
+      throw new AcrmError(
+        e.message,
+        code ? `POSTGRES_${code}` : ERR.EXECUTE,
+        hint,
+        e,
+      );
     }
     throw e;
   }
 }
 
 export async function execOne(
-  lix: Lix,
+  db: AcrmDatabase,
   sql: string,
-  params: ReadonlyArray<LixRuntimeValue> = [],
+  params: ReadonlyArray<SqlValue> = [],
 ): Promise<Row | null> {
-  const { rows } = await exec(lix, sql, params);
+  const { rows } = await exec(db, sql, params);
   return rows[0] ?? null;
 }
 
 export async function execScalar<T = unknown>(
-  lix: Lix,
+  db: AcrmDatabase,
   sql: string,
-  params: ReadonlyArray<LixRuntimeValue> = [],
+  params: ReadonlyArray<SqlValue> = [],
 ): Promise<T | null> {
-  const row = await execOne(lix, sql, params);
+  const row = await execOne(db, sql, params);
   if (!row) return null;
   const keys = Object.keys(row);
   return keys.length ? (row[keys[0]!] as T) : null;
+}
+
+function isDatabaseError(error: unknown): error is {
+  code?: string;
+  message: string;
+  hint?: string;
+} {
+  return (
+    error instanceof Error &&
+    (typeof (error as { code?: unknown }).code === "string" ||
+      isMissingRelationError(error.message))
+  );
+}
+
+function isMissingRelationError(message: string): boolean {
+  return /\b(?:relation|table)\s+["']?[A-Za-z_][\w.]*["']?\s+does not exist/i.test(message);
 }

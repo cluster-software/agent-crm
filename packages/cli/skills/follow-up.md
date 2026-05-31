@@ -1,6 +1,6 @@
 ---
 name: follow-up
-description: Find leads that need a reply, read the prior thread (including any transcripts from past calls), and draft a follow-up message in the user's tone of voice. Reads from `.acrm` via `acrm execute "<sql>"`; transcripts are pulled via `people.associated_transcripts`.
+description: Find leads that need a reply, read the prior thread (including any transcripts from past calls), and draft a follow-up message in the user's tone of voice. Reads from the Postgres workspace via `acrm execute "<sql>"`; transcripts are pulled via `people.associated_transcripts`.
 ---
 
 # follow-up
@@ -17,9 +17,9 @@ Run this single query to get all messages with their thread, direction, timestam
 acrm execute "
   SELECT
     m_thread.ref_record_id AS thread_id,
-    lix_json_get_text(m_dir.value_json, 'id') AS direction,
-    lix_json_get_text(m_sent.value_json, 'timestamp') AS sent_at,
-    lix_json_get_text(m_body.value_json, 'value') AS body_text
+    m_dir.value_json ->> 'id' AS direction,
+    m_sent.value_json ->> 'timestamp' AS sent_at,
+    m_body.value_json ->> 'value' AS body_text
   FROM acrm_value m_thread
   JOIN acrm_value m_dir
     ON m_dir.object_slug = 'communication_messages'
@@ -115,7 +115,7 @@ Read 5 of the user's recent outbound messages to match voice, length, and signof
 
 ```sh
 acrm execute "
-  SELECT lix_json_get_text(m_body.value_json, 'value') AS body_text
+  SELECT m_body.value_json ->> 'value' AS body_text
   FROM acrm_value m_dir
   JOIN acrm_value m_body
     ON m_body.object_slug = 'communication_messages'
@@ -130,7 +130,7 @@ acrm execute "
   WHERE m_dir.object_slug = 'communication_messages'
     AND m_dir.attribute_slug = 'direction'
     AND m_dir.active_until IS NULL
-    AND lix_json_get_text(m_dir.value_json, 'id') = 'outbound'
+    AND m_dir.value_json ->> 'id' = 'outbound'
   ORDER BY m_sent.value_json DESC
   LIMIT 5
 " --json

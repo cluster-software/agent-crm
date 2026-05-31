@@ -1,142 +1,154 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import Database from "better-sqlite3";
-import { describe, expect, it } from "vitest";
+import { newDb } from "pg-mem";
+import { describe, expect, it, vi } from "vitest";
 import { exec } from "./db/execute.js";
-import { AcrmError, ERR } from "./lib/errors.js";
+import { PostgresDatabase } from "./db/postgres.js";
+import type { AcrmDatabase } from "./db/types.js";
+import { ERR } from "./lib/errors.js";
+import { uuidv7 } from "./lib/uuidv7.js";
 import { Workspace } from "./workspace.js";
 import { ensureWorkspaceIdentity } from "./workspace/identity.js";
 
+function openTestDatabase(): AcrmDatabase {
+  const mem = newDb({ noAstCoverageCheck: true });
+  mem.public.registerFunction({
+    name: "gen_random_uuid",
+    returns: "text",
+    implementation: () => uuidv7(),
+  });
+  const pg = mem.adapters.createPg();
+  const pool = new pg.Pool();
+  return PostgresDatabase.fromQueryable(pool, () => pool.end());
+}
+
 describe("Workspace", () => {
-  it("rejects relative paths before opening a workspace", async () => {
-    await expect(Workspace.open("relative.acrm")).rejects.toMatchObject({
+  it("rejects non-Postgres workspace strings", async () => {
+    await expect(Workspace.open("relative.db")).rejects.toMatchObject({
       code: ERR.INVALID_INPUT,
-      message: "workspace path must be absolute: relative.acrm",
+      message: "workspace database URL must be a Postgres-compatible connection string",
     });
   });
 
-  it("rejects relative paths before creating a workspace", async () => {
-    await expect(Workspace.create("relative.acrm")).rejects.toBeInstanceOf(
-      AcrmError,
-    );
-  });
-
-  it("rejects missing absolute paths when opening a workspace", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "acrm-sdk-workspace-"));
+  it("rejects missing database URLs", async () => {
+    const oldAcrm = process.env.ACRM_DATABASE_URL;
+    const oldNeon = process.env.NEON_DATABASE_URL;
+    const oldDatabase = process.env.DATABASE_URL;
+    delete process.env.ACRM_DATABASE_URL;
+    delete process.env.NEON_DATABASE_URL;
+    delete process.env.DATABASE_URL;
     try {
-      const workspacePath = path.join(dir, "missing.acrm");
-      await expect(Workspace.open(workspacePath)).rejects.toMatchObject({
+      await expect(Workspace.open()).rejects.toMatchObject({
         code: ERR.NO_WORKSPACE,
       });
-      expect(existsSync(workspacePath)).toBe(false);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      restoreEnv("ACRM_DATABASE_URL", oldAcrm);
+      restoreEnv("NEON_DATABASE_URL", oldNeon);
+      restoreEnv("DATABASE_URL", oldDatabase);
     }
   });
 
-  it("creates and initializes a workspace at an absolute path", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "acrm-sdk-workspace-"));
+  it("creates and initializes a workspace on an injected database", async () => {
+    const db = openTestDatabase();
+    const workspace = await Workspace.create({ db });
     try {
-      const workspacePath = path.join(dir, "test.acrm");
-      const workspace = await Workspace.create(workspacePath);
-      try {
-        const objects = await exec(
-          workspace.lix,
-          "SELECT object_slug FROM acrm_object ORDER BY object_slug",
-        );
-        expect(objects.rows.map((r) => r.object_slug)).toEqual([
-          "communication_messages",
-          "communication_threads",
-          "companies",
-          "deals",
-          "people",
-          "posts",
-          "transcripts",
-        ]);
+      const objects = await exec(
+        workspace.db,
+        "SELECT object_slug FROM acrm_object ORDER BY object_slug",
+      );
+      expect(objects.rows.map((r) => r.object_slug)).toEqual([
+        "communication_messages",
+        "communication_threads",
+        "companies",
+        "deals",
+        "people",
+        "posts",
+        "transcripts",
+      ]);
 
-        const emailAttr = await exec(
-          workspace.lix,
-          "SELECT attribute_type FROM acrm_attribute WHERE object_slug = 'people' AND attribute_slug = 'email_addresses'",
-        );
-        expect(emailAttr.rows[0]?.attribute_type).toBe("email-address");
+      const emailAttr = await exec(
+        workspace.db,
+        "SELECT attribute_type FROM acrm_attribute WHERE object_slug = 'people' AND attribute_slug = 'email_addresses'",
+      );
+      expect(emailAttr.rows[0]?.attribute_type).toBe("email-address");
 
-        const identity = await ensureWorkspaceIdentity(workspace);
-        expect(identity).toMatch(/^[0-9a-f-]{36}$/);
-      } finally {
+      const identity = await ensureWorkspaceIdentity(workspace);
+      expect(identity).toMatch(/^[0-9a-f-]{36}$/);
+    } finally {
+      await workspace.close();
+      await db.close();
+    }
+  });
+
+  it("allows concurrent initialization on the same empty database", async () => {
+    const db = openTestDatabase();
+    const workspaces = await Promise.all([
+      Workspace.create({ db }),
+      Workspace.create({ db }),
+    ]);
+    try {
+      const objects = await exec(db, "SELECT COUNT(*) AS count FROM acrm_object");
+      const attrs = await exec(db, "SELECT COUNT(*) AS count FROM acrm_attribute");
+
+      expect(Number(objects.rows[0]?.count)).toBeGreaterThan(0);
+      expect(Number(attrs.rows[0]?.count)).toBeGreaterThan(0);
+      await expect(ensureWorkspaceIdentity(workspaces[0]!)).resolves.toBe(
+        await ensureWorkspaceIdentity(workspaces[1]!),
+      );
+    } finally {
+      for (const workspace of workspaces) {
         await workspace.close();
       }
-    } finally {
-      await rm(dir, { recursive: true, force: true });
+      await db.close();
     }
   });
 
-  it("does not close a Lix passed through fromLix by default", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "acrm-sdk-workspace-"));
-    try {
-      const workspacePath = path.join(dir, "test.acrm");
-      const owner = await Workspace.create(workspacePath);
-      const borrowed = Workspace.fromLix(owner.lix);
-      await borrowed.close();
-      await expect(
-        exec(owner.lix, "SELECT object_slug FROM acrm_object LIMIT 1"),
-      ).resolves.toMatchObject({ rowsAffected: 0 });
-      await owner.close();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+  it("closes an owned database when initialization fails", async () => {
+    const error = new Error("schema failed");
+    const close = vi.fn(async () => undefined);
+    const db: AcrmDatabase = {
+      execute: vi.fn(async () => {
+        throw error;
+      }),
+      transaction: vi.fn(async () => {
+        throw new Error("transaction not expected");
+      }),
+      close,
+    };
+
+    await expect(Workspace.open({ db, closeDatabaseOnClose: true })).rejects.toBe(error);
+    expect(close).toHaveBeenCalledTimes(1);
   });
 
-  it("preserves the local workspace identity when reopening", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "acrm-sdk-workspace-"));
-    try {
-      const workspacePath = path.join(dir, "test.acrm");
-      const created = await Workspace.create(workspacePath);
-      const firstIdentity = await ensureWorkspaceIdentity(created);
-      await created.close();
-
-      const reopened = await Workspace.open(workspacePath);
-      try {
-        await expect(ensureWorkspaceIdentity(reopened)).resolves.toBe(firstIdentity);
-      } finally {
-        await reopened.close();
-      }
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
+  it("does not close an injected database by default", async () => {
+    const db = openTestDatabase();
+    const owner = await Workspace.create({ db });
+    const borrowed = Workspace.fromDatabase(owner.db);
+    await borrowed.close();
+    const result = await exec(owner.db, "SELECT object_slug FROM acrm_object LIMIT 1");
+    expect(result.rows).toHaveLength(1);
+    await owner.close();
+    await db.close();
   });
 
-  it("uses WAL mode so another open reader does not block workspace writes", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "acrm-sdk-workspace-"));
+  it("preserves the workspace identity on the same database", async () => {
+    const db = openTestDatabase();
+    const created = await Workspace.create({ db });
+    const firstIdentity = await ensureWorkspaceIdentity(created);
+    await created.close();
+
+    const reopened = await Workspace.open({ db });
     try {
-      const workspacePath = path.join(dir, "test.acrm");
-      const created = await Workspace.create(workspacePath);
-      await created.close();
-
-      const reader = new Database(workspacePath, { readonly: true });
-      try {
-        expect(reader.pragma("journal_mode", { simple: true })).toBe("wal");
-        reader.exec("BEGIN");
-        reader.prepare("SELECT COUNT(*) FROM lix_kv").get();
-
-        const writer = await Workspace.open(workspacePath);
-        try {
-          await expect(
-            exec(
-              writer.lix,
-              "INSERT INTO acrm_record (object_slug, record_id) VALUES ('people', 'person-1')",
-            ),
-          ).resolves.toMatchObject({ rowsAffected: 1 });
-        } finally {
-          await writer.close();
-        }
-      } finally {
-        reader.exec("ROLLBACK");
-        reader.close();
-      }
+      await expect(ensureWorkspaceIdentity(reopened)).resolves.toBe(firstIdentity);
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await reopened.close();
+      await db.close();
     }
   });
 });
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+}

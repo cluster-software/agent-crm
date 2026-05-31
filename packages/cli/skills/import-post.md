@@ -1,11 +1,11 @@
 ---
 name: import-post
-description: Import a LinkedIn or X post into the .acrm workspace by URL. Triggers when the user shares a LinkedIn post URL (linkedin.com/posts/..., linkedin.com/feed/update/urn:li:activity:...) or an X/Twitter status URL (x.com/<handle>/status/<id>, twitter.com/...) and wants to track the post or its author. Phrasings — "import this post", "save this LinkedIn post", "track this tweet", "add this person from their post", or just a bare post URL in chat.
+description: Import a LinkedIn or X post into the Agent CRM Postgres workspace by URL. Triggers when the user shares a LinkedIn post URL (linkedin.com/posts/..., linkedin.com/feed/update/urn:li:activity:...) or an X/Twitter status URL (x.com/<handle>/status/<id>, twitter.com/...) and wants to track the post or its author. Phrasings — "import this post", "save this LinkedIn post", "track this tweet", "add this person from their post", or just a bare post URL in chat.
 ---
 
 # import-post
 
-Use when the user pastes a LinkedIn or X **post URL** into chat and wants to capture the post + its author into the `.acrm` workspace.
+Use when the user pastes a LinkedIn or X **post URL** into chat and wants to capture the post + its author into the Agent CRM workspace.
 
 This is the **post** flow, not the profile flow:
 
@@ -41,8 +41,8 @@ Re-running the same URL is idempotent — `created` will be `false` for everythi
 
 ## Prereqs
 
-- Workspace must be initialized (`acrm init <name>.acrm`).
-- `APIFY_API_TOKEN` must be set in `.env` next to the workspace file (or in shell env). Without it the command fails with a clear hint.
+- Workspace must be initialized (`acrm init` with `ACRM_DATABASE_URL`, `NEON_DATABASE_URL`, `SUPABASE_DATABASE_URL`, `DATABASE_URL`, or `-w <postgres-url>`).
+- `APIFY_API_TOKEN` must be set in `.env` in the current project directory or in the shell environment. Without it the command fails with a clear hint.
 
 ## Output
 

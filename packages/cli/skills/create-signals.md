@@ -88,5 +88,5 @@ WHERE object_slug = $1
 ```
 
 Signal definitions are local files in `signals/`; the definitions themselves
-are not stored in `.acrm`. Synced attributes and generated values are stored in
-`.acrm`.
+are not stored in Postgres. Synced attributes and generated values are stored
+in the Postgres workspace.

@@ -1,4 +1,4 @@
-import type { Lix } from "@lix-js/sdk";
+import type { AcrmDatabase } from "../db/types.js";
 import { exec } from "../db/execute.js";
 import {
   addMultiValue,
@@ -63,7 +63,7 @@ export async function importPost(
     );
   }
   const { platform, url: normalizedUrl } = sniffed;
-  const lix = workspace.lix;
+  const db = workspace.db;
 
   // 1. Fetch the post (with cache).
   const postId =
@@ -140,7 +140,7 @@ export async function importPost(
 
   // 4. Upsert the post record (dedup by normalized URL).
   const postRecord = await upsertPost({
-    lix,
+    db,
     platform,
     normalizedUrl,
     rawUrl: args.rawUrl,
@@ -154,7 +154,7 @@ export async function importPost(
   });
 
   // 5. Link person → post (skip if already linked).
-  await linkPersonToPost(lix, personId, postRecord.postRecordId, platform);
+  await linkPersonToPost(db, personId, postRecord.postRecordId, platform);
 
   return {
     post_record_id: postRecord.postRecordId,
@@ -180,7 +180,7 @@ export async function importPost(
 }
 
 async function upsertPost(args: {
-  lix: Lix;
+  db: AcrmDatabase;
   platform: PostPlatform;
   normalizedUrl: string;
   rawUrl: string;
@@ -189,7 +189,7 @@ async function upsertPost(args: {
   postCacheHit: boolean;
   apifyActor: string;
 }): Promise<{ postRecordId: string; created: boolean }> {
-  const { lix, platform, normalizedUrl, rawUrl, mapped, personId, apifyActor } =
+  const { db, platform, normalizedUrl, rawUrl, mapped, personId, apifyActor } =
     args;
   const source =
     platform === "linkedin" ? "linkedin-post-import" : "x-post-import";
@@ -201,19 +201,19 @@ async function upsertPost(args: {
   };
 
   let postRecordId = await findRecordByUnique(
-    lix,
+    db,
     "posts",
     "url",
     normalizedUrl,
   );
   let created = false;
   if (!postRecordId) {
-    postRecordId = await generateUuid(lix);
-    await insertRecord(lix, "posts", postRecordId);
+    postRecordId = await generateUuid(db);
+    await insertRecord(db, "posts", postRecordId);
     created = true;
   }
 
-  await setSingleValue(lix, {
+  await setSingleValue(db, {
     object_slug: "posts",
     record_id: postRecordId,
     attribute_slug: "url",
@@ -223,7 +223,7 @@ async function upsertPost(args: {
     provenance,
   });
 
-  await setSingleValue(lix, {
+  await setSingleValue(db, {
     object_slug: "posts",
     record_id: postRecordId,
     attribute_slug: "platform",
@@ -233,7 +233,7 @@ async function upsertPost(args: {
     provenance,
   });
 
-  await setSingleValue(lix, {
+  await setSingleValue(db, {
     object_slug: "posts",
     record_id: postRecordId,
     attribute_slug: "author",
@@ -244,7 +244,7 @@ async function upsertPost(args: {
   });
 
   if (mapped.posted_at) {
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "posts",
       record_id: postRecordId,
       attribute_slug: "posted_at",
@@ -256,7 +256,7 @@ async function upsertPost(args: {
   }
 
   if (mapped.content) {
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "posts",
       record_id: postRecordId,
       attribute_slug: "content",
@@ -271,13 +271,13 @@ async function upsertPost(args: {
 }
 
 async function linkPersonToPost(
-  lix: Lix,
+  db: AcrmDatabase,
   personId: string,
   postRecordId: string,
   platform: PostPlatform,
 ): Promise<void> {
   const existing = await exec(
-    lix,
+    db,
     `SELECT 1 FROM acrm_value
      WHERE object_slug = 'people' AND record_id = $1
        AND attribute_slug = 'associated_posts'
@@ -289,7 +289,7 @@ async function linkPersonToPost(
 
   const source =
     platform === "linkedin" ? "linkedin-post-import" : "x-post-import";
-  await addMultiValue(lix, {
+  await addMultiValue(db, {
     object_slug: "people",
     record_id: personId,
     attribute_slug: "associated_posts",

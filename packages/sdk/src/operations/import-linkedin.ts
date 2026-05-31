@@ -44,7 +44,7 @@ export async function importLinkedinProfile(
   workspace: Workspace,
   args: ImportLinkedinProfileArgs,
 ): Promise<LinkedinImportResult> {
-  const lix = workspace.lix;
+  const db = workspace.db;
   const { urlOrSlug, token, cacheDir, refresh, noCache } = args;
   const { url, publicId } = normalizeLinkedinInput(urlOrSlug);
 
@@ -70,11 +70,11 @@ export async function importLinkedinProfile(
   let companyId: string | null = null;
   let companyCreated = false;
   if (mapped.company.name) {
-    companyId = await findCompanyByName(lix, mapped.company.name);
+    companyId = await findCompanyByName(db, mapped.company.name);
     if (!companyId) {
-      companyId = await generateUuid(lix);
-      await insertRecord(lix, "companies", companyId);
-      await setSingleValue(lix, {
+      companyId = await generateUuid(db);
+      await insertRecord(db, "companies", companyId);
+      await setSingleValue(db, {
         object_slug: "companies",
         record_id: companyId,
         attribute_slug: "name",
@@ -88,7 +88,7 @@ export async function importLinkedinProfile(
     if (mapped.company.linkedin_url) {
       const cl = normalizeLinkedinUrl(mapped.company.linkedin_url);
       if (cl) {
-        await setSingleValue(lix, {
+        await setSingleValue(db, {
           object_slug: "companies",
           record_id: companyId,
           attribute_slug: "linkedin_url",
@@ -113,19 +113,19 @@ export async function importLinkedinProfile(
   }
 
   let personId = await findRecordByUnique(
-    lix,
+    db,
     "people",
     "linkedin_url",
     linkedinKey,
   );
   let personCreated = false;
   if (!personId) {
-    personId = await generateUuid(lix);
-    await insertRecord(lix, "people", personId);
+    personId = await generateUuid(db);
+    await insertRecord(db, "people", personId);
     personCreated = true;
   }
 
-  await setSingleValue(lix, {
+  await setSingleValue(db, {
     object_slug: "people",
     record_id: personId,
     attribute_slug: "linkedin_url",
@@ -136,7 +136,7 @@ export async function importLinkedinProfile(
   });
 
   if (mapped.person.name) {
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "people",
       record_id: personId,
       attribute_slug: "name",
@@ -148,7 +148,7 @@ export async function importLinkedinProfile(
   }
 
   if (mapped.person.profile_picture_url) {
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "people",
       record_id: personId,
       attribute_slug: "profile_picture_url",
@@ -160,7 +160,7 @@ export async function importLinkedinProfile(
   }
 
   if (mapped.person.job_title) {
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "people",
       record_id: personId,
       attribute_slug: "job_title",
@@ -172,7 +172,7 @@ export async function importLinkedinProfile(
   }
 
   if (companyId) {
-    await setSingleValue(lix, {
+    await setSingleValue(db, {
       object_slug: "people",
       record_id: personId,
       attribute_slug: "company",

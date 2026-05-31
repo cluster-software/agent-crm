@@ -96,7 +96,7 @@ export async function importGoogleContacts(
   workspace: Workspace,
   args: ImportGoogleContactsArgs,
 ): Promise<ImportGoogleContactsResult> {
-  const lix = workspace.lix;
+  const db = workspace.db;
   const stats: ImportGoogleContactsStats = {
     contacts_seen: 0,
     people_created: 0,
@@ -137,7 +137,7 @@ export async function importGoogleContacts(
 
     if (companyDomain) {
       const existing = await findRecordByUnique(
-        lix,
+        db,
         "companies",
         "domains",
         companyDomain,
@@ -145,9 +145,9 @@ export async function importGoogleContacts(
       if (existing) {
         companyId = existing;
       } else {
-        companyId = await generateUuid(lix);
-        await insertRecord(lix, "companies", companyId);
-        await addMultiValue(lix, {
+        companyId = await generateUuid(db);
+        await insertRecord(db, "companies", companyId);
+        await addMultiValue(db, {
           object_slug: "companies",
           record_id: companyId,
           attribute_slug: "domains",
@@ -157,7 +157,7 @@ export async function importGoogleContacts(
           provenance,
         });
         if (companyName) {
-          await setSingleValue(lix, {
+          await setSingleValue(db, {
             object_slug: "companies",
             record_id: companyId,
             attribute_slug: "name",
@@ -170,13 +170,13 @@ export async function importGoogleContacts(
         stats.companies_created++;
       }
     } else if (companyName) {
-      const existing = await findCompanyByName(lix, companyName);
+      const existing = await findCompanyByName(db, companyName);
       if (existing) {
         companyId = existing;
       } else {
-        companyId = await generateUuid(lix);
-        await insertRecord(lix, "companies", companyId);
-        await setSingleValue(lix, {
+        companyId = await generateUuid(db);
+        await insertRecord(db, "companies", companyId);
+        await setSingleValue(db, {
           object_slug: "companies",
           record_id: companyId,
           attribute_slug: "name",
@@ -191,7 +191,7 @@ export async function importGoogleContacts(
 
     // Person — resolve via the standard cascade.
     const lookup = await resolvePersonByIdentifiers(
-      (attr, key) => findRecordByUnique(lix, "people", attr, key),
+      (attr, key) => findRecordByUnique(db, "people", attr, key),
       {
         emails,
         linkedin_url: linkedin ?? undefined,
@@ -214,10 +214,10 @@ export async function importGoogleContacts(
 
     let personId = lookup.person_record_id;
     if (!personId) {
-      personId = await generateUuid(lix);
-      await insertRecord(lix, "people", personId);
+      personId = await generateUuid(db);
+      await insertRecord(db, "people", personId);
       for (const e of emails) {
-        await addMultiValue(lix, {
+        await addMultiValue(db, {
           object_slug: "people",
           record_id: personId,
           attribute_slug: "email_addresses",
@@ -230,7 +230,7 @@ export async function importGoogleContacts(
       for (const p of phones) {
         const normalized = normalizePhoneNumber(p, args.default_country);
         if (!normalized) continue;
-        await addMultiValue(lix, {
+        await addMultiValue(db, {
           object_slug: "people",
           record_id: personId,
           attribute_slug: "phone_numbers",
@@ -241,7 +241,7 @@ export async function importGoogleContacts(
         });
       }
       if (linkedinKey) {
-        await setSingleValue(lix, {
+        await setSingleValue(db, {
           object_slug: "people",
           record_id: personId,
           attribute_slug: "linkedin_url",
@@ -252,7 +252,7 @@ export async function importGoogleContacts(
         });
       }
       if (twitterKey) {
-        await setSingleValue(lix, {
+        await setSingleValue(db, {
           object_slug: "people",
           record_id: personId,
           attribute_slug: "twitter_url",
@@ -263,7 +263,7 @@ export async function importGoogleContacts(
         });
       }
       if (fullName) {
-        await setSingleValue(lix, {
+        await setSingleValue(db, {
           object_slug: "people",
           record_id: personId,
           attribute_slug: "name",
@@ -274,7 +274,7 @@ export async function importGoogleContacts(
         });
       }
       if (jobTitle) {
-        await setSingleValue(lix, {
+        await setSingleValue(db, {
           object_slug: "people",
           record_id: personId,
           attribute_slug: "job_title",
@@ -292,7 +292,7 @@ export async function importGoogleContacts(
     // created without company info (CSV with name+email only), and the
     // Google `organizations[]` field is the canonical source.
     if (companyId) {
-      await setSingleValue(lix, {
+      await setSingleValue(db, {
         object_slug: "people",
         record_id: personId,
         attribute_slug: "company",

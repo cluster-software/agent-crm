@@ -8,7 +8,7 @@ Claude is running your GTM and your leads live in CSVs. Spreadsheets fall apart 
 
 Plug Claude into your CRM via MCP and the schema torches your context, every action is a network round-trip, and you blow through your usage limits. Salesforce and HubSpot are shipping their own CLIs, but they end at the deal record — the scrapes, enrichment runs, and half-cleaned lists that fed it live somewhere else. You can't see what your last scrape pulled in and what it didn't clean up, or pick up where last weekend's list-building session left off.
 
-Agents work best on files. Agent CRM is a portable `.acrm` file your agent can query, edit, diff, and version — pipeline, scrapes, and enrichments, all in one place.
+Agent CRM is a cloud-first CRM your agent can query and edit in Neon, Supabase, or Postgres — pipeline, scrapes, enrichments, and multiplayer collaboration in one place.
 
 ```txt
                     ┌──────────────┐
@@ -16,19 +16,13 @@ Agents work best on files. Agent CRM is a portable `.acrm` file your agent can q
                     └──────┬───────┘
                            │
 ┌────────────┐      ┌──────▼──────┐      ┌───────────────┐
-│ AI Agents  ├─────►│  .acrm      │◄─────┤ CLI / Scripts │
+│ AI Agents  ├─────►│ Postgres DB │◄─────┤ CLI / Scripts │
 └────────────┘      └─────────────┘      └───────────────┘
 ```
 
-## What's in a `.acrm` file?
+## Where is the CRM stored?
 
-A `.acrm` file is a **SQLite database** with a [change-history layer](https://lix.dev) on top. That means:
-
-- **No proprietary format.** Open it with any lix client and your data is right there in standard tables.
-- **Every write is a versioned checkpoint.** Like git for your CRM — branch to run an experiment, diff to see what changed, revert if Claude mangles a row.
-- **It's just a file.** Copy it, email it, commit it, sync it through Google Drive. No server, no account, no migration tool needed if you ever walk away.
-
-If you can read SQLite, you can read your CRM. That's the whole guarantee.
+Agent CRM is cloud-first and stores workspace data in **Neon, Supabase, or any Postgres-compatible database**. The schema remains flexible EAV: `acrm_object`, `acrm_attribute`, `acrm_record`, and `acrm_value`. Set `ACRM_DATABASE_URL`, `NEON_DATABASE_URL`, or `SUPABASE_DATABASE_URL` to target a workspace.
 
 ## Quickstart
 
@@ -38,16 +32,16 @@ Install the CLI:
 npm install -g @agent-crm/cli
 ```
 
-Create your first `.acrm` file and let Claude rip on it:
+Create your first CRM workspace and let Claude rip on it:
 
 ```bash
 claude --dangerously-skip-permissions
 ```
 
-Create an .acrm file
+Initialize the database schema
 
 ```bash
-! acrm init pipeline.acrm
+! acrm init
 ```
 
 Then import your CSVs
@@ -60,7 +54,7 @@ Then import your CSVs
 - **🧩 Headless:** Ships as a CLI.
 - **⚒️ Skills based:** Claude writes skills against the CLI (transcript ingestion, stale-deal sweeps, weekly reports) as `.md` files.
 - **🧱 Modeled:** uses Attio's data model out of the box — `people`, `companies`, `deals`, `posts`, `transcripts`. Typed, related, queryable with plain SQL. Fixed schema = predictable agent edits.
-- **🔀 Version controlled:** every change is a checkpoint on a branch. Diff, merge, revert, time-travel.
+- **👥 Multiplayer:** workspace state lives in Postgres, so teammates and agents share the same source of truth.
 - **🔌 Pluggable transcript providers:** `transcripts` are vendor-agnostic. Drop a `transcript-provider-<vendor>` skill into `~/.claude/skills/` to plug in Granola, Otter, Fireflies, Fathom, Zoom, manual paste, or anything else.
 
 
@@ -68,7 +62,7 @@ Then import your CSVs
 
 A grab-bag of jobs Agent CRM handles today. Each is a skill or a CLI command — bring your own, or use the ones we ship.
 
-**Pull call transcripts from Granola.** `acrm connect granola` stores a user-provided Granola API key in the hosted sync engine, and `acrm import granola` brings synced transcripts into your local workspace with attendees linked as people. Local, queryable, and easy to spot patterns across calls.
+**Pull call transcripts from Granola.** `acrm connect granola` stores a user-provided Granola API key in the hosted sync engine, and `acrm import granola` brings synced transcripts into the Postgres workspace with attendees linked as people. Queryable and easy to spot patterns across calls.
 
 **Draft follow-ups in your voice.** [`/follow-up`](skills/follow-up.md) finds leads with stale activity, reads the prior thread plus any past-call transcripts, and drafts the next message. You review and send.
 
@@ -76,7 +70,7 @@ A grab-bag of jobs Agent CRM handles today. Each is a skill or a CLI command —
 
 **Import your LinkedIn network.** `acrm connect linkedin` opens the hosted LinkedIn connect flow. After that, `acrm import linkedin` imports existing 1st-degree connections as lightweight contacts, with `--cutoff-date <YYYY-MM-DD>` for recent connections.
 
-**Sweep stale deals.** Ask Claude to query your `.acrm` for deals untouched in N days and surface them. It's just SQL underneath, so any filter you can describe, Claude can run.
+**Sweep stale deals.** Ask Claude to query your workspace for deals untouched in N days and surface them. It's just SQL underneath, so any filter you can describe, Claude can run.
 
 **Import X / LinkedIn posts.** You're scrolling and see a post worth following up on. Paste the URL into Claude Code — `acrm import post <url>` upserts the post and adds the author as a contact.
 
@@ -86,4 +80,4 @@ A grab-bag of jobs Agent CRM handles today. Each is a skill or a CLI command —
 
 **Write your own skill.** Ask Claude for _"a skill that reads my call transcripts, updates deal stages, and posts a summary to Slack"_ and it writes a `.md` file into `~/.claude/skills/`. No code.
 
-**Query with plain SQL.** `acrm execute "SELECT ..."` runs against the Attio-style schema. It's just SQLite — bring any client you like.
+**Query with plain SQL.** `acrm execute "SELECT ..."` runs against the Attio-style schema. It's Postgres — bring any client you like.
