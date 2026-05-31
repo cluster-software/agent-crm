@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { exec } from "../db/execute.js";
 import { PostgresDatabase } from "../db/postgres.js";
 import type { AcrmDatabase, ExecuteResult, SqlValue } from "../db/types.js";
+import { setSingleValue } from "../db/upsert.js";
 import { uuidv7 } from "../lib/uuidv7.js";
 import { Workspace } from "../workspace.js";
 import { importCsv } from "./import-csv.js";
@@ -14,7 +15,12 @@ import { importPost } from "./import-post.js";
 import { importTranscript } from "./import-transcript.js";
 import { importXProfile } from "./import-x.js";
 import { createRecord, dedupeRecords } from "./records.js";
-import { runSignals, type SignalRunner } from "./signals.js";
+import {
+  ensureSignalAttributes,
+  runSignals,
+  type SignalDefinition,
+  type SignalRunner,
+} from "./signals.js";
 
 describe("transactional SDK writes", () => {
   it("rolls back createRecord record shells if value insertion fails", async () => {
@@ -263,6 +269,56 @@ describe("transactional SDK writes", () => {
       await cleanup();
     }
   });
+
+  it("rolls back signal attribute sync if a type-change update fails", async () => {
+    let failAttributeUpdate = false;
+    await withWorkspace(
+      async (workspace) => {
+        const textDefinition = signalDefinition({
+          type: "text",
+          options: undefined,
+        });
+        const statusDefinition = signalDefinition({
+          type: "status",
+          options: [{ id: "owner_identified", title: "Owner identified" }],
+        });
+        const company = await createRecord(workspace, {
+          object_slug: "companies",
+          fields: ["name=Example Co"],
+        });
+        await ensureSignalAttributes(workspace, [textDefinition]);
+        await setSingleValue(workspace.db, {
+          object_slug: "companies",
+          record_id: company.record_id,
+          attribute_slug: "operator_signal",
+          attribute_type: "text",
+          value: "Example Holdings",
+          source: "signal:sync_rollback",
+          provenance: { signal_slug: "sync_rollback" },
+        });
+
+        failAttributeUpdate = true;
+        await expect(ensureSignalAttributes(workspace, [statusDefinition]))
+          .rejects
+          .toThrow("forced value insert failure");
+
+        await expect(
+          activeAttributeCount(workspace, company.record_id, ["operator_signal"]),
+        ).resolves.toBe(1);
+        await expect(attributeType(workspace, "companies", "operator_signal"))
+          .resolves
+          .toBe("text");
+      },
+      {
+        wrapDb: (db) =>
+          new FailingValueInsertDatabase(db, {
+            shouldFail: (sql) =>
+              failAttributeUpdate &&
+              /\bUPDATE\s+acrm_attribute\b/i.test(sql),
+          }),
+      },
+    );
+  });
 });
 
 async function withWorkspace(
@@ -327,6 +383,27 @@ Find the operator.
   return {
     dir,
     cleanup: () => rm(root, { recursive: true, force: true }),
+  };
+}
+
+function signalDefinition(output: {
+  type: "text" | "status";
+  options: SignalDefinition["outputs"][number]["options"];
+}): SignalDefinition {
+  return {
+    slug: "sync_rollback",
+    title: "Sync Rollback",
+    object_slug: "companies",
+    outputs: [{
+      key: "operator",
+      attribute: "operator_signal",
+      title: "Operator signal",
+      type: output.type,
+      ...(output.options ? { options: output.options } : {}),
+    }],
+    prompt: "Find the operator.",
+    definition_hash: "sync-rollback",
+    path: "/tmp/sync_rollback.md",
   };
 }
 
@@ -520,4 +597,21 @@ async function activeAttributeCount(
     [recordId, ...attributeSlugs],
   );
   return Number(result.rows[0]?.count ?? 0);
+}
+
+async function attributeType(
+  workspace: Workspace,
+  objectSlug: string,
+  attributeSlug: string,
+): Promise<string | null> {
+  const result = await exec(
+    workspace.db,
+    `SELECT attribute_type
+       FROM acrm_attribute
+      WHERE object_slug = $1
+        AND attribute_slug = $2
+      LIMIT 1`,
+    [objectSlug, attributeSlug],
+  );
+  return (result.rows[0]?.attribute_type as string | undefined) ?? null;
 }

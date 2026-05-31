@@ -13,7 +13,7 @@ import {
 } from "./schema.js";
 import { setSingleValue } from "../db/upsert.js";
 import { loadAttribute } from "../workspace/catalog.js";
-import type { Workspace } from "../workspace.js";
+import { Workspace } from "../workspace.js";
 
 export type SignalObjectSlug = "people" | "companies";
 export type SignalRunMode = "missing" | "force";
@@ -203,6 +203,15 @@ export async function loadSignalDefinitions(
 }
 
 export async function ensureSignalAttributes(
+  workspace: Workspace,
+  definitions: SignalDefinition[],
+): Promise<SignalSyncResult> {
+  return await workspace.db.transaction((db) =>
+    ensureSignalAttributesInWorkspace(Workspace.fromDatabase(db), definitions)
+  );
+}
+
+async function ensureSignalAttributesInWorkspace(
   workspace: Workspace,
   definitions: SignalDefinition[],
 ): Promise<SignalSyncResult> {
