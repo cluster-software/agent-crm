@@ -1092,11 +1092,21 @@ export async function importCsv(
   workspace: Workspace,
   args: ImportCsvArgs,
 ): Promise<ImportCsvResult> {
-  const db = workspace.db;
   const rows = parseCsv(args.csvText);
   const detected = detectColumns(rows);
   args.onStart?.({ total: rows.length, detected });
 
+  return await workspace.db.transaction((db) =>
+    importCsvRowsInDatabase(db, rows, detected, args)
+  );
+}
+
+async function importCsvRowsInDatabase(
+  db: Workspace["db"],
+  rows: CsvRow[],
+  detected: DetectedColumns,
+  args: ImportCsvArgs,
+): Promise<ImportCsvResult> {
   const stats: ImportCsvStats = {
     rows: rows.length,
     companies_created: 0,

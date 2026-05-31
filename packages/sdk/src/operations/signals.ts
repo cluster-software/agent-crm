@@ -880,30 +880,32 @@ async function runOneSignal(
   const ran_at = nowIso();
   let written = 0;
 
-  for (const output of outputs) {
-    if (!requestedKeys.has(output.key)) continue;
-    const definitionOutput = outputByKey.get(output.key)!;
-    await setSingleValue(workspace.db, {
-      object_slug: definition.object_slug,
-      record_id: record.record_id,
-      attribute_slug: definitionOutput.attribute,
-      attribute_type: definitionOutput.type,
-      value: output.value,
-      source: `signal:${definition.slug}`,
-      provenance: {
-        signal_slug: definition.slug,
-        output_key: output.key,
-        ran_at,
-        definition_hash: definition.definition_hash,
-        confidence: output.confidence,
-        citations: output.citations,
-        reasoning: output.reasoning,
-        ...(output.notes ? { notes: output.notes } : {}),
-        uncited: output.citations.length === 0,
-      },
-    });
-    written++;
-  }
+  await workspace.db.transaction(async (db) => {
+    for (const output of outputs) {
+      if (!requestedKeys.has(output.key)) continue;
+      const definitionOutput = outputByKey.get(output.key)!;
+      await setSingleValue(db, {
+        object_slug: definition.object_slug,
+        record_id: record.record_id,
+        attribute_slug: definitionOutput.attribute,
+        attribute_type: definitionOutput.type,
+        value: output.value,
+        source: `signal:${definition.slug}`,
+        provenance: {
+          signal_slug: definition.slug,
+          output_key: output.key,
+          ran_at,
+          definition_hash: definition.definition_hash,
+          confidence: output.confidence,
+          citations: output.citations,
+          reasoning: output.reasoning,
+          ...(output.notes ? { notes: output.notes } : {}),
+          uncited: output.citations.length === 0,
+        },
+      });
+      written++;
+    }
+  });
   return {
     values_written: written,
     ...runnerTurnMetricFields(metrics),

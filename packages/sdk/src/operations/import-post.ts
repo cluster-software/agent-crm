@@ -8,22 +8,35 @@ import {
 } from "../db/upsert.js";
 import { normalizePostUrl, type PostPlatform } from "../domain/values.js";
 import {
+  loadFromCacheOrFetch as loadLinkedinProfile,
+  normalizeLinkedinInput,
+} from "../integrations/apify-linkedin.js";
+import {
   extractLinkedinPostId,
   extractXPostId,
   loadLinkedinPost,
   loadXPost,
 } from "../integrations/apify-post.js";
 import {
+  loadFromCacheOrFetch as loadXProfile,
+  normalizeXInput,
+} from "../integrations/apify-x.js";
+import { mapProfile as mapLinkedinProfile } from "../integrations/linkedin-mapping.js";
+import {
   mapLinkedinPost,
   mapXPost,
   type MappedPost,
 } from "../integrations/post-mapping.js";
+import { mapProfile as mapXProfile } from "../integrations/x-mapping.js";
 import { AcrmError, ERR } from "../lib/errors.js";
 import { generateUuid } from "../lib/ids.js";
 import { nowIso } from "../lib/time.js";
 import type { Workspace } from "../workspace.js";
-import { importLinkedinProfile } from "./import-linkedin.js";
-import { importXProfile } from "./import-x.js";
+import {
+  normalizedXProfileKey,
+  upsertMappedLinkedinProfile,
+  upsertMappedXProfile,
+} from "./profile-upserts.js";
 
 export type PostImportResult = {
   post_record_id: string;
@@ -46,6 +59,14 @@ export type ImportPostArgs = {
   noCache?: boolean;
 };
 
+type LoadedAuthorProfile =
+  | ({
+      platform: "linkedin";
+    } & Parameters<typeof upsertMappedLinkedinProfile>[1])
+  | ({
+      platform: "x";
+    } & Parameters<typeof upsertMappedXProfile>[1]);
+
 // Import a LinkedIn or X post by URL. Auto-detects platform, upserts the
 // post author as a person via the profile-import flow, upserts the post
 // record (deduped by normalized URL), and links them via `posts.author` +
@@ -63,7 +84,6 @@ export async function importPost(
     );
   }
   const { platform, url: normalizedUrl } = sniffed;
-  const db = workspace.db;
 
   // 1. Fetch the post (with cache).
   const postId =
@@ -102,80 +122,113 @@ export async function importPost(
     );
   }
 
-  // 3. Import the author via the existing profile flow.
-  let personId: string;
-  let companyId: string | null = null;
-  let personCreated = false;
-  let companyCreated = false;
-  let profileCachePath: string | null = null;
-  let profileCacheHit = false;
+  const authorProfile = await loadAuthorProfile(platform, mapped, args);
 
-  if (platform === "linkedin") {
-    const r = await importLinkedinProfile(workspace, {
-      urlOrSlug: mapped.author_profile_url,
-      token: args.token,
-      cacheDir: args.profileCacheDir,
-      refresh: args.refresh,
-      noCache: args.noCache,
+  const imported = await workspace.db.transaction(async (db) => {
+    const author =
+      authorProfile.platform === "linkedin"
+        ? await upsertMappedLinkedinProfile(db, authorProfile)
+        : await upsertMappedXProfile(db, authorProfile);
+    const personId = author.person_record_id;
+    const record = await upsertPost({
+      db,
+      platform,
+      normalizedUrl,
+      rawUrl: args.rawUrl,
+      mapped,
+      personId,
+      postCacheHit: postLoad.cacheHit,
+      apifyActor:
+        platform === "linkedin"
+          ? "apimaestro~linkedin-post-detail"
+          : "apidojo~twitter-scraper-lite",
     });
-    personId = r.person_record_id;
-    companyId = r.company_record_id;
-    personCreated = r.created.person;
-    companyCreated = r.created.company;
-    profileCachePath = r.cache_path;
-    profileCacheHit = r.cache_hit;
-  } else {
-    const r = await importXProfile(workspace, {
-      handleOrUrl: mapped.author_profile_url,
-      token: args.token,
-      cacheDir: args.profileCacheDir,
-      refresh: args.refresh,
-      noCache: args.noCache,
-    });
-    personId = r.person_record_id;
-    personCreated = r.created.person;
-    profileCachePath = r.cache_path;
-    profileCacheHit = r.cache_hit;
-  }
 
-  // 4. Upsert the post record (dedup by normalized URL).
-  const postRecord = await upsertPost({
-    db,
-    platform,
-    normalizedUrl,
-    rawUrl: args.rawUrl,
-    mapped,
-    personId,
-    postCacheHit: postLoad.cacheHit,
-    apifyActor:
-      platform === "linkedin"
-        ? "apimaestro~linkedin-post-detail"
-        : "apidojo~twitter-scraper-lite",
+    await linkPersonToPost(db, personId, record.postRecordId, platform);
+    return { author, postRecord: record };
   });
 
-  // 5. Link person → post (skip if already linked).
-  await linkPersonToPost(db, personId, postRecord.postRecordId, platform);
-
   return {
-    post_record_id: postRecord.postRecordId,
-    person_record_id: personId,
-    company_record_id: companyId,
+    post_record_id: imported.postRecord.postRecordId,
+    person_record_id: imported.author.person_record_id,
+    company_record_id:
+      "company_record_id" in imported.author
+        ? imported.author.company_record_id
+        : null,
     created: {
-      post: postRecord.created,
-      person: personCreated,
-      company: companyCreated,
+      post: imported.postRecord.created,
+      person: imported.author.created.person,
+      company:
+        "company" in imported.author.created
+          ? imported.author.created.company
+          : false,
     },
     platform,
     post_url: normalizedUrl,
     cache_paths: {
       post: postLoad.cachePath,
-      profile: profileCachePath,
+      profile: imported.author.cache_path,
     },
     cache_hits: {
       post: postLoad.cacheHit,
-      profile: profileCacheHit,
+      profile: imported.author.cache_hit,
     },
     mapped,
+  };
+}
+
+async function loadAuthorProfile(
+  platform: PostPlatform,
+  mapped: MappedPost,
+  args: ImportPostArgs,
+): Promise<LoadedAuthorProfile> {
+  if (platform === "linkedin") {
+    const { url, publicId } = normalizeLinkedinInput(mapped.author_profile_url);
+    const { profile, cachePath, cacheHit } = await loadLinkedinProfile({
+      cacheDir: args.profileCacheDir,
+      publicId,
+      url,
+      token: args.token,
+      refresh: args.refresh,
+      noCache: args.noCache,
+    });
+    return {
+      platform,
+      url,
+      cachePath,
+      cacheHit,
+      mapped: mapLinkedinProfile(profile),
+      provenance: {
+        actor: "harvestapi~linkedin-profile-scraper",
+        public_id: publicId,
+        fetched_at: nowIso(),
+        cache_hit: cacheHit,
+      },
+    };
+  }
+
+  const { handle } = normalizeXInput(mapped.author_profile_url);
+  const { profile, cachePath, cacheHit } = await loadXProfile({
+    cacheDir: args.profileCacheDir,
+    handle,
+    token: args.token,
+    refresh: args.refresh,
+    noCache: args.noCache,
+  });
+  const mappedProfile = mapXProfile(profile, handle);
+  return {
+    platform,
+    twitterKey: normalizedXProfileKey(mappedProfile),
+    cachePath,
+    cacheHit,
+    mapped: mappedProfile,
+    profile,
+    provenance: {
+      actor: "apidojo~twitter-user-scraper",
+      handle: mappedProfile.person.handle,
+      fetched_at: nowIso(),
+      cache_hit: cacheHit,
+    },
   };
 }
 
