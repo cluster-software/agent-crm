@@ -3,6 +3,29 @@ import { PostgresDatabase, type Queryable } from "./postgres.js";
 import type { AcrmDatabase, SqlValue } from "./types.js";
 
 describe("PostgresDatabase", () => {
+  it("maps direct connection string channel binding params into node-postgres options", async () => {
+    const required = PostgresDatabase.connect(
+      "postgresql://user:pass@example.com/db?channel_binding=require",
+    );
+    const preferred = PostgresDatabase.connect(
+      "postgresql://user:pass@example.com/db?channel_binding=prefer",
+    );
+    const disabled = PostgresDatabase.connect(
+      "postgresql://user:pass@example.com/db?channel_binding=disable",
+    );
+    try {
+      expect(poolOptions(required).enableChannelBinding).toBe(true);
+      expect(poolOptions(preferred).enableChannelBinding).toBe(true);
+      expect(poolOptions(disabled).enableChannelBinding).toBeUndefined();
+    } finally {
+      await Promise.all([
+        required.close(),
+        preferred.close(),
+        disabled.close(),
+      ]);
+    }
+  });
+
   it("rolls back failed pool-backed transactions", async () => {
     const pool = new TransactionalPool();
     const db = PostgresDatabase.fromQueryable(pool);
@@ -104,6 +127,12 @@ async function expectRollback(db: AcrmDatabase): Promise<void> {
 
   const result = await db.execute("SELECT value FROM tx_probe");
   expect(result.rows).toEqual([]);
+}
+
+function poolOptions(db: PostgresDatabase): { enableChannelBinding?: boolean } {
+  return (db as unknown as {
+    queryable: { options: { enableChannelBinding?: boolean } };
+  }).queryable.options;
 }
 
 class TransactionalQueryable implements Queryable {
