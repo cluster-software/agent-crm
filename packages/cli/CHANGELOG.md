@@ -1,5 +1,13 @@
 # @agent-crm/cli
 
+## 1.0.3
+
+### Patch Changes
+
+- 9022ca3: Add desktop cloud-session context and one-time browser handoffs for hosted Gmail and LinkedIn flows.
+- Updated dependencies [9022ca3]
+  - @agent-crm/sdk@1.0.3
+
 ## 1.0.2
 
 ### Patch Changes
