@@ -88,7 +88,6 @@ async function runImportGmail(opts: {
   auth_url: string;
   workspace_id: string;
   org_id: string | null;
-  cluster_org_id: string | null;
   sync_engine_url: string;
   gmail_sync_preferences?: GmailSyncPreferences;
 }> {
@@ -113,7 +112,6 @@ async function runImportGmail(opts: {
       auth_url: authUrl,
       workspace_id: cloudSession.workspaceId,
       org_id: orgId,
-      cluster_org_id: orgId,
       sync_engine_url: cloudSession.syncEngineUrl,
       ...(hasGmailSyncPreferences(opts)
         ? {
@@ -132,7 +130,7 @@ async function runImportGmail(opts: {
   const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
-    clusterOrgId: opts.orgId ?? process.env.ACRM_CLOUD_ORG_ID ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
+    orgId: opts.orgId ?? process.env.ACRM_CLOUD_ORG_ID,
   }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   await registerCloudWorkspace({
@@ -145,15 +143,14 @@ async function runImportGmail(opts: {
     auth_url: gmailConnectUrl({
       syncEngineUrl,
       workspaceId: metadata.workspaceId,
-      orgId: metadata.clusterOrgId,
+      orgId: metadata.orgId,
       workspaceName,
       backfillDays: opts.backfillDays,
       backfillSince: opts.backfillSince,
       excludeNewsletters: opts.excludeNewsletters,
     }),
     workspace_id: metadata.workspaceId,
-    org_id: metadata.clusterOrgId ?? null,
-    cluster_org_id: metadata.clusterOrgId ?? null,
+    org_id: metadata.orgId ?? null,
     sync_engine_url: syncEngineUrl,
     ...(hasGmailSyncPreferences(opts)
       ? {

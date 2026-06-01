@@ -167,7 +167,6 @@ type LinkedinConnectResult = {
   auth_url: string;
   workspace_id: string;
   org_id: string | null;
-  cluster_org_id: string | null;
   sync_engine_url: string;
   linkedin: CliProviderStatus;
 } | {
@@ -175,7 +174,6 @@ type LinkedinConnectResult = {
   message: string;
   workspace_id: string;
   org_id: string | null;
-  cluster_org_id: string | null;
   sync_engine_url: string;
   linkedin: CliProviderStatus;
 };
@@ -199,7 +197,6 @@ async function runConnectLinkedin(opts: CommandWorkspaceOpts & { orgId?: string 
         message: linkedinAlreadyConnectedMessage(linkedin),
         workspace_id: cloudSession.workspaceId,
         org_id: orgId,
-        cluster_org_id: orgId,
         sync_engine_url: cloudSession.syncEngineUrl,
         linkedin,
       };
@@ -218,7 +215,6 @@ async function runConnectLinkedin(opts: CommandWorkspaceOpts & { orgId?: string 
       }), handoff.code),
       workspace_id: cloudSession.workspaceId,
       org_id: orgId,
-      cluster_org_id: orgId,
       sync_engine_url: cloudSession.syncEngineUrl,
       linkedin,
     };
@@ -229,7 +225,7 @@ async function runConnectLinkedin(opts: CommandWorkspaceOpts & { orgId?: string 
   const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
-    clusterOrgId: opts.orgId ?? process.env.ACRM_CLOUD_ORG_ID ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
+    orgId: opts.orgId ?? process.env.ACRM_CLOUD_ORG_ID,
   }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   await registerCloudWorkspace({
@@ -251,8 +247,7 @@ async function runConnectLinkedin(opts: CommandWorkspaceOpts & { orgId?: string 
       connected: true,
       message: linkedinAlreadyConnectedMessage(linkedin),
       workspace_id: metadata.workspaceId,
-      org_id: metadata.clusterOrgId ?? null,
-      cluster_org_id: metadata.clusterOrgId ?? null,
+      org_id: metadata.orgId ?? null,
       sync_engine_url: syncEngineUrl,
       linkedin,
     };
@@ -262,12 +257,11 @@ async function runConnectLinkedin(opts: CommandWorkspaceOpts & { orgId?: string 
     auth_url: linkedinConnectUrl({
       syncEngineUrl,
       workspaceId: metadata.workspaceId,
-      orgId: metadata.clusterOrgId,
+      orgId: metadata.orgId,
       workspaceName,
     }),
     workspace_id: metadata.workspaceId,
-    org_id: metadata.clusterOrgId ?? null,
-    cluster_org_id: metadata.clusterOrgId ?? null,
+    org_id: metadata.orgId ?? null,
     sync_engine_url: syncEngineUrl,
     linkedin,
   };
@@ -311,7 +305,7 @@ async function runConnectLinkedinStatus(opts: CommandWorkspaceOpts): Promise<{
   const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
-    clusterOrgId: process.env.ACRM_CLOUD_ORG_ID ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
+    orgId: process.env.ACRM_CLOUD_ORG_ID,
   }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   const status = await fetchCloudIntegrationStatus({
@@ -321,7 +315,7 @@ async function runConnectLinkedinStatus(opts: CommandWorkspaceOpts): Promise<{
   });
   return {
     workspace_id: metadata.workspaceId,
-    org_id: metadata.clusterOrgId ?? null,
+    org_id: metadata.orgId ?? null,
     sync_engine_url: syncEngineUrl,
     linkedin: toCliProviderStatus(status.linkedin, {
       requireActiveAccount: true,
@@ -352,7 +346,7 @@ async function runConnectGranola(opts: {
 }): Promise<{
   auth_url: string;
   workspace_id: string;
-  cluster_org_id: string | null;
+  org_id: string | null;
   sync_engine_url: string;
   connected: boolean;
   account?: unknown;
@@ -382,7 +376,7 @@ async function runConnectGranola(opts: {
     return {
       auth_url,
       workspace_id: metadata.workspaceId,
-      cluster_org_id: metadata.clusterOrgId ?? null,
+      org_id: metadata.orgId ?? null,
       sync_engine_url: syncEngineUrl,
       connected: false,
     };
@@ -397,7 +391,7 @@ async function runConnectGranola(opts: {
   return {
     auth_url,
     workspace_id: metadata.workspaceId,
-    cluster_org_id: metadata.clusterOrgId ?? null,
+    org_id: metadata.orgId ?? null,
     sync_engine_url: syncEngineUrl,
     connected: true,
     account: connected.account,
@@ -414,7 +408,7 @@ async function runConnectGranolaStatus(opts: CommandWorkspaceOpts): Promise<{
   const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
-    clusterOrgId: process.env.ACRM_CLOUD_ORG_ID ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
+    orgId: process.env.ACRM_CLOUD_ORG_ID,
   }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   const status = await fetchCloudIntegrationStatus({
