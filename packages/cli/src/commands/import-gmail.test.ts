@@ -39,12 +39,12 @@ describe("importGoogleContacts", () => {
     const url = gmailCommandTest.gmailConnectUrl({
       syncEngineUrl: "https://sync.example.com",
       workspaceId: "workspace-1",
-      clusterOrgId: "org-1",
+      orgId: "org-1",
       workspaceName: "pipeline",
     });
 
     expect(url).toBe(
-      "https://sync.example.com/integrations/gmail/connect?workspace_id=workspace-1&cluster_org_id=org-1&workspace_name=pipeline",
+      "https://sync.example.com/integrations/gmail/connect?workspace_id=workspace-1&org_id=org-1&workspace_name=pipeline",
     );
   });
 
@@ -64,14 +64,14 @@ describe("importGoogleContacts", () => {
     const url = gmailCommandTest.gmailConnectUrl({
       syncEngineUrl: "https://sync.example.com",
       workspaceId: "workspace-1",
-      clusterOrgId: "org-1",
+      orgId: "org-1",
       workspaceName: "pipeline",
       backfillDays: 30,
       excludeNewsletters: true,
     });
 
     expect(url).toBe(
-      "https://sync.example.com/integrations/gmail/connect?workspace_id=workspace-1&cluster_org_id=org-1&workspace_name=pipeline&backfill_days=30&exclude_newsletters=true",
+      "https://sync.example.com/integrations/gmail/connect?workspace_id=workspace-1&org_id=org-1&workspace_name=pipeline&backfill_days=30&exclude_newsletters=true",
     );
   });
 
@@ -122,6 +122,54 @@ describe("importGoogleContacts", () => {
     });
   });
 
+  it("uses a desktop cloud session to add a browser handoff to the Gmail URL", async () => {
+    vi.stubEnv("ACRM_SYNC_ENGINE_URL", "https://sync.example.com");
+    vi.stubEnv("ACRM_CLOUD_WORKSPACE_ID", "workspace-1");
+    vi.stubEnv("ACRM_CLOUD_ORG_ID", "org-1");
+    vi.stubEnv("ACRM_DESKTOP_SESSION_TOKEN", "desktop-token");
+    const fetchMock = vi.fn(async () => Response.json({
+      ok: true,
+      code: "handoff-1",
+      expires_at: "2026-06-01T00:05:00.000Z",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await gmailCommandTest.runImportGmail({
+      workspaceName: "pipeline",
+    });
+    const authUrl = new URL(result.auth_url);
+
+    expect(result.workspace_id).toBe("workspace-1");
+    expect(result.org_id).toBe("org-1");
+    expect(authUrl.searchParams.get("org_id")).toBe("org-1");
+    expect(new URLSearchParams(authUrl.hash.slice(1)).get("auth_handoff")).toBe("handoff-1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [handoffUrl, handoffInit] = fetchMock.mock.calls[0] as [URL, RequestInit];
+    expect(handoffUrl.toString()).toBe("https://sync.example.com/auth/browser-handoffs");
+    expect(handoffInit).toEqual({
+      method: "POST",
+      headers: {
+        authorization: "Bearer desktop-token",
+        accept: "application/json",
+      },
+    });
+  });
+
+  it("rejects an org override that does not match the desktop session", async () => {
+    vi.stubEnv("ACRM_SYNC_ENGINE_URL", "https://sync.example.com");
+    vi.stubEnv("ACRM_CLOUD_WORKSPACE_ID", "workspace-1");
+    vi.stubEnv("ACRM_CLOUD_ORG_ID", "org-1");
+    vi.stubEnv("ACRM_DESKTOP_SESSION_TOKEN", "desktop-token");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(gmailCommandTest.runImportGmail({
+      workspaceName: "pipeline",
+      orgId: "org-2",
+    })).rejects.toThrow(/does not match the active desktop session org/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("registers the cloud workspace and returns a hosted Gmail browser URL", async () => {
     const db = await openTestWorkspace();
     vi.stubEnv("ACRM_SYNC_ENGINE_URL", "https://sync.example.com");
@@ -140,11 +188,12 @@ describe("importGoogleContacts", () => {
       const authUrl = new URL(result.auth_url);
 
       expect(result.workspace_id).toBe("workspace-1");
+      expect(result.org_id).toBe("org-1");
       expect(result.cluster_org_id).toBe("org-1");
       expect(result.sync_engine_url).toBe("https://sync.example.com");
       expect(authUrl.origin + authUrl.pathname).toBe("https://sync.example.com/integrations/gmail/connect");
       expect(authUrl.searchParams.get("workspace_id")).toBe("workspace-1");
-      expect(authUrl.searchParams.get("cluster_org_id")).toBe("org-1");
+      expect(authUrl.searchParams.get("org_id")).toBe("org-1");
       expect(authUrl.searchParams.get("workspace_name")).toBe("pipeline");
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [registerUrl, registerInit] = fetchMock.mock.calls[0] as [string, RequestInit];

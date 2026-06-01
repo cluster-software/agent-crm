@@ -1,11 +1,11 @@
 ---
 name: acrm-onboarding
-description: Onboard a new Agent CRM user in an existing Postgres workspace — walk them through picking a first data source (Gmail / LinkedIn sync / CSV / LinkedIn or X profile) and importing it. Trigger phrasings — "onboard me", "set up agent crm", "get started with acrm", "I'm new to acrm", or a bare `/acrm-onboarding`.
+description: Onboard a new Agent CRM user in an Agent CRM workspace — walk them through picking a first data source (Gmail / LinkedIn sync / CSV / LinkedIn or X profile) and importing it. Trigger phrasings — "onboard me", "set up agent crm", "get started with acrm", "I'm new to acrm", or a bare `/acrm-onboarding`.
 ---
 
 # acrm-onboarding
 
-The first-run flow for Agent CRM. Goal: in one conversation, help a user populate their existing Postgres workspace with real contacts so the rest of the skills have something to chew on.
+The first-run flow for Agent CRM. Goal: in one conversation, help a user populate their workspace with real contacts so the rest of the skills have something to chew on.
 
 ## Run
 
@@ -33,9 +33,11 @@ Use `AskUserQuestion` with this exact question and options (single-select, multi
 Powered by Agent CRM's hosted sync engine. Do **not** run a local Gmail
 contacts import.
 
-Gmail uses the same hosted Cluster auth gate as LinkedIn. Do not
-ask the user for a Cluster org id before starting. The hosted connect page
-will infer or create the org from the user's signed-in email domain. Only pass
+Gmail uses the same hosted auth gate as LinkedIn. In the desktop app, the CLI
+uses the app session and a one-time browser handoff, so do not ask for a
+Postgres URL and never print `ACRM_DESKTOP_SESSION_TOKEN`. Do not
+ask the user for an org id before starting. The hosted connect page
+will infer or create the org from the user's signed-in account. Only pass
 `--org-id <org-id>` when the user explicitly provides an org id or the
 workspace already has one configured.
 
@@ -92,10 +94,10 @@ messages into the shared Postgres workspace.
 
 What `acrm import gmail` does now:
 
-1. Reads or creates the hosted sync metadata in `acrm_metadata`.
-2. Registers the cloud workspace with the hosted sync engine.
+1. Uses the desktop cloud session or reads/creates standalone hosted sync metadata in `acrm_metadata`.
+2. Registers standalone cloud workspaces with the hosted sync engine.
 3. Opens the hosted Gmail connect page in the user's default browser. That
-   page checks Cluster auth, resolves the org from the signed-in email domain,
+   page uses the desktop handoff or hosted auth, resolves the org,
    then starts Google OAuth.
 4. Passes the selected Gmail backfill and newsletter filtering preferences
    to the hosted sync engine.

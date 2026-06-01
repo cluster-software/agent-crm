@@ -1,17 +1,17 @@
 ---
 name: connect-linkedin-to-acrm
-description: Connect LinkedIn to an Agent CRM / ACRM Postgres workspace through the hosted sync engine, then optionally import existing LinkedIn contacts. Use when the user asks to connect, integrate, hook up, sync, import, or troubleshoot LinkedIn with Agent CRM or ACRM.
+description: Connect LinkedIn to an Agent CRM / ACRM workspace through the hosted sync engine, then optionally import existing LinkedIn contacts. Use when the user asks to connect, integrate, hook up, sync, import, or troubleshoot LinkedIn with Agent CRM or ACRM.
 ---
 
 # connect-linkedin-to-acrm
 
-Use this when the user wants LinkedIn connected to their current Postgres workspace or wants to import existing LinkedIn contacts.
+Use this when the user wants LinkedIn connected to their current Agent CRM workspace or wants to import existing LinkedIn contacts.
 
 ## What this does
 
 This is the hosted LinkedIn sync flow:
 
-1. The workspace gets a cloud workspace binding in `acrm_metadata`.
+1. In the desktop app, the CLI uses `ACRM_CLOUD_WORKSPACE_ID`, `ACRM_CLOUD_ORG_ID`, and `ACRM_DESKTOP_SESSION_TOKEN` from the app session. Standalone Postgres workspaces get a cloud workspace binding in `acrm_metadata`.
 2. The user opens Agent CRM's hosted LinkedIn connect page.
 3. Future LinkedIn messages and contacts sync automatically after connection.
 4. The user chooses whether to import existing 1st-degree LinkedIn relations.
@@ -19,7 +19,7 @@ This is the hosted LinkedIn sync flow:
 
 ## Run
 
-First resolve the workspace. Prefer `ACRM_DATABASE_URL`, `NEON_DATABASE_URL`, `SUPABASE_DATABASE_URL`, or `DATABASE_URL` from the current shell or `.env` in the current project directory. If the workspace is unclear, ask the user for a Postgres-compatible connection string or have them set:
+First resolve the workspace. If `ACRM_DESKTOP_SESSION_TOKEN` is present, do not ask for a Postgres URL and do not print the token. Otherwise prefer `ACRM_DATABASE_URL`, `NEON_DATABASE_URL`, `SUPABASE_DATABASE_URL`, or `DATABASE_URL` from the current shell or `.env` in the current project directory. If the standalone workspace is unclear, ask the user for a Postgres-compatible connection string or have them set:
 
 ```sh
 export ACRM_DATABASE_URL='postgres://...'
@@ -54,7 +54,7 @@ else
 fi
 ```
 
-Have the user finish Cluster auth and LinkedIn verification in the default browser. The hosted page resolves the Cluster org from the signed-in email domain. LinkedIn may ask for an email, SMS, authenticator-app code, or in-app sign-in approval.
+Have the user finish LinkedIn verification in the default browser. In desktop sessions, Agent CRM passes a one-time browser handoff so the hosted page skips sign-in. Standalone sessions may still ask the user to sign in first. LinkedIn may ask for an email, SMS, authenticator-app code, or in-app sign-in approval.
 
 After opening the browser, keep the agent turn active and poll for completion every 2 seconds. Do not surface import options until the status command verifies LinkedIn is connected:
 
@@ -128,7 +128,8 @@ still backfilling and try again later.
 
 ## Hard rules
 
-- Do not fabricate a Cluster org id.
+- Do not fabricate an org id.
+- Never print `ACRM_DESKTOP_SESSION_TOKEN`.
 - Do not ask for or store the user's LinkedIn password in chat.
 - Do not use Gmail commands for this flow.
 - If `acrm` is missing, tell the user to install it with `npm i -g @agent-crm/cli`.

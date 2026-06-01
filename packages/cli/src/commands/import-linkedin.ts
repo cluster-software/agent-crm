@@ -8,6 +8,7 @@ import {
   importLinkedinProfile,
   normalizeLinkedinUrl,
   type AcrmDatabase,
+  type CommunicationImportBatch,
   type CommunicationImportResult,
   type ImportLinkedinRelationsResult,
   type LinkedinImportResult,
@@ -21,6 +22,7 @@ import {
   ensureCloudWorkspaceMetadataForWorkspace,
   fetchCloudCommunicationExport,
   fetchCloudLinkedinRelationsExport,
+  readCloudSessionContext,
   startCloudLinkedinMessageBackfill,
 } from "../lib/cloud-workspace.js";
 import { type BackgroundSignalRun, startMissingSignalsForRecords } from "../signals.js";
@@ -111,6 +113,46 @@ async function runImportLinkedinNetwork(opts: { workspace?: string; db?: AcrmDat
   };
   message_backfill_warning?: string;
 }> {
+  const cloudSession = readCloudSessionContext();
+  if (cloudSession) {
+    const { relations, company_enrichment } = await fetchCloudLinkedinRelationsExport({
+      syncEngineUrl: cloudSession.syncEngineUrl,
+      workspaceId: cloudSession.workspaceId,
+      sessionToken: cloudSession.desktopSessionToken,
+      cutoffDate: opts.cutoffDate,
+      enrichCompanies: true,
+    });
+    let messageBackfill: { started: number; integration_account_ids: string[]; scoped?: boolean } | undefined;
+    let messageBackfillWarning: string | undefined;
+    if (relations.length > 0) {
+      try {
+        messageBackfill = await startCloudLinkedinMessageBackfill({
+          syncEngineUrl: cloudSession.syncEngineUrl,
+          workspaceId: cloudSession.workspaceId,
+          sessionToken: cloudSession.desktopSessionToken,
+          scope: linkedinMessageBackfillScope(relations),
+        });
+      } catch (error) {
+        messageBackfillWarning = error instanceof Error ? error.message : String(error);
+      }
+    }
+    return {
+      workspace_id: cloudSession.workspaceId,
+      sync_engine_url: cloudSession.syncEngineUrl,
+      stats: {
+        relations_seen: relations.length,
+        people_created: 0,
+        people_updated: 0,
+        companies_created: 0,
+        companies_updated: 0,
+        relations_skipped_no_key: 0,
+      },
+      ...(company_enrichment ? { company_enrichment } : {}),
+      ...(messageBackfill ? { message_backfill: messageBackfill } : {}),
+      ...(messageBackfillWarning ? { message_backfill_warning: messageBackfillWarning } : {}),
+    };
+  }
+
   const workspaceFile = resolveWorkspacePath(opts.workspace);
   const workspaceDir = localWorkspaceDir(workspaceFile);
   loadDotenv(workspaceDir);
@@ -119,7 +161,7 @@ async function runImportLinkedinNetwork(opts: { workspace?: string; db?: AcrmDat
   const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
-    clusterOrgId: process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
+    clusterOrgId: process.env.ACRM_CLOUD_ORG_ID ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
   }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   const { relations } = await fetchCloudLinkedinRelationsExport({
@@ -226,6 +268,21 @@ async function runSyncLinkedin(opts: { workspace?: string; db?: AcrmDatabase }):
   sync_engine_url: string;
   stats: CommunicationImportResult["stats"];
 }> {
+  const cloudSession = readCloudSessionContext();
+  if (cloudSession) {
+    const batch = await fetchCloudCommunicationExport({
+      syncEngineUrl: cloudSession.syncEngineUrl,
+      workspaceId: cloudSession.workspaceId,
+      sessionToken: cloudSession.desktopSessionToken,
+      provider: "linkedin",
+    });
+    return {
+      workspace_id: cloudSession.workspaceId,
+      sync_engine_url: cloudSession.syncEngineUrl,
+      stats: communicationBatchStats(batch),
+    };
+  }
+
   const workspaceFile = resolveWorkspacePath(opts.workspace);
   const workspaceDir = localWorkspaceDir(workspaceFile);
   loadDotenv(workspaceDir);
@@ -234,7 +291,7 @@ async function runSyncLinkedin(opts: { workspace?: string; db?: AcrmDatabase }):
   const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
-    clusterOrgId: process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
+    clusterOrgId: process.env.ACRM_CLOUD_ORG_ID ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
   }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   const batch = await fetchCloudCommunicationExport({
@@ -254,6 +311,19 @@ async function runSyncLinkedin(opts: { workspace?: string; db?: AcrmDatabase }):
   } finally {
     await ws.close();
   }
+}
+
+function communicationBatchStats(batch: CommunicationImportBatch): CommunicationImportResult["stats"] {
+  return {
+    people_seen: Array.isArray(batch.people) ? batch.people.length : 0,
+    people_created: Array.isArray(batch.people) ? batch.people.length : 0,
+    companies_seen: 0,
+    companies_created: 0,
+    communication_threads_seen: Array.isArray(batch.communicationThreads) ? batch.communicationThreads.length : 0,
+    communication_threads_created: Array.isArray(batch.communicationThreads) ? batch.communicationThreads.length : 0,
+    communication_messages_seen: Array.isArray(batch.communicationMessages) ? batch.communicationMessages.length : 0,
+    communication_messages_created: Array.isArray(batch.communicationMessages) ? batch.communicationMessages.length : 0,
+  };
 }
 
 async function runImportLinkedin(

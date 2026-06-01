@@ -5,7 +5,10 @@ import { resolveWorkspacePath, workspaceDisplayName } from "../workspace-resolve
 import { fail, isJson, ok, setJsonMode } from "../output/json.js";
 import {
   DEFAULT_SYNC_ENGINE_URL,
+  appendBrowserAuthHandoff,
+  createBrowserAuthHandoff,
   ensureCloudWorkspaceMetadataForWorkspace,
+  readCloudSessionContext,
   registerCloudWorkspace,
 } from "../lib/cloud-workspace.js";
 
@@ -31,7 +34,7 @@ export function attachGmailSubcommand(parent: Command): void {
       "Connect Gmail through Agent CRM's hosted sync engine. Opens hosted Google OAuth and syncs people, email threads, and email messages into the cloud workspace.",
     )
     .option("--no-open", "print the OAuth URL without opening the browser")
-    .option("--org-id <org-id>", "Cluster organization id for hosted Gmail sync")
+    .option("--org-id <org-id>", "organization id for hosted Gmail sync")
     .option("--backfill-days <days>", "Gmail backfill window in days. Supported values: 30, 90")
     .option("--backfill-since <YYYY-MM-DD>", "Gmail backfill start date")
     .option("--exclude-newsletters", "filter newsletters and marketing emails out of the Gmail sync")
@@ -84,17 +87,52 @@ async function runImportGmail(opts: {
 } & GmailSyncPreferences): Promise<{
   auth_url: string;
   workspace_id: string;
+  org_id: string | null;
   cluster_org_id: string | null;
   sync_engine_url: string;
   gmail_sync_preferences?: GmailSyncPreferences;
 }> {
-  const workspaceFile = resolveWorkspacePath(opts.workspace);
   const workspaceName = workspaceDisplayName(opts.workspaceName);
+  const cloudSession = readCloudSessionContext();
+  if (cloudSession) {
+    const orgId = cloudSessionOrgId(cloudSession.orgId, opts.orgId);
+    const handoff = await createBrowserAuthHandoff({
+      syncEngineUrl: cloudSession.syncEngineUrl,
+      desktopSessionToken: cloudSession.desktopSessionToken,
+    });
+    const authUrl = appendBrowserAuthHandoff(gmailConnectUrl({
+      syncEngineUrl: cloudSession.syncEngineUrl,
+      workspaceId: cloudSession.workspaceId,
+      orgId,
+      workspaceName,
+      backfillDays: opts.backfillDays,
+      backfillSince: opts.backfillSince,
+      excludeNewsletters: opts.excludeNewsletters,
+    }), handoff.code);
+    return {
+      auth_url: authUrl,
+      workspace_id: cloudSession.workspaceId,
+      org_id: orgId,
+      cluster_org_id: orgId,
+      sync_engine_url: cloudSession.syncEngineUrl,
+      ...(hasGmailSyncPreferences(opts)
+        ? {
+            gmail_sync_preferences: {
+              ...(opts.backfillDays ? { backfillDays: opts.backfillDays } : {}),
+              ...(opts.backfillSince ? { backfillSince: opts.backfillSince } : {}),
+              ...(opts.excludeNewsletters != null ? { excludeNewsletters: opts.excludeNewsletters } : {}),
+            },
+          }
+        : {}),
+    };
+  }
+
+  const workspaceFile = resolveWorkspacePath(opts.workspace);
 
   const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
-    clusterOrgId: opts.orgId ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
+    clusterOrgId: opts.orgId ?? process.env.ACRM_CLOUD_ORG_ID ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
   }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   await registerCloudWorkspace({
@@ -107,13 +145,14 @@ async function runImportGmail(opts: {
     auth_url: gmailConnectUrl({
       syncEngineUrl,
       workspaceId: metadata.workspaceId,
-      clusterOrgId: metadata.clusterOrgId,
+      orgId: metadata.clusterOrgId,
       workspaceName,
       backfillDays: opts.backfillDays,
       backfillSince: opts.backfillSince,
       excludeNewsletters: opts.excludeNewsletters,
     }),
     workspace_id: metadata.workspaceId,
+    org_id: metadata.clusterOrgId ?? null,
     cluster_org_id: metadata.clusterOrgId ?? null,
     sync_engine_url: syncEngineUrl,
     ...(hasGmailSyncPreferences(opts)
@@ -128,10 +167,20 @@ async function runImportGmail(opts: {
   };
 }
 
+function cloudSessionOrgId(sessionOrgId: string, requestedOrgId?: string): string {
+  if (requestedOrgId && requestedOrgId !== sessionOrgId) {
+    throw new AcrmError(
+      `--org-id ${requestedOrgId} does not match the active desktop session org ${sessionOrgId}`,
+      ERR.INVALID_INPUT,
+    );
+  }
+  return sessionOrgId;
+}
+
 function gmailConnectUrl(input: {
   syncEngineUrl: string;
   workspaceId: string;
-  clusterOrgId?: string;
+  orgId?: string;
   workspaceName: string;
   backfillDays?: 30 | 90;
   backfillSince?: string;
@@ -139,7 +188,7 @@ function gmailConnectUrl(input: {
 }): string {
   const url = new URL("/integrations/gmail/connect", input.syncEngineUrl);
   url.searchParams.set("workspace_id", input.workspaceId);
-  if (input.clusterOrgId) url.searchParams.set("cluster_org_id", input.clusterOrgId);
+  if (input.orgId) url.searchParams.set("org_id", input.orgId);
   url.searchParams.set("workspace_name", input.workspaceName || "Agent CRM workspace");
   if (input.backfillDays) url.searchParams.set("backfill_days", String(input.backfillDays));
   if (input.backfillSince) url.searchParams.set("backfill_since", input.backfillSince);

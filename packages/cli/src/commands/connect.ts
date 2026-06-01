@@ -6,9 +6,12 @@ import { fail, isJson, ok, setJsonMode } from "../output/json.js";
 import {
   type CloudIntegrationProviderStatus,
   DEFAULT_SYNC_ENGINE_URL,
+  appendBrowserAuthHandoff,
   connectCloudGranola,
+  createBrowserAuthHandoff,
   ensureCloudWorkspaceMetadataForWorkspace,
   fetchCloudIntegrationStatus,
+  readCloudSessionContext,
   registerCloudWorkspace,
 } from "../lib/cloud-workspace.js";
 
@@ -22,6 +25,7 @@ const CONNECTED_PROVIDER_ACCOUNT_STATUSES = new Set([
 
 type LinkedinConnectOpts = {
   orgId?: string;
+  open?: boolean;
   status?: boolean;
 };
 
@@ -44,7 +48,8 @@ export function registerConnect(program: Command): void {
   connectCmd
     .command("linkedin")
     .description("connect LinkedIn through Agent CRM's hosted sync engine")
-    .option("--org-id <org-id>", "Cluster organization id for hosted LinkedIn sync")
+    .option("--org-id <org-id>", "organization id for hosted LinkedIn sync")
+    .option("--no-open", "print the hosted connect URL without opening it in a browser")
     .option("--status", "show LinkedIn connection status without starting a new connect flow")
     .action(async (opts: LinkedinConnectOpts) => {
       const root = program.opts() as { workspace?: string; json?: boolean };
@@ -69,9 +74,12 @@ export function registerConnect(program: Command): void {
           if (result.connected) {
             process.stdout.write(`${result.message}\n`);
           } else {
+            if (opts.open !== false) openInBrowser(result.auth_url);
             process.stdout.write(
               [
-                "Open this URL to connect LinkedIn:",
+                opts.open === false
+                  ? "Open this URL to connect LinkedIn:"
+                  : "Opening browser to connect LinkedIn. If it doesn't open, paste this URL:",
                 result.auth_url,
                 "",
                 "After login, LinkedIn sync runs in the background through Agent CRM's hosted sync engine.",
@@ -158,6 +166,7 @@ type LinkedinConnectResult = {
   connected: false;
   auth_url: string;
   workspace_id: string;
+  org_id: string | null;
   cluster_org_id: string | null;
   sync_engine_url: string;
   linkedin: CliProviderStatus;
@@ -165,19 +174,62 @@ type LinkedinConnectResult = {
   connected: true;
   message: string;
   workspace_id: string;
+  org_id: string | null;
   cluster_org_id: string | null;
   sync_engine_url: string;
   linkedin: CliProviderStatus;
 };
 
 async function runConnectLinkedin(opts: CommandWorkspaceOpts & { orgId?: string }): Promise<LinkedinConnectResult> {
-  const workspaceFile = resolveWorkspacePath(opts.workspace);
   const workspaceName = workspaceDisplayName(opts.workspaceName);
+  const cloudSession = readCloudSessionContext();
+  if (cloudSession) {
+    const orgId = cloudSessionOrgId(cloudSession.orgId, opts.orgId);
+    const status = await fetchCloudIntegrationStatus({
+      syncEngineUrl: cloudSession.syncEngineUrl,
+      workspaceId: cloudSession.workspaceId,
+      sessionToken: cloudSession.desktopSessionToken,
+    });
+    const linkedin = toCliProviderStatus(status.linkedin, {
+      requireActiveAccount: true,
+    });
+    if (linkedin.connected) {
+      return {
+        connected: true,
+        message: linkedinAlreadyConnectedMessage(linkedin),
+        workspace_id: cloudSession.workspaceId,
+        org_id: orgId,
+        cluster_org_id: orgId,
+        sync_engine_url: cloudSession.syncEngineUrl,
+        linkedin,
+      };
+    }
+    const handoff = await createBrowserAuthHandoff({
+      syncEngineUrl: cloudSession.syncEngineUrl,
+      desktopSessionToken: cloudSession.desktopSessionToken,
+    });
+    return {
+      connected: false,
+      auth_url: appendBrowserAuthHandoff(linkedinConnectUrl({
+        syncEngineUrl: cloudSession.syncEngineUrl,
+        workspaceId: cloudSession.workspaceId,
+        orgId,
+        workspaceName,
+      }), handoff.code),
+      workspace_id: cloudSession.workspaceId,
+      org_id: orgId,
+      cluster_org_id: orgId,
+      sync_engine_url: cloudSession.syncEngineUrl,
+      linkedin,
+    };
+  }
+
+  const workspaceFile = resolveWorkspacePath(opts.workspace);
 
   const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
-    clusterOrgId: opts.orgId ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
+    clusterOrgId: opts.orgId ?? process.env.ACRM_CLOUD_ORG_ID ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
   }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   await registerCloudWorkspace({
@@ -199,6 +251,7 @@ async function runConnectLinkedin(opts: CommandWorkspaceOpts & { orgId?: string 
       connected: true,
       message: linkedinAlreadyConnectedMessage(linkedin),
       workspace_id: metadata.workspaceId,
+      org_id: metadata.clusterOrgId ?? null,
       cluster_org_id: metadata.clusterOrgId ?? null,
       sync_engine_url: syncEngineUrl,
       linkedin,
@@ -209,27 +262,56 @@ async function runConnectLinkedin(opts: CommandWorkspaceOpts & { orgId?: string 
     auth_url: linkedinConnectUrl({
       syncEngineUrl,
       workspaceId: metadata.workspaceId,
-      clusterOrgId: metadata.clusterOrgId,
+      orgId: metadata.clusterOrgId,
       workspaceName,
     }),
     workspace_id: metadata.workspaceId,
+    org_id: metadata.clusterOrgId ?? null,
     cluster_org_id: metadata.clusterOrgId ?? null,
     sync_engine_url: syncEngineUrl,
     linkedin,
   };
 }
 
+function cloudSessionOrgId(sessionOrgId: string, requestedOrgId?: string): string {
+  if (requestedOrgId && requestedOrgId !== sessionOrgId) {
+    throw new AcrmError(
+      `--org-id ${requestedOrgId} does not match the active desktop session org ${sessionOrgId}`,
+      ERR.INVALID_INPUT,
+    );
+  }
+  return sessionOrgId;
+}
+
 async function runConnectLinkedinStatus(opts: CommandWorkspaceOpts): Promise<{
   workspace_id: string;
+  org_id?: string | null;
   sync_engine_url: string;
   linkedin: CliProviderStatus;
 }> {
+  const cloudSession = readCloudSessionContext();
+  if (cloudSession) {
+    const status = await fetchCloudIntegrationStatus({
+      syncEngineUrl: cloudSession.syncEngineUrl,
+      workspaceId: cloudSession.workspaceId,
+      sessionToken: cloudSession.desktopSessionToken,
+    });
+    return {
+      workspace_id: cloudSession.workspaceId,
+      org_id: cloudSession.orgId,
+      sync_engine_url: cloudSession.syncEngineUrl,
+      linkedin: toCliProviderStatus(status.linkedin, {
+        requireActiveAccount: true,
+      }),
+    };
+  }
+
   const workspaceFile = resolveWorkspacePath(opts.workspace);
 
   const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
-    clusterOrgId: process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
+    clusterOrgId: process.env.ACRM_CLOUD_ORG_ID ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
   }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   const status = await fetchCloudIntegrationStatus({
@@ -239,6 +321,7 @@ async function runConnectLinkedinStatus(opts: CommandWorkspaceOpts): Promise<{
   });
   return {
     workspace_id: metadata.workspaceId,
+    org_id: metadata.clusterOrgId ?? null,
     sync_engine_url: syncEngineUrl,
     linkedin: toCliProviderStatus(status.linkedin, {
       requireActiveAccount: true,
@@ -249,12 +332,12 @@ async function runConnectLinkedinStatus(opts: CommandWorkspaceOpts): Promise<{
 function linkedinConnectUrl(input: {
   syncEngineUrl: string;
   workspaceId: string;
-  clusterOrgId?: string;
+  orgId?: string;
   workspaceName: string;
 }): string {
   const url = new URL("/integrations/linkedin/connect", input.syncEngineUrl);
   url.searchParams.set("workspace_id", input.workspaceId);
-  if (input.clusterOrgId) url.searchParams.set("cluster_org_id", input.clusterOrgId);
+  if (input.orgId) url.searchParams.set("org_id", input.orgId);
   url.searchParams.set("workspace_name", input.workspaceName || "Agent CRM workspace");
   return url.toString();
 }
@@ -331,7 +414,7 @@ async function runConnectGranolaStatus(opts: CommandWorkspaceOpts): Promise<{
   const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
-    clusterOrgId: process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
+    clusterOrgId: process.env.ACRM_CLOUD_ORG_ID ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
   }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   const status = await fetchCloudIntegrationStatus({
