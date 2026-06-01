@@ -189,7 +189,6 @@ describe("importGoogleContacts", () => {
 
       expect(result.workspace_id).toBe("workspace-1");
       expect(result.org_id).toBe("org-1");
-      expect(result.cluster_org_id).toBe("org-1");
       expect(result.sync_engine_url).toBe("https://sync.example.com");
       expect(authUrl.origin + authUrl.pathname).toBe("https://sync.example.com/integrations/gmail/connect");
       expect(authUrl.searchParams.get("workspace_id")).toBe("workspace-1");

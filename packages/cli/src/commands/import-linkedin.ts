@@ -161,7 +161,7 @@ async function runImportLinkedinNetwork(opts: { workspace?: string; db?: AcrmDat
   const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
-    clusterOrgId: process.env.ACRM_CLOUD_ORG_ID ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
+    orgId: process.env.ACRM_CLOUD_ORG_ID,
   }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   const { relations } = await fetchCloudLinkedinRelationsExport({
@@ -291,7 +291,7 @@ async function runSyncLinkedin(opts: { workspace?: string; db?: AcrmDatabase }):
   const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
     workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
     clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
-    clusterOrgId: process.env.ACRM_CLOUD_ORG_ID ?? process.env.ACRM_CLOUD_CLUSTER_ORG_ID,
+    orgId: process.env.ACRM_CLOUD_ORG_ID,
   }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
   const batch = await fetchCloudCommunicationExport({

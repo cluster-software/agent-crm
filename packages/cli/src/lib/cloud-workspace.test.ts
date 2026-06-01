@@ -34,13 +34,13 @@ describe("cloud workspace metadata", () => {
       const first = await ensureCloudWorkspaceMetadata(db, {
         workspaceId: "workspace-1",
         clientToken: "client-token-1",
-        clusterOrgId: "org-1",
+        orgId: "org-1",
       });
       const second = await ensureCloudWorkspaceMetadata(db);
-      const raw = await exec(db, "SELECT value FROM acrm_metadata WHERE key = $1", ["cloud.cluster_org_id"]);
+      const raw = await exec(db, "SELECT value FROM acrm_metadata WHERE key = $1", ["cloud.org_id"]);
 
-      expect(first.clusterOrgId).toBe("org-1");
-      expect(second.clusterOrgId).toBe("org-1");
+      expect(first.orgId).toBe("org-1");
+      expect(second.orgId).toBe("org-1");
       expect(raw.rows[0]?.value).toBe("org-1");
     } finally {
       await db.close();
@@ -74,7 +74,7 @@ describe("cloud workspace metadata", () => {
       await ensureCloudWorkspaceMetadata(db, {
         workspaceId: "workspace-1",
         clientToken: "client-token-1",
-        clusterOrgId: "org-1",
+        orgId: "org-1",
         localWorkspaceId: "local-1",
       });
       const raw = await exec(db, "SELECT value FROM acrm_metadata WHERE key = $1", ["cloud.workspace"]);
@@ -82,7 +82,7 @@ describe("cloud workspace metadata", () => {
       expect(JSON.parse(String(raw.rows[0]?.value))).toMatchObject({
         workspaceId: "workspace-1",
         clientToken: "client-token-1",
-        clusterOrgId: "org-1",
+        orgId: "org-1",
         localWorkspaceId: "local-1",
       });
     } finally {
@@ -137,7 +137,7 @@ describe("cloud workspace metadata", () => {
         `${JSON.stringify({
           workspaceId: "workspace-legacy",
           clientToken: "client-token-legacy",
-          clusterOrgId: "org-legacy",
+          orgId: "org-legacy",
         })}\n`,
         "utf8",
       );
@@ -151,11 +151,11 @@ describe("cloud workspace metadata", () => {
 
       expect(metadata.workspaceId).toBe("workspace-legacy");
       expect(metadata.clientToken).toBe("client-token-legacy");
-      expect(metadata.clusterOrgId).toBe("org-legacy");
+      expect(metadata.orgId).toBe("org-legacy");
       expect(JSON.parse(String(raw.rows[0]?.value))).toMatchObject({
         workspaceId: "workspace-legacy",
         clientToken: "client-token-legacy",
-        clusterOrgId: "org-legacy",
+        orgId: "org-legacy",
       });
     } finally {
       rmSync(legacyDir, { recursive: true, force: true });
@@ -200,14 +200,14 @@ describe("cloud workspace metadata", () => {
       await ensureCloudWorkspaceMetadata(db, {
         workspaceId: "workspace-db",
         clientToken: "client-token-db",
-        clusterOrgId: "org-db",
+        orgId: "org-db",
       });
       writeFileSync(
         join(legacyDir, ".agent-crm-cloud.json"),
         `${JSON.stringify({
           workspaceId: "workspace-legacy",
           clientToken: "client-token-legacy",
-          clusterOrgId: "org-legacy",
+          orgId: "org-legacy",
         })}\n`,
         "utf8",
       );
@@ -220,7 +220,7 @@ describe("cloud workspace metadata", () => {
 
       expect(metadata.workspaceId).toBe("workspace-db");
       expect(metadata.clientToken).toBe("client-token-db");
-      expect(metadata.clusterOrgId).toBe("org-db");
+      expect(metadata.orgId).toBe("org-db");
     } finally {
       rmSync(legacyDir, { recursive: true, force: true });
       await db.close();
@@ -238,12 +238,12 @@ describe("cloud workspace metadata", () => {
       const metadata = await ensureCloudWorkspaceMetadata(db, {
         workspaceId: "new-workspace",
         clientToken: "new-token",
-        clusterOrgId: "org-2",
+        orgId: "org-2",
       });
 
       expect(metadata.workspaceId).toBe("workspace-1");
       expect(metadata.clientToken).toBe("client-token-1");
-      expect(metadata.clusterOrgId).toBe("org-2");
+      expect(metadata.orgId).toBe("org-2");
       expect(metadata.localWorkspaceId).toBe("local-1");
     } finally {
       await db.close();

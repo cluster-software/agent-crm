@@ -37,7 +37,6 @@ const CLOUD_METADATA_KEYS = {
   workspaceId: "cloud.workspace_id",
   clientToken: "cloud.client_token",
   orgId: "cloud.org_id",
-  clusterOrgId: "cloud.cluster_org_id",
   localWorkspaceId: "cloud.local_workspace_id",
   createdAt: "cloud.created_at",
 } as const;
@@ -46,7 +45,6 @@ export type CloudMetadata = {
   workspaceId?: string;
   clientToken?: string;
   orgId?: string;
-  clusterOrgId?: string;
   localWorkspaceId?: string;
   createdAt?: string;
 };
@@ -88,7 +86,7 @@ export type CloudIntegrationStatus = {
 export function readCloudSessionContext(env: NodeJS.ProcessEnv = process.env): CloudSessionContext | null {
   const syncEngineUrl = env.ACRM_SYNC_ENGINE_URL?.trim() || DEFAULT_SYNC_ENGINE_URL;
   const workspaceId = env.ACRM_CLOUD_WORKSPACE_ID?.trim();
-  const orgId = env.ACRM_CLOUD_ORG_ID?.trim() || env.ACRM_CLOUD_CLUSTER_ORG_ID?.trim();
+  const orgId = env.ACRM_CLOUD_ORG_ID?.trim();
   const desktopSessionToken = env.ACRM_DESKTOP_SESSION_TOKEN?.trim();
   if (!workspaceId || !orgId || !desktopSessionToken) return null;
   return {
@@ -104,10 +102,10 @@ export function ensureCloudWorkspaceMetadata(
   preferred: {
     workspaceId?: string;
     clientToken?: string;
-    clusterOrgId?: string;
+    orgId?: string;
     localWorkspaceId?: string;
   } = {},
-): Promise<{ workspaceId: string; clientToken: string; clusterOrgId?: string; localWorkspaceId?: string }> {
+): Promise<{ workspaceId: string; clientToken: string; orgId?: string; localWorkspaceId?: string }> {
   return ensureCloudWorkspaceMetadataInDatabase(db, preferred);
 }
 
@@ -116,25 +114,22 @@ export async function ensureCloudWorkspaceMetadataInDatabase(
   preferred: {
     workspaceId?: string;
     clientToken?: string;
-    clusterOrgId?: string;
+    orgId?: string;
     localWorkspaceId?: string;
   } = {},
   fallback: {
     workspaceId?: string;
     clientToken?: string;
-    clusterOrgId?: string;
+    orgId?: string;
   } = {},
-): Promise<{ workspaceId: string; clientToken: string; clusterOrgId?: string; localWorkspaceId?: string }> {
+): Promise<{ workspaceId: string; clientToken: string; orgId?: string; localWorkspaceId?: string }> {
   return await db.transaction(async (tx) => {
     const existing = await readCloudMetadata(tx);
     const initial = {
       workspaceId: existing.workspaceId || preferred.workspaceId || fallback.workspaceId || randomUUID(),
       clientToken: existing.clientToken || preferred.clientToken || fallback.clientToken || randomUUID(),
-      ...(preferred.clusterOrgId || existing.clusterOrgId || fallback.clusterOrgId
-        ? { clusterOrgId: preferred.clusterOrgId || existing.clusterOrgId || fallback.clusterOrgId }
-        : {}),
-      ...(preferred.clusterOrgId || existing.orgId || fallback.clusterOrgId
-        ? { orgId: preferred.clusterOrgId || existing.orgId || fallback.clusterOrgId }
+      ...(preferred.orgId || existing.orgId || fallback.orgId
+        ? { orgId: preferred.orgId || existing.orgId || fallback.orgId }
         : {}),
       ...(preferred.localWorkspaceId || existing.localWorkspaceId
         ? { localWorkspaceId: preferred.localWorkspaceId || existing.localWorkspaceId }
@@ -147,15 +142,14 @@ export async function ensureCloudWorkspaceMetadataInDatabase(
     const canonical = await readCloudMetadata(tx);
     const workspaceId = canonical.workspaceId ?? initial.workspaceId;
     const clientToken = canonical.clientToken ?? initial.clientToken;
-    const clusterOrgId = preferred.clusterOrgId || canonical.orgId || canonical.clusterOrgId || fallback.clusterOrgId;
+    const orgId = preferred.orgId || canonical.orgId || fallback.orgId;
     const nextLocalWorkspaceId = preferred.localWorkspaceId || canonical.localWorkspaceId;
     const createdAt = canonical.createdAt ?? initial.createdAt;
 
     await writeCloudMetadata(tx, {
       workspaceId,
       clientToken,
-      ...(clusterOrgId ? { orgId: clusterOrgId } : {}),
-      ...(clusterOrgId ? { clusterOrgId } : {}),
+      ...(orgId ? { orgId } : {}),
       ...(nextLocalWorkspaceId ? { localWorkspaceId: nextLocalWorkspaceId } : {}),
       createdAt,
     });
@@ -163,7 +157,7 @@ export async function ensureCloudWorkspaceMetadataInDatabase(
     return {
       workspaceId,
       clientToken,
-      ...(clusterOrgId ? { clusterOrgId } : {}),
+      ...(orgId ? { orgId } : {}),
       ...(nextLocalWorkspaceId ? { localWorkspaceId: nextLocalWorkspaceId } : {}),
     };
   });
@@ -171,9 +165,9 @@ export async function ensureCloudWorkspaceMetadataInDatabase(
 
 export async function ensureCloudWorkspaceMetadataForWorkspace(
   workspacePath: string,
-  preferred: { workspaceId?: string; clientToken?: string; clusterOrgId?: string } = {},
+  preferred: { workspaceId?: string; clientToken?: string; orgId?: string } = {},
   options: { db?: AcrmDatabase; legacyMetadataDir?: string } = {},
-): Promise<{ workspaceId: string; clientToken: string; clusterOrgId?: string; localWorkspaceId?: string }> {
+): Promise<{ workspaceId: string; clientToken: string; orgId?: string; localWorkspaceId?: string }> {
   const workspace = options.db
     ? await Workspace.open({ db: options.db })
     : await Workspace.open(workspacePath);
@@ -185,7 +179,7 @@ export async function ensureCloudWorkspaceMetadataForWorkspace(
     return await ensureCloudWorkspaceMetadataInDatabase(workspace.db, {
       workspaceId: preferred.workspaceId,
       clientToken: preferred.clientToken,
-      clusterOrgId: preferred.clusterOrgId,
+      orgId: preferred.orgId,
       localWorkspaceId,
     }, legacy);
   } finally {
@@ -217,7 +211,6 @@ function metadataFromValues(values: Map<string, string>): CloudMetadata {
     ...(values.get(CLOUD_METADATA_KEYS.workspaceId) ? { workspaceId: values.get(CLOUD_METADATA_KEYS.workspaceId) } : {}),
     ...(values.get(CLOUD_METADATA_KEYS.clientToken) ? { clientToken: values.get(CLOUD_METADATA_KEYS.clientToken) } : {}),
     ...(values.get(CLOUD_METADATA_KEYS.orgId) ? { orgId: values.get(CLOUD_METADATA_KEYS.orgId) } : {}),
-    ...(values.get(CLOUD_METADATA_KEYS.clusterOrgId) ? { clusterOrgId: values.get(CLOUD_METADATA_KEYS.clusterOrgId) } : {}),
     ...(values.get(CLOUD_METADATA_KEYS.localWorkspaceId) ? { localWorkspaceId: values.get(CLOUD_METADATA_KEYS.localWorkspaceId) } : {}),
     ...(values.get(CLOUD_METADATA_KEYS.createdAt) ? { createdAt: values.get(CLOUD_METADATA_KEYS.createdAt) } : {}),
   };
@@ -248,8 +241,7 @@ async function writeCloudMetadata(db: AcrmDatabase, metadata: Required<Pick<Clou
   const entries: Array<[string, string | undefined]> = [
     [CLOUD_METADATA_KEYS.workspaceId, metadata.workspaceId],
     [CLOUD_METADATA_KEYS.clientToken, metadata.clientToken],
-    [CLOUD_METADATA_KEYS.orgId, metadata.orgId ?? metadata.clusterOrgId],
-    [CLOUD_METADATA_KEYS.clusterOrgId, metadata.clusterOrgId],
+    [CLOUD_METADATA_KEYS.orgId, metadata.orgId],
     [CLOUD_METADATA_KEYS.localWorkspaceId, metadata.localWorkspaceId],
     [CLOUD_METADATA_KEYS.createdAt, metadata.createdAt],
   ];
@@ -293,7 +285,6 @@ function cleanCloudMetadata(parsed: Record<string, unknown>): CloudMetadata {
     ...(typeof parsed.workspaceId === "string" && parsed.workspaceId ? { workspaceId: parsed.workspaceId } : {}),
     ...(typeof parsed.clientToken === "string" && parsed.clientToken ? { clientToken: parsed.clientToken } : {}),
     ...(typeof parsed.orgId === "string" && parsed.orgId ? { orgId: parsed.orgId } : {}),
-    ...(typeof parsed.clusterOrgId === "string" && parsed.clusterOrgId ? { clusterOrgId: parsed.clusterOrgId } : {}),
     ...(typeof parsed.localWorkspaceId === "string" && parsed.localWorkspaceId ? { localWorkspaceId: parsed.localWorkspaceId } : {}),
     ...(typeof parsed.createdAt === "string" && parsed.createdAt ? { createdAt: parsed.createdAt } : {}),
   };
