@@ -133,12 +133,18 @@ function connectionOptionsFromString(
 function normalizeConnectionOptions(
   options: PostgresConnectionOptions,
 ): PostgresConnectionOptions {
-  if (options.enableChannelBinding !== undefined) return options;
+  const normalized: PostgresConnectionOptions = {
+    ...options,
+    connectionString: normalizeConnectionString(options.connectionString),
+  };
   const channelBinding = channelBindingMode(options.connectionString);
-  if (channelBinding === "require" || channelBinding === "prefer") {
-    return { ...options, enableChannelBinding: true };
+  if (
+    options.enableChannelBinding === undefined &&
+    (channelBinding === "require" || channelBinding === "prefer")
+  ) {
+    return { ...normalized, enableChannelBinding: true };
   }
-  return options;
+  return normalized;
 }
 
 function channelBindingMode(connectionString: string): string | null {
@@ -150,4 +156,20 @@ function channelBindingMode(connectionString: string): string | null {
   } catch {
     return null;
   }
+}
+
+function normalizeConnectionString(connectionString: string): string {
+  try {
+    const parsed = new URL(connectionString);
+    const sslmode = parsed.searchParams.get("sslmode")?.toLowerCase();
+    if (sslmode === "prefer" || sslmode === "require" || sslmode === "verify-ca") {
+      // node-postgres 8 treats these aliases as verify-full and warns. Pass the
+      // explicit mode to preserve today's behavior without emitting the warning.
+      parsed.searchParams.set("sslmode", "verify-full");
+      return parsed.toString();
+    }
+  } catch {
+    return connectionString;
+  }
+  return connectionString;
 }

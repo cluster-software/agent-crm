@@ -42,6 +42,35 @@ describe("PostgresDatabase", () => {
     }
   });
 
+  it("canonicalizes sslmode aliases that node-postgres warns about", async () => {
+    const required = PostgresDatabase.connect(
+      "postgresql://user:pass@example.com/db?sslmode=require&channel_binding=require",
+    );
+    const preferred = PostgresDatabase.connect({
+      connectionString: "postgresql://user:pass@example.com/db?sslmode=prefer",
+    });
+    const verifyCa = PostgresDatabase.connect(
+      "postgresql://user:pass@example.com/db?sslmode=verify-ca",
+    );
+    const disabled = PostgresDatabase.connect(
+      "postgresql://user:pass@example.com/db?sslmode=disable",
+    );
+    try {
+      expect(poolOptions(required).connectionString).toContain("sslmode=verify-full");
+      expect(poolOptions(required).enableChannelBinding).toBe(true);
+      expect(poolOptions(preferred).connectionString).toContain("sslmode=verify-full");
+      expect(poolOptions(verifyCa).connectionString).toContain("sslmode=verify-full");
+      expect(poolOptions(disabled).connectionString).toContain("sslmode=disable");
+    } finally {
+      await Promise.all([
+        required.close(),
+        preferred.close(),
+        verifyCa.close(),
+        disabled.close(),
+      ]);
+    }
+  });
+
   it("rolls back failed pool-backed transactions", async () => {
     const pool = new TransactionalPool();
     const db = PostgresDatabase.fromQueryable(pool);
@@ -145,9 +174,12 @@ async function expectRollback(db: AcrmDatabase): Promise<void> {
   expect(result.rows).toEqual([]);
 }
 
-function poolOptions(db: PostgresDatabase): { enableChannelBinding?: boolean } {
+function poolOptions(db: PostgresDatabase): {
+  connectionString?: string;
+  enableChannelBinding?: boolean;
+} {
   return (db as unknown as {
-    queryable: { options: { enableChannelBinding?: boolean } };
+    queryable: { options: { connectionString?: string; enableChannelBinding?: boolean } };
   }).queryable.options;
 }
 
