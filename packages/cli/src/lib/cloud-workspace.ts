@@ -36,6 +36,7 @@ const CLOUD_METADATA_KEYS = {
   bundle: "cloud.workspace",
   workspaceId: "cloud.workspace_id",
   clientToken: "cloud.client_token",
+  orgId: "cloud.org_id",
   clusterOrgId: "cloud.cluster_org_id",
   localWorkspaceId: "cloud.local_workspace_id",
   createdAt: "cloud.created_at",
@@ -44,9 +45,17 @@ const CLOUD_METADATA_KEYS = {
 export type CloudMetadata = {
   workspaceId?: string;
   clientToken?: string;
+  orgId?: string;
   clusterOrgId?: string;
   localWorkspaceId?: string;
   createdAt?: string;
+};
+
+export type CloudSessionContext = {
+  syncEngineUrl: string;
+  workspaceId: string;
+  orgId: string;
+  desktopSessionToken: string;
 };
 
 export type CloudIntegrationAccountStatus = {
@@ -75,6 +84,20 @@ export type CloudIntegrationStatus = {
   linkedin: CloudIntegrationProviderStatus;
   granola: CloudIntegrationProviderStatus;
 };
+
+export function readCloudSessionContext(env: NodeJS.ProcessEnv = process.env): CloudSessionContext | null {
+  const syncEngineUrl = env.ACRM_SYNC_ENGINE_URL?.trim() || DEFAULT_SYNC_ENGINE_URL;
+  const workspaceId = env.ACRM_CLOUD_WORKSPACE_ID?.trim();
+  const orgId = env.ACRM_CLOUD_ORG_ID?.trim() || env.ACRM_CLOUD_CLUSTER_ORG_ID?.trim();
+  const desktopSessionToken = env.ACRM_DESKTOP_SESSION_TOKEN?.trim();
+  if (!workspaceId || !orgId || !desktopSessionToken) return null;
+  return {
+    syncEngineUrl,
+    workspaceId,
+    orgId,
+    desktopSessionToken,
+  };
+}
 
 export function ensureCloudWorkspaceMetadata(
   db: AcrmDatabase,
@@ -110,6 +133,9 @@ export async function ensureCloudWorkspaceMetadataInDatabase(
       ...(preferred.clusterOrgId || existing.clusterOrgId || fallback.clusterOrgId
         ? { clusterOrgId: preferred.clusterOrgId || existing.clusterOrgId || fallback.clusterOrgId }
         : {}),
+      ...(preferred.clusterOrgId || existing.orgId || fallback.clusterOrgId
+        ? { orgId: preferred.clusterOrgId || existing.orgId || fallback.clusterOrgId }
+        : {}),
       ...(preferred.localWorkspaceId || existing.localWorkspaceId
         ? { localWorkspaceId: preferred.localWorkspaceId || existing.localWorkspaceId }
         : {}),
@@ -121,13 +147,14 @@ export async function ensureCloudWorkspaceMetadataInDatabase(
     const canonical = await readCloudMetadata(tx);
     const workspaceId = canonical.workspaceId ?? initial.workspaceId;
     const clientToken = canonical.clientToken ?? initial.clientToken;
-    const clusterOrgId = preferred.clusterOrgId || canonical.clusterOrgId || fallback.clusterOrgId;
+    const clusterOrgId = preferred.clusterOrgId || canonical.orgId || canonical.clusterOrgId || fallback.clusterOrgId;
     const nextLocalWorkspaceId = preferred.localWorkspaceId || canonical.localWorkspaceId;
     const createdAt = canonical.createdAt ?? initial.createdAt;
 
     await writeCloudMetadata(tx, {
       workspaceId,
       clientToken,
+      ...(clusterOrgId ? { orgId: clusterOrgId } : {}),
       ...(clusterOrgId ? { clusterOrgId } : {}),
       ...(nextLocalWorkspaceId ? { localWorkspaceId: nextLocalWorkspaceId } : {}),
       createdAt,
@@ -189,6 +216,7 @@ function metadataFromValues(values: Map<string, string>): CloudMetadata {
   return {
     ...(values.get(CLOUD_METADATA_KEYS.workspaceId) ? { workspaceId: values.get(CLOUD_METADATA_KEYS.workspaceId) } : {}),
     ...(values.get(CLOUD_METADATA_KEYS.clientToken) ? { clientToken: values.get(CLOUD_METADATA_KEYS.clientToken) } : {}),
+    ...(values.get(CLOUD_METADATA_KEYS.orgId) ? { orgId: values.get(CLOUD_METADATA_KEYS.orgId) } : {}),
     ...(values.get(CLOUD_METADATA_KEYS.clusterOrgId) ? { clusterOrgId: values.get(CLOUD_METADATA_KEYS.clusterOrgId) } : {}),
     ...(values.get(CLOUD_METADATA_KEYS.localWorkspaceId) ? { localWorkspaceId: values.get(CLOUD_METADATA_KEYS.localWorkspaceId) } : {}),
     ...(values.get(CLOUD_METADATA_KEYS.createdAt) ? { createdAt: values.get(CLOUD_METADATA_KEYS.createdAt) } : {}),
@@ -220,6 +248,7 @@ async function writeCloudMetadata(db: AcrmDatabase, metadata: Required<Pick<Clou
   const entries: Array<[string, string | undefined]> = [
     [CLOUD_METADATA_KEYS.workspaceId, metadata.workspaceId],
     [CLOUD_METADATA_KEYS.clientToken, metadata.clientToken],
+    [CLOUD_METADATA_KEYS.orgId, metadata.orgId ?? metadata.clusterOrgId],
     [CLOUD_METADATA_KEYS.clusterOrgId, metadata.clusterOrgId],
     [CLOUD_METADATA_KEYS.localWorkspaceId, metadata.localWorkspaceId],
     [CLOUD_METADATA_KEYS.createdAt, metadata.createdAt],
@@ -263,6 +292,7 @@ function cleanCloudMetadata(parsed: Record<string, unknown>): CloudMetadata {
   return {
     ...(typeof parsed.workspaceId === "string" && parsed.workspaceId ? { workspaceId: parsed.workspaceId } : {}),
     ...(typeof parsed.clientToken === "string" && parsed.clientToken ? { clientToken: parsed.clientToken } : {}),
+    ...(typeof parsed.orgId === "string" && parsed.orgId ? { orgId: parsed.orgId } : {}),
     ...(typeof parsed.clusterOrgId === "string" && parsed.clusterOrgId ? { clusterOrgId: parsed.clusterOrgId } : {}),
     ...(typeof parsed.localWorkspaceId === "string" && parsed.localWorkspaceId ? { localWorkspaceId: parsed.localWorkspaceId } : {}),
     ...(typeof parsed.createdAt === "string" && parsed.createdAt ? { createdAt: parsed.createdAt } : {}),
@@ -295,10 +325,46 @@ export async function registerCloudWorkspace(input: {
   }
 }
 
+export async function createBrowserAuthHandoff(input: {
+  syncEngineUrl: string;
+  desktopSessionToken: string;
+}): Promise<{ code: string; expires_at: string }> {
+  const response = await fetch(new URL("/auth/browser-handoffs", input.syncEngineUrl), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${input.desktopSessionToken}`,
+      accept: "application/json",
+    },
+  });
+  const payload = await response.json().catch(() => undefined) as
+    | { ok?: unknown; code?: unknown; expires_at?: unknown; error?: unknown }
+    | undefined;
+  if (!response.ok || payload?.ok !== true || typeof payload.code !== "string") {
+    throw new AcrmError(
+      "failed to create browser auth handoff",
+      ERR.IMPORT,
+      payloadError(payload) ?? `sync engine returned HTTP ${response.status}`,
+    );
+  }
+  return {
+    code: payload.code,
+    expires_at: typeof payload.expires_at === "string" ? payload.expires_at : "",
+  };
+}
+
+export function appendBrowserAuthHandoff(url: string, code: string): string {
+  const parsed = new URL(url);
+  const hash = new URLSearchParams(parsed.hash.replace(/^#/, ""));
+  hash.set("auth_handoff", code);
+  parsed.hash = hash.toString();
+  return parsed.toString();
+}
+
 export async function fetchCloudCommunicationExport(input: {
   syncEngineUrl: string;
   workspaceId: string;
-  clientToken: string;
+  clientToken?: string;
+  sessionToken?: string;
   provider: "gmail" | "linkedin";
 }): Promise<CommunicationImportBatch> {
   const url = new URL(
@@ -307,7 +373,7 @@ export async function fetchCloudCommunicationExport(input: {
   );
   const response = await fetch(url.toString(), {
     headers: {
-      authorization: `Bearer ${input.clientToken}`,
+      authorization: `Bearer ${cloudAuthToken(input)}`,
     },
   });
   const payload = await response.json().catch(() => undefined) as
@@ -326,7 +392,8 @@ export async function fetchCloudCommunicationExport(input: {
 export async function fetchCloudIntegrationStatus(input: {
   syncEngineUrl: string;
   workspaceId: string;
-  clientToken: string;
+  clientToken?: string;
+  sessionToken?: string;
 }): Promise<CloudIntegrationStatus> {
   const url = new URL(
     `/workspaces/${encodeURIComponent(input.workspaceId)}/integrations/status`,
@@ -334,7 +401,7 @@ export async function fetchCloudIntegrationStatus(input: {
   );
   const response = await fetch(url.toString(), {
     headers: {
-      authorization: `Bearer ${input.clientToken}`,
+      authorization: `Bearer ${cloudAuthToken(input)}`,
     },
   });
   const payload = await response.json().catch(() => undefined) as
@@ -484,7 +551,8 @@ export async function startCloudGranolaBackfill(input: {
 export async function fetchCloudLinkedinRelationsExport(input: {
   syncEngineUrl: string;
   workspaceId: string;
-  clientToken: string;
+  clientToken?: string;
+  sessionToken?: string;
   cutoffDate?: string;
   enrichCompanies?: boolean;
 }): Promise<{ relations: LinkedinRelation[]; company_enrichment?: unknown }> {
@@ -496,7 +564,7 @@ export async function fetchCloudLinkedinRelationsExport(input: {
   if (input.enrichCompanies) url.searchParams.set("enrich_companies", "1");
   const response = await fetch(url.toString(), {
     headers: {
-      authorization: `Bearer ${input.clientToken}`,
+      authorization: `Bearer ${cloudAuthToken(input)}`,
     },
   });
   const payload = await response.json().catch(() => undefined) as
@@ -533,7 +601,8 @@ export async function fetchCloudLinkedinRelationsExport(input: {
 export async function startCloudLinkedinMessageBackfill(input: {
   syncEngineUrl: string;
   workspaceId: string;
-  clientToken: string;
+  clientToken?: string;
+  sessionToken?: string;
   scope?: CloudLinkedinMessageBackfillScope;
 }): Promise<{ started: number; integration_account_ids: string[]; scoped?: boolean }> {
   const url = new URL(
@@ -544,7 +613,7 @@ export async function startCloudLinkedinMessageBackfill(input: {
   const init: RequestInit = {
     method: "POST",
     headers: {
-      authorization: `Bearer ${input.clientToken}`,
+      authorization: `Bearer ${cloudAuthToken(input)}`,
       ...(body ? { "content-type": "application/json" } : {}),
     },
   };
@@ -679,4 +748,15 @@ function payloadError(payload: { error?: unknown } | undefined): string | undefi
     if (typeof message === "string") return message;
   }
   return undefined;
+}
+
+function cloudAuthToken(input: { clientToken?: string; sessionToken?: string }): string {
+  const token = input.sessionToken ?? input.clientToken;
+  if (!token) {
+    throw new AcrmError(
+      "cloud workspace credentials are missing",
+      ERR.INVALID_INPUT,
+    );
+  }
+  return token;
 }
