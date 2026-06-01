@@ -36,42 +36,6 @@ Agent CRM is cloud-first and stores workspace data in **Neon, Supabase, or any P
 - **Plain Postgres.** The schema is normal tables you can inspect and query directly.
 - **Flexible EAV model.** Built-in and customer-specific objects share the same `acrm_object`, `acrm_attribute`, `acrm_record`, and `acrm_value` model.
 
-Set `ACRM_DATABASE_URL`, `NEON_DATABASE_URL`, or `SUPABASE_DATABASE_URL` to point the CLI at a workspace. Use `ACRM_DATABASE_PROVIDER=neon|supabase|postgres` only when the provider cannot be inferred from the URL.
-
-## Quickstart
-
-Install the CLI:
-
-```bash
-npm install -g @agent-crm/cli
-```
-
-Create your first CRM workspace and let Claude rip on it:
-
-```bash
-claude --dangerously-skip-permissions
-```
-
-Initialize the database schema:
-
-```bash
-! acrm init
-```
-
-Then import your CSVs
-
-```bash
-! acrm import csv ./leads.csv
-```
-
-## Why Agent CRM
-- **🧩 Headless:** Ships as a CLI.
-- **⚒️ Skills based:** Claude writes skills against the CLI (transcript ingestion, stale-deal sweeps, weekly reports) as `.md` files.
-- **🧱 Modeled:** uses Attio's data model out of the box — `people`, `companies`, `deals`, `posts`, `transcripts`, and communication records. Typed, related, queryable with plain SQL. Fixed schema = predictable agent edits.
-- **👥 Multiplayer:** workspace state lives in Postgres, so teammates and agents share the same source of truth.
-- **🔌 Pluggable transcript providers:** `transcripts` are vendor-agnostic. Drop a `transcript-provider-<vendor>` skill into `~/.claude/skills/` to plug in Granola, Otter, Fireflies, Fathom, Zoom, manual paste, or anything else.
-
-
 ## Use cases
 
 A grab-bag of jobs Agent CRM handles today. Each is a skill or a CLI command — bring your own, or use the ones we ship.
