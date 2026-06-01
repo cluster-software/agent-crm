@@ -1,6 +1,6 @@
 {
   "name": "@agent-crm/cli",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "The headless CRM for Claude",
   "homepage": "https://github.com/cluster-software/agent-crm#readme",
   "repository": {

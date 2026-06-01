@@ -1,5 +1,11 @@
 # @agent-crm/cli
 
+## 1.0.4
+
+### Patch Changes
+
+- 61f2cd5: Use `org_id` for cloud workspace metadata and desktop cloud-session outputs, removing the legacy `cluster_org_id` fallbacks.
+
 ## 1.0.3
 
 ### Patch Changes
