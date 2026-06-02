@@ -538,24 +538,39 @@ export async function startCloudGranolaBackfill(input: {
   };
 }
 
-export async function fetchCloudLinkedinRelationsExport(input: {
+export async function importCloudLinkedinRelations(input: {
   syncEngineUrl: string;
   workspaceId: string;
   clientToken?: string;
   sessionToken?: string;
   cutoffDate?: string;
   enrichCompanies?: boolean;
-}): Promise<{ relations: LinkedinRelation[]; company_enrichment?: unknown }> {
+}): Promise<{
+  relations: LinkedinRelation[];
+  stats: {
+    relations_seen: number;
+    people_created: number;
+    people_updated: number;
+    companies_created: number;
+    companies_updated: number;
+    relations_skipped_no_key: number;
+  };
+  company_enrichment?: unknown;
+}> {
   const url = new URL(
-    `/workspaces/${encodeURIComponent(input.workspaceId)}/integrations/linkedin/relations/export`,
+    `/workspaces/${encodeURIComponent(input.workspaceId)}/integrations/linkedin/relations/import`,
     input.syncEngineUrl,
   );
-  if (input.cutoffDate) url.searchParams.set("cutoff_date", input.cutoffDate);
-  if (input.enrichCompanies) url.searchParams.set("enrich_companies", "1");
   const response = await fetch(url.toString(), {
+    method: "POST",
     headers: {
       authorization: `Bearer ${cloudAuthToken(input)}`,
+      "content-type": "application/json",
     },
+    body: JSON.stringify({
+      ...(input.cutoffDate ? { cutoff_date: input.cutoffDate } : {}),
+      ...(input.enrichCompanies ? { enrich_companies: true } : {}),
+    }),
   });
   const payload = await response.json().catch(() => undefined) as
     | { ok?: unknown; data?: unknown; error?: unknown; code?: unknown }
@@ -569,21 +584,22 @@ export async function fetchCloudLinkedinRelationsExport(input: {
   }
   if (!response.ok || payload?.ok !== true || !payload.data || typeof payload.data !== "object") {
     throw new AcrmError(
-      "failed to export LinkedIn relations",
+      "failed to import LinkedIn relations",
       ERR.IMPORT,
       payloadError(payload) ?? `sync engine returned HTTP ${response.status}`,
     );
   }
-  const data = payload.data as { relations?: unknown; company_enrichment?: unknown };
-  if (!Array.isArray(data.relations)) {
+  const data = payload.data as { relations?: unknown; stats?: unknown; company_enrichment?: unknown };
+  if (!Array.isArray(data.relations) || !data.stats || typeof data.stats !== "object") {
     throw new AcrmError(
-      "failed to export LinkedIn relations",
+      "failed to import LinkedIn relations",
       ERR.IMPORT,
-      "sync engine response did not include a relations array",
+      "sync engine response did not include relations and stats",
     );
   }
   return {
     relations: data.relations as LinkedinRelation[],
+    stats: parseLinkedinRelationStats(data.stats),
     ...(data.company_enrichment ? { company_enrichment: data.company_enrichment } : {}),
   };
 }
@@ -640,6 +656,25 @@ export type CloudLinkedinMessageBackfillScope = {
   linkedinUrls?: string[];
   publicIdentifiers?: string[];
 };
+
+function parseLinkedinRelationStats(value: unknown): {
+  relations_seen: number;
+  people_created: number;
+  people_updated: number;
+  companies_created: number;
+  companies_updated: number;
+  relations_skipped_no_key: number;
+} {
+  const stats = recordValue(value) ?? {};
+  return {
+    relations_seen: numberValue(stats.relations_seen),
+    people_created: numberValue(stats.people_created),
+    people_updated: numberValue(stats.people_updated),
+    companies_created: numberValue(stats.companies_created),
+    companies_updated: numberValue(stats.companies_updated),
+    relations_skipped_no_key: numberValue(stats.relations_skipped_no_key),
+  };
+}
 
 function parseProviderStatus(value: unknown): CloudIntegrationProviderStatus {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -723,6 +758,10 @@ function isGranolaNotConnected(payload: { error?: unknown; code?: unknown } | un
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
