@@ -73,6 +73,7 @@ Typical flow:
   acrm import post <url>          add a LinkedIn or X **post** by URL — upserts the author as a person and stores the post (use when a user shares a post link they want to track)
   acrm import transcript          import a meeting transcript — use \`--from <provider>\` for the fast path, or pipe JSON via stdin / \`--file\`
   acrm deals pipeline set --stage lead:Lead --stage closed_won:"Closed Won" --stage closed_lost:"Closed Lost"
+  acrm records list companies --search Acme --limit 5  find existing record IDs
   acrm records create deals --field name=... --field stage=...  create a single record
   acrm records update candidates <id> --field stage=screen      advance / edit fields on an existing record
   acrm records dedupe people --keep <id> --discard <id>   collapse two duplicate records into one
