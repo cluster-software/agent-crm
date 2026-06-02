@@ -13,8 +13,17 @@ import {
 } from "@agent-crm/sdk";
 import { openResolvedWorkspace, resolveWorkspacePath } from "../workspace-resolve.js";
 import { fail, isJson, ok, setJsonMode } from "../output/json.js";
+import { readCloudSessionContext, type CloudSessionContext } from "../lib/cloud-workspace.js";
 
 type Prefer = "keep" | "discard" | "interactive";
+
+type RecordsListOpts = {
+  search?: string;
+  limit?: string;
+  cursor?: string;
+  value?: string[];
+  secondaryLabels?: boolean;
+};
 
 type DedupeOpts = {
   keep: string;
@@ -80,6 +89,47 @@ export function registerRecords(program: Command): void {
     .description(
       "operations on records as a group (dedupe duplicates, etc.). Subcommands act on any object — `people`, `companies`, `deals`, `posts`, `transcripts`.",
     );
+
+  records
+    .command("list <object>")
+    .description(
+      "list/search records in the active cloud desktop workspace. Use this to find record IDs before linking deals, people, or companies.",
+    )
+    .option("--search <query>", "search labels and active values")
+    .option("--limit <n>", "maximum records to return (default: 25, max: 250)")
+    .option("--cursor <record_id>", "continue after a previous page cursor")
+    .option("--value <attribute_slug>", "include a specific attribute value; repeatable", collect, [] as string[])
+    .option("--no-secondary-labels", "do not include secondary labels in previews")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  # find a company record id before creating a linked deal
+  acrm records list companies --search Kubby --limit 5 --json
+
+  # search people and include likely linking fields
+  acrm records list people --search "Jane Acme" \\
+      --value email_addresses \\
+      --value linkedin_url \\
+      --json
+
+  # create a deal linked to the returned records
+  acrm deals create --name "Acme pilot" \\
+      --company <company_record_id> \\
+      --person <person_record_id>
+`,
+    )
+    .action(async (object: string, opts: RecordsListOpts) => {
+      const root = program.opts() as { json?: boolean };
+      setJsonMode(root.json);
+      try {
+        ok(await runRecordsList(object, opts));
+      } catch (e) {
+        if (e instanceof AcrmError) fail(e.message, e.code, e.hint);
+        else fail(e instanceof Error ? e.message : String(e), ERR.UNHANDLED);
+        process.exit(1);
+      }
+    });
 
   records
     .command("create <object>")
@@ -318,3 +368,64 @@ to inspect the validated plan before applying it.
       }
     });
 }
+
+async function runRecordsList(objectSlug: string, opts: RecordsListOpts): Promise<unknown> {
+  const session = requireCloudSession();
+  const url = new URL("/app/workspace/records", session.syncEngineUrl);
+  url.searchParams.set("object_slug", objectSlug);
+  url.searchParams.set("limit", String(parseRecordListLimit(opts.limit)));
+  if (opts.cursor) url.searchParams.set("cursor", opts.cursor);
+  if (opts.value?.length) url.searchParams.set("value_attributes", opts.value.join(","));
+  if (opts.secondaryLabels === false) url.searchParams.set("include_secondary_labels", "false");
+  if (opts.search) url.searchParams.set("search_query", opts.search);
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      authorization: `Bearer ${session.desktopSessionToken}`,
+      accept: "application/json",
+    },
+  });
+  const payload = await response.json().catch(() => undefined) as
+    | { ok?: unknown; error?: unknown; [key: string]: unknown }
+    | undefined;
+  if (!response.ok || payload?.ok !== true) {
+    throw new AcrmError(
+      "failed to list records",
+      ERR.IMPORT,
+      typeof payload?.error === "string" ? payload.error : `sync engine returned HTTP ${response.status}`,
+    );
+  }
+  const { ok: _ok, ...data } = payload;
+  return data;
+}
+
+function requireCloudSession(): CloudSessionContext {
+  const session = readCloudSessionContext();
+  if (!session) {
+    throw new AcrmError(
+      "acrm records list requires an Agent CRM cloud desktop session",
+      ERR.INVALID_INPUT,
+      "Open the Agent CRM app and run this command from its terminal so ACRM_DESKTOP_SESSION_TOKEN and ACRM_CLOUD_WORKSPACE_ID are available.",
+    );
+  }
+  return session;
+}
+
+function parseRecordListLimit(raw: string | undefined): number {
+  if (raw == null || raw.trim() === "") return 25;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 250) {
+    throw new AcrmError("invalid --limit value (expected an integer from 1 to 250)", ERR.INVALID_INPUT);
+  }
+  return parsed;
+}
+
+function collect(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+export const __test = {
+  parseRecordListLimit,
+  requireCloudSession,
+  runRecordsList,
+};

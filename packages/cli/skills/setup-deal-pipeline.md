@@ -73,14 +73,26 @@ into `deals`. Suggest a custom object instead.
    ```
 
 6. After the pipeline is set, keep the user in flow by asking which real deals
-   they want to create next. Ask for the company/person, stage, and next step
-   for each deal; do not invent deals without user-provided opportunities.
+   they want to create next. Suggest concrete paths so the user knows they can
+   be specific or criteria-based, for example: "Add Sarah as a deal", "Create a
+   deal for Kubby", or "Make deals for all people I've pitched on LinkedIn".
+   Ask for the company/person, stage, and next step for each deal; do not invent
+   deals without user-provided opportunities or a user-approved criterion.
 
 ## Create or update deals
 
 Only create a first deal if the user asks for it or gives a real opportunity.
-When creating deals, link the real company/person records by id instead of
-putting names in free-text fields:
+Before creating deals, search for the real company/person records and link by
+id instead of putting names in free-text fields:
+
+```sh
+acrm records list companies --search "Acme" --limit 5 --json
+acrm records list people --search "Jane Acme" --limit 5 --json
+```
+
+Use the returned `record_id` only when the match is confident. If no confident
+company or person match exists, say what could not be linked and create the
+deal without that reference.
 
 ```sh
 acrm deals create \
