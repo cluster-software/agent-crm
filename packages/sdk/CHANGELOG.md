@@ -1,5 +1,11 @@
 # @agent-crm/sdk
 
+## 2.0.1
+
+### Patch Changes
+
+- b136024: Tighten Agent CRM command guidance and point onboarding follow-up toward deal pipeline setup.
+
 ## 2.0.0
 
 ### Major Changes
