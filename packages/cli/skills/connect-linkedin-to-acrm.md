@@ -114,11 +114,12 @@ Do not run `acrm --json import linkedin --sync` in the normal connect/import
 flow. Future LinkedIn messages and contacts sync automatically. Use `--sync`
 only for debugging or importing already-stored hosted message history into the
 Postgres workspace. Run it only when the user explicitly asks to pull messages
-or the current task needs SQL queries over stored messages. In
-that case, run `--sync` for the resolved workspace by default; it imports stored
-messages for every active LinkedIn account enabled for that workspace, not just
-the most recently connected profile. Check `communication_messages_seen` /
-`communication_messages_created` before claiming messages were imported.
+or when a first-class message import workflow requires the hosted history to be
+materialized locally. In that case, run `--sync` for the resolved workspace by
+default; it imports stored messages for every active LinkedIn account enabled
+for that workspace, not just the most recently connected profile. Check
+`communication_messages_seen` / `communication_messages_created` before
+claiming messages were imported.
 
 If `--sync` returns zero messages, do not assume history is still backfilling.
 Run `acrm --json connect linkedin --status` and inspect `data.linkedin.sync`.

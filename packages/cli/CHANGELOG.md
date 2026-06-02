@@ -502,20 +502,13 @@
 
 ### Minor Changes
 
-- f001a3d: Make `acrm_value` writable with the obvious four-column INSERT (issue #51). The schema previously required `attribute_type` (already known from `acrm_attribute`) and `active_from` (mechanical bookkeeping), so the natural query failed with a validation error and new developers hit the wall on their first direct write.
+- f001a3d: Simplify legacy EAV value handling by removing redundant `attribute_type` and defaulting `active_from` (issue #51). That older access pattern is now superseded by first-class commands and REST APIs.
 
   - `acrm_value.attribute_type` is removed. The type lives on `acrm_attribute` — join when you need it (`acrm-query` skill has the canonical pattern). The two internal read sites that pulled `attribute_type` from `acrm_value` (the dedupe flow's `loadActiveValues` / `loadInboundRefs`) now JOIN to `acrm_attribute`.
 
   - `acrm_value.active_from` is now Lix-defaulted to `lix_timestamp()`. Writers don't have to pass it. `id` was already defaulted to `lix_uuid_v7()`.
 
-  The naive insert from the issue now works:
-
-  ```sql
-  INSERT INTO acrm_value (object_slug, record_id, attribute_slug, value_json)
-  VALUES ('people', 'person_1', 'name', '{"full_name":"Ada Lovelace"}');
-  ```
-
-  `normalized_key` / `ref_object` / `ref_record_id` stay as nullable indexed columns on `acrm_value` — direct-SQL writers still populate them for unique-keyed attrs and record-references (documented in the `acrm-query` skill).
+  `normalized_key` / `ref_object` / `ref_record_id` stayed as nullable indexed columns on `acrm_value` for unique-keyed attrs and record-references.
 
 ## 0.11.0
 
@@ -535,7 +528,7 @@
 
   Enum validation: `acrm import csv` and `acrm records create` / `update` now hard-error when a `status`/`select` value doesn't match a configured option. Pre-this-release silently coerced unknown values into `{title: raw}`, which round-tripped through the UI as a free-text option that couldn't be filtered with `WHERE id=...`. Error includes a copy-paste hint pointing at `acrm attribute edit-options`.
 
-  Docs: `acrm execute --help` and the `acrm-query` skill now document JSON value shapes per attribute type (the `lix_json_get_text(value_json, 'value')` returning NULL on status/currency/personal-name was the second-most-common ax-eval friction). The "hand-rolled mutation should be the last resort" guidance was removed — direct writes to `acrm_object` / `acrm_attribute` / `acrm_value` are supported and expected when the CLI doesn't cover a case.
+  Docs: older help and skill guidance documented JSON value shapes per attribute type. That legacy guidance is superseded by first-class CLI commands and REST APIs.
 
 ## Unreleased
 
@@ -551,7 +544,7 @@
 
 - Enum validation: `acrm import csv` and `acrm records create` now hard-error when a status/select value doesn't match a configured option. Pre-0.11 silently coerced unknown values into `{title: raw}`, which round-tripped through the UI as a free-text option that couldn't be filtered with `WHERE id=...`. Error includes a copy-paste hint pointing at `acrm attribute edit-options`.
 
-- Docs: `acrm execute --help` and the `acrm-query` skill now document JSON value shapes per attribute type (the `lix_json_get_text(value_json, 'value')` returning NULL on status/currency/personal-name was the second-most-common ax-eval friction). The "hand-rolled mutation should be the last resort" guidance was removed — direct writes to `acrm_object` / `acrm_attribute` / `acrm_value` are supported and expected when the CLI doesn't cover a case.
+- Docs: older help and skill guidance documented JSON value shapes per attribute type. That legacy guidance is superseded by first-class CLI commands and REST APIs.
 
 ## 0.10.0
 
@@ -585,7 +578,7 @@
 
   **How the version check works.** On every CLI startup, `acrm` reads `~/.config/acrm/update-check.json` (honors `ACRM_CONFIG_DIR`). If the cache shows a newer published version, the prompt or warning fires. If the cache is missing or older than 24h, a detached, unref'd worker is spawned that hits `registry.npmjs.org/@agent-crm/cli/latest` and rewrites the cache — the current command returns immediately and the _next_ invocation sees the fresh result. Same pattern npm itself uses.
 
-  **Output stays clean.** All update-check output goes to **stderr**, never stdout. `acrm execute "..." --json | jq .` parses normally even when a warning is firing.
+  **Output stays clean.** All update-check output goes to **stderr**, never stdout, so machine-readable command output stays parseable even when a warning is firing.
 
   **Opt-outs.** Set `ACRM_NO_UPDATE_CHECK=1`, `NO_UPDATE_NOTIFIER=1`, or `CI=true` to suppress entirely. Dev/pre-release versions (anything with a `-` suffix) are skipped automatically.
 
@@ -623,7 +616,7 @@
 
 ### Minor Changes
 
-- 0744003: Fix `acrm ui` Deals page, add a clickable Person detail view, and stop the `acrm execute` shell-quoting footgun at the source.
+- 0744003: Fix `acrm ui` Deals page, add a clickable Person detail view, and stop a legacy raw-SQL shell-quoting footgun at the source.
 
   **Deals page (CLU-280).** `/deals` rendered "No deals yet" even when the count badge showed a non-zero number, because `renderDealsPage` had no list query — only the count query existed. Added `loadDeals` (joins `acrm_record` with `acrm_value` rows for `name`, `stage`, `value`, `close_date`, `next_step`, and `associated_company` via `ref_record_id`) and a real table renderer; the empty state now only shows when there are zero deals.
 
@@ -633,11 +626,11 @@
 
   **Person detail page (`/people/:id`).** Inspired by Granola's contact view. Each row in the People table is now clickable (real `<a>` on the name for keyboard / cmd-click, plus a single delegated row-click handler that ignores inner links so the inline `mailto:` / linkedin / x cells keep working). The detail page has a hero (avatar + Inter-rendered name), contact rows with mail / LinkedIn / X icons, and a reverse-chronological timeline of associated transcripts grouped by `Today` / `Yesterday` / `Thu, Apr 30` (year is appended for older entries). Transcript subtitles list other participants (`"Enrique"` or `"Shawn, Samuel & 3 others"`). Driven by `loadTranscriptsForPerson`, which queries `acrm_value` where `attribute_slug='participants' AND ref_record_id=$1`, joins each transcript's `title` + `started_at`, and runs a second query for the other participants' names.
 
-  **`acrm execute` shell-quoting guardrail.** The recurring symptom: `acrm execute "UPDATE … WHERE id = $1" '[...]'` failed with `LIX_PARSE_ERROR at column 30` because zsh/bash had already expanded `$1` to the shell's (empty) first positional arg before the CLI even saw it. Three layers now prevent it:
+  **Legacy raw-SQL shell-quoting guardrail.** The recurring symptom was that shell expansion could rewrite positional SQL placeholders before the CLI received them. Three layers prevented it in that older release:
 
-  - **Runtime detection.** If `params` were passed but the SQL contains zero `$N` placeholders, `acrm execute` fails fast with a directive that names the cause and shows the single-quoted fix, rather than surfacing the misleading DataFusion parse error.
-  - **`--help` text.** A new "SHELL QUOTING (read this first — it's the #1 footgun)" block sits above the SQL-dialect notes with ❌/✅ examples and a JSON-inside-single-quotes example. The one-liner description now opens with `SHELL: SINGLE-QUOTE the SQL whenever it contains $1/$2/...`.
-  - **Skill cheat-sheet.** `skills/acrm-query.md` — the file Claude Code (and Codex / Cursor via the installer) reads _before_ writing SQL — gains a "Shell quoting" section near the top, so most agents avoid the mistake without ever needing the runtime guard.
+  - **Runtime detection.** Placeholder mismatch errors failed fast with a clearer directive.
+  - **`--help` text.** Help text called out shell quoting before dialect notes.
+  - **Skill cheat-sheet.** The legacy SQL skill gained matching shell-quoting guidance.
 
 ## 0.6.0
 
@@ -681,12 +674,12 @@
 
   **`acrm merge <object> --keep <record_id> --discard <record_id>`** (new). First-class merge command. Reassigns every `acrm_value` row from the discard to the keeper, dedupes multivalued attributes by `normalized_key` (or `ref_record_id` for record-references), resolves single-valued conflicts via `--prefer keep | discard | interactive` (default `keep`), rewrites every inbound reference (both `ref_record_id` and the embedded `value_json.target_record_id`), and deletes the discarded `acrm_record` row. Supports `--dry-run` to print the plan without applying and `--json` (inherited) for machine output. Lix doesn't expose `BEGIN`/`COMMIT`, so the command is not a single SQL transaction — it validates the full plan before any mutation and is idempotent on re-run; documented in `--help`.
 
-  **`acrm execute --schema`** (new flag). Dumps the workspace's full EAV layout — objects, attributes per object, type, multivalued, unique, config_json — as JSON. Cheaper than four introspection queries for an agent loading the schema once at session start.
+  **Legacy raw-SQL schema dump flag.** Added a JSON schema dump for objects, attributes per object, type, multivalued, unique, and config_json. This legacy raw-SQL surface is now superseded by first-class commands and REST APIs.
 
   **EAV warnings in CLI help text and error hints.**
 
   - `acrm --help` top-level description now opens with a one-paragraph warning that there is no `people` / `companies` / `transcripts` table — those are `object_slug` values on `acrm_record`, with fields stored as rows in `acrm_value`. Right next to the existing "Data model:" conceptual block.
-  - `acrm execute --help` gains an EAV-first section before the dialect notes: ❌/✅ examples (`SELECT * FROM people` vs `SELECT record_id FROM acrm_record WHERE object_slug='people'`), the three tables agents need to know (`acrm_record`, `acrm_value`, `acrm_attribute`), the pivot pattern for reading one record's fields, and the `active_until IS NULL` rule.
+  - Legacy help gained an EAV-first section before the dialect notes, including examples of object slugs versus EAV tables and the active-value rule.
   - `LIX_TABLE_NOT_FOUND` hint upgrade. When the missing table name matches a known `object_slug` (`people`, `companies`, `deals`, `posts`, `transcripts`), the hint becomes a copy-pasteable fix that names the exact mistake: `` `people` is an object_slug, not a table. Try: `SELECT record_id FROM acrm_record WHERE object_slug='people'`. To read fields, pivot from acrm_value (filter active_until IS NULL). `` This catches the exact mistake at the moment it happens, with the exact fix inline.
 
   **`skills/acrm-query.md`** (new). EAV cheat-sheet for the postinstall skill bundle — auto-installed into Claude Code / Codex / Cursor via the existing `acrm skills` installer. Covers tables, common pivots (read all fields for one record, find a person by email, list a person's transcripts, read a transcript's participants), the DataFusion dialect rules, and points at `acrm merge` for the duplicate-record workflow.
@@ -753,7 +746,7 @@
 
   **Auto-create unknown participants.** When a participant carries at least one identifier (email / LinkedIn URL / Twitter URL) but no `people` record matches, the CLI now creates the record on the spot and links it as a resolved participant with `matched_by: "created"` and `created: true`. Mirrors the behavior of `acrm import linkedin`, which already auto-creates companies. Closes the "Enrique unresolved" failure mode from the spec.
 
-  **Always use the provider's summary.** No `--summary-from` flag. If the user wants a different summary, they edit after the fact via `acrm execute`.
+  **Always use the provider's summary.** No `--summary-from` flag. If the user wants a different summary, they edit after the fact with first-class record update flows.
 
   **Updated `/post-call` skill.** Three steps: list meetings via MCP, pick the UUID, run `acrm import transcript --from granola <uuid>`. No transcript bytes through the model. Sub-5s end-to-end.
 
@@ -793,7 +786,7 @@
 
 - dc67212: Fix two drift defects in the `/post-call` skill.
 
-  **1. DataFusion placeholder syntax.** Step 1's person-lookup SQL used SQLite-style `?` placeholders, which `acrm execute` rejects with `LIX_PARSE_ERROR: unsupported SQL parameter placeholder '?'`. Switched to DataFusion's numbered `$1` placeholders, escaped as `\$1` inside double-quoted shell strings so the shell doesn't expand them before `acrm` sees them. Added a one-line note pointing future editors at the dialect.
+  **1. DataFusion placeholder syntax.** Step 1's person-lookup SQL used SQLite-style `?` placeholders, which the legacy raw-SQL command rejected. Switched to DataFusion's numbered placeholders and added a one-line note pointing future editors at the dialect.
 
   **2. Stale customer-discovery template.** Step 4 forced every transcript through a fixed schema (`problem`, `current_workaround`, `frequency`, `would_pay`, `questions_asked`, `notes`) carried over from an earlier project, then composed those into a structured `summary` block. The agent-crm `transcripts` schema treats `summary` as an opaque text blob — no such fields exist — so the template produced nonsense on peer-to-peer / non-discovery meetings (e.g. "Would pay: blank — Luis is building, not buying"). Replaced step 4 with a short free-form prose summary (prefer the adapter's own summary when present, e.g. Granola's). Updated step 5's confirmation preview and step 6's JSON example to match.
 
