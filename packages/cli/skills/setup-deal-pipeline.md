@@ -53,6 +53,10 @@ into `deals`. Suggest a custom object instead.
      --stage closed_lost:"Closed Lost"
    ```
 
+   `acrm deals pipeline set` expects `--stage id:Title` pairs. The backend
+   stores each stage as EAV status JSON (`{id,title}`), and the app renders the
+   `title`. Do not pass JSON to `--stage`.
+
 5. If the command says existing deals use stages not in the new pipeline, map
    each old id to the closest new generic stage:
 
@@ -86,6 +90,10 @@ acrm deals create \
 Use `acrm deals update <deal_id> --stage <stage_id>` to move a deal between
 stages, and `acrm deals delete <deal_id>` only when the user explicitly wants
 the deal archived.
+
+Do not use `acrm records create deals` or raw EAV writes for cloud deal setup.
+Use `acrm deals create` / `acrm deals update` so stage IDs, text values, and
+record references are serialized consistently with the backend.
 
 ## Hard rules
 

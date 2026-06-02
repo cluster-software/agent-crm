@@ -151,7 +151,7 @@ commands.
 Then suggest up to 2 valuable things they can do next, based on what got imported:
 
 1. Recommend finding folks to follow up with (if communications were imported e.g. emails, chats, transcripts)
-2. Recommend connecting Granola so meetings flow in: `try /connect-granola-to-acrm`.
+2. Recommend setting up the Deals pipeline: `try /setup-deal-pipeline` (bundled from `packages/cli/skills/setup-deal-pipeline.md`).
 
 Keep the close short - pick the most relevant one or two suggestions, not a feature dump.
 

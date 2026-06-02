@@ -59,6 +59,7 @@ export const AGENT_INSTRUCTIONS_BLOCK = [
   "- In the desktop app, use the existing `ACRM_SYNC_ENGINE_URL`, `ACRM_CLOUD_WORKSPACE_ID`, `ACRM_CLOUD_ORG_ID`, and `ACRM_DESKTOP_SESSION_TOKEN` environment. Do not print `ACRM_DESKTOP_SESSION_TOKEN`.",
   "- Outside the desktop app, target a workspace with `acrm -w <postgres-url> ...`, or set `ACRM_DATABASE_URL`, `NEON_DATABASE_URL`, `SUPABASE_DATABASE_URL`, or `DATABASE_URL`. Use `ACRM_DATABASE_PROVIDER=neon|supabase|postgres` only when the provider cannot be inferred from the URL.",
   "- Use first-class CLI commands for reads and writes. Direct SQL/raw workspace queries are not supported in cloud-first Agent CRM workspaces.",
+  "- Only run ACRM commands documented here, in a bundled skill, or discovered through `acrm --help` / subcommand `--help`. Do not guess command names.",
   "",
   "Common commands:",
   "- `acrm connect linkedin` connects LinkedIn through Agent CRM's hosted sync engine, or reports when the workspace is already connected. `acrm connect linkedin --status` checks status without starting a connect flow.",

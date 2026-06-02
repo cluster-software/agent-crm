@@ -71,6 +71,11 @@ implementation rather than after mistakes.
 Generated workspace guidance for Claude/Codex lives in
 `packages/sdk/src/agent-instructions.ts`.
 
+Agents should only run ACRM commands that are documented in this file, in a
+bundled skill, in generated workspace instructions, or discovered through
+`acrm --help` / subcommand `--help`. Do not guess command names such as
+list/search variants without checking help first.
+
 When changing CLI commands, SDK workspace schema/objects, import behavior,
 skills, or SQL guidance, update that file in the same PR and run
 `npm run check:agent-instructions --workspace @agent-crm/cli`. CI catches new
