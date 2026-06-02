@@ -13,7 +13,7 @@ import {
 } from "./schema.js";
 import { setSingleValue } from "../db/upsert.js";
 import { loadAttribute } from "../workspace/catalog.js";
-import { Workspace } from "../workspace.js";
+import { Workspace, workspaceDatabase } from "../workspace.js";
 
 export type SignalObjectSlug = "people" | "companies";
 export type SignalRunMode = "missing" | "force";
@@ -206,7 +206,7 @@ export async function ensureSignalAttributes(
   workspace: Workspace,
   definitions: SignalDefinition[],
 ): Promise<SignalSyncResult> {
-  return await workspace.db.transaction((db) =>
+  return await workspaceDatabase(workspace).transaction((db) =>
     ensureSignalAttributesInWorkspace(Workspace.fromDatabase(db), definitions)
   );
 }
@@ -236,7 +236,7 @@ async function ensureSignalAttributesInWorkspace(
     for (const output of definition.outputs) {
       assertOutputDoesNotTargetCoreField(definition, output);
       const existing = await loadAttribute(
-        workspace.db,
+        workspaceDatabase(workspace),
         definition.object_slug,
         output.attribute,
       );
@@ -663,7 +663,7 @@ async function ensureOptions(
     options: [...current, ...missing],
   };
   await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     "UPDATE acrm_attribute SET config_json = $1 WHERE object_slug = $2 AND attribute_slug = $3",
     [JSON.stringify(nextConfig), object_slug, output.attribute],
   );
@@ -678,7 +678,7 @@ async function changeSignalAttributeType(
 ): Promise<void> {
   const signalSource = `signal:${definition.slug}`;
   const active = await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     `SELECT source
        FROM acrm_value
       WHERE object_slug = $1
@@ -696,7 +696,7 @@ async function changeSignalAttributeType(
 
   const now = nowIso();
   await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     `UPDATE acrm_value
         SET active_until = $1
       WHERE object_slug = $2
@@ -706,7 +706,7 @@ async function changeSignalAttributeType(
     [now, definition.object_slug, output.attribute, signalSource],
   );
   await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     `UPDATE acrm_attribute
         SET title = $1,
             attribute_type = $2,
@@ -730,7 +730,7 @@ async function retireRemovedSignalValues(
   const desired = new Set(definition.outputs.map((output) => output.attribute));
   const signalSource = `signal:${definition.slug}`;
   const active = await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     `SELECT DISTINCT attribute_slug
        FROM acrm_value
       WHERE object_slug = $1
@@ -745,7 +745,7 @@ async function retireRemovedSignalValues(
 
   const placeholders = removed.map((_, index) => `$${index + 4}`).join(", ");
   await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     `UPDATE acrm_value
         SET active_until = $1
       WHERE object_slug = $2
@@ -801,7 +801,7 @@ async function selectRecords(
   const records: SignalRecordRef[] = [];
   for (const object_slug of objects) {
     const r = await exec(
-      workspace.db,
+      workspaceDatabase(workspace),
       "SELECT record_id FROM acrm_record WHERE object_slug = $1 ORDER BY record_id DESC",
       [object_slug],
     );
@@ -835,7 +835,7 @@ async function activeAttributesForOutputs(
   if (outputs.length === 0) return new Set();
   const placeholders = outputs.map((_, index) => `$${index + 3}`).join(", ");
   const r = await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     `SELECT attribute_slug
        FROM acrm_value
       WHERE object_slug = $1
@@ -889,7 +889,7 @@ async function runOneSignal(
   const ran_at = nowIso();
   let written = 0;
 
-  await workspace.db.transaction(async (db) => {
+  await workspaceDatabase(workspace).transaction(async (db) => {
     for (const output of outputs) {
       if (!requestedKeys.has(output.key)) continue;
       const definitionOutput = outputByKey.get(output.key)!;
@@ -926,7 +926,7 @@ async function loadRecordContext(
   record: SignalRecordRef,
 ): Promise<RecordContextValue[]> {
   const r = await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     `SELECT v.attribute_slug, v.value_json, a.title, a.attribute_type
        FROM acrm_value v
        JOIN acrm_attribute a

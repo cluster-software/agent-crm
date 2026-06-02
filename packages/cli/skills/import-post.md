@@ -65,13 +65,6 @@ JSON shape (use `--json` or it's auto-emitted when stdout isn't a TTY):
 }
 ```
 
-## After import — what you can do
-
-- **Show the author's full record** to the user:
-  `acrm execute "SELECT attribute_slug, value_json FROM acrm_value WHERE active_until IS NULL AND object_slug = 'people' AND record_id = $1 ORDER BY attribute_slug" '["<person_record_id>"]'`
-- **List all posts you've imported from this author**:
-  `acrm execute "SELECT p.record_id, v.value_json FROM acrm_record p JOIN acrm_value v ON v.object_slug = 'posts' AND v.record_id = p.record_id AND v.attribute_slug = 'url' AND v.active_until IS NULL WHERE p.object_slug = 'posts' AND p.record_id IN (SELECT ref_record_id FROM acrm_value WHERE object_slug = 'people' AND record_id = $1 AND attribute_slug = 'associated_posts' AND active_until IS NULL)" '["<person_record_id>"]'`
-
 ## Report
 
 After running, give a short one-liner:

@@ -5,7 +5,7 @@ import { PostgresDatabase } from "./db/postgres.js";
 import type { AcrmDatabase } from "./db/types.js";
 import { ERR } from "./lib/errors.js";
 import { uuidv7 } from "./lib/uuidv7.js";
-import { Workspace } from "./workspace.js";
+import { Workspace, workspaceDatabase } from "./workspace.js";
 import { ensureWorkspaceIdentity } from "./workspace/identity.js";
 
 function openTestDatabase(): AcrmDatabase {
@@ -51,7 +51,7 @@ describe("Workspace", () => {
     const workspace = await Workspace.create({ db });
     try {
       const objects = await exec(
-        workspace.db,
+        workspaceDatabase(workspace),
         "SELECT object_slug FROM acrm_object ORDER BY object_slug",
       );
       expect(objects.rows.map((r) => r.object_slug)).toEqual([
@@ -65,7 +65,7 @@ describe("Workspace", () => {
       ]);
 
       const emailAttr = await exec(
-        workspace.db,
+        workspaceDatabase(workspace),
         "SELECT attribute_type FROM acrm_attribute WHERE object_slug = 'people' AND attribute_slug = 'email_addresses'",
       );
       expect(emailAttr.rows[0]?.attribute_type).toBe("email-address");
@@ -121,9 +121,9 @@ describe("Workspace", () => {
   it("does not close an injected database by default", async () => {
     const db = openTestDatabase();
     const owner = await Workspace.create({ db });
-    const borrowed = Workspace.fromDatabase(owner.db);
+    const borrowed = Workspace.fromDatabase(workspaceDatabase(owner));
     await borrowed.close();
-    const result = await exec(owner.db, "SELECT object_slug FROM acrm_object LIMIT 1");
+    const result = await exec(workspaceDatabase(owner), "SELECT object_slug FROM acrm_object LIMIT 1");
     expect(result.rows).toHaveLength(1);
     await owner.close();
     await db.close();

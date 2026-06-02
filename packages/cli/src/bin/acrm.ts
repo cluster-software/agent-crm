@@ -4,7 +4,6 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { registerInit } from "../commands/init.js";
-import { registerExecute } from "../commands/execute.js";
 import { registerRecords } from "../commands/records.js";
 import { registerSchema } from "../commands/schema.js";
 import { registerDeals } from "../commands/deals.js";
@@ -46,8 +45,8 @@ program
 Storage model: EAV. There is no \`people\` / \`companies\` / \`transcripts\` SQL
 table — those are \`object_slug\` values on \`acrm_record\`, and each field lives
 as a row in \`acrm_value\` keyed by (object_slug, record_id, attribute_slug).
-\`SELECT * FROM people\` will fail. See \`acrm execute --help\` for the EAV
-query patterns.
+Use first-class \`acrm records\`, \`acrm object\`, and \`acrm attribute\`
+commands instead of direct SQL.
 
 Data model:
   people      contacts, identified by email / LinkedIn URL / X URL
@@ -73,7 +72,6 @@ Typical flow:
   acrm import x <handle>          add one person from an X/Twitter profile
   acrm import post <url>          add a LinkedIn or X **post** by URL — upserts the author as a person and stores the post (use when a user shares a post link they want to track)
   acrm import transcript          import a meeting transcript — use \`--from <provider>\` for the fast path, or pipe JSON via stdin / \`--file\`
-  acrm execute "SELECT ..."       run SQL against the workspace
   acrm deals pipeline set --stage lead:Lead --stage closed_won:"Closed Won" --stage closed_lost:"Closed Lost"
   acrm records create deals --field name=... --field stage=...  create a single record
   acrm records update candidates <id> --field stage=screen      advance / edit fields on an existing record
@@ -85,30 +83,11 @@ Custom schema:
       --option sourced --option screen --option onsite --option offer
   acrm attribute edit-options deals.stage add custom_value       extend a built-in enum
 
-SQL engine: Postgres-compatible providers (Neon, Supabase, Postgres)
-  - Use $1, $2 placeholders.
-  - Use information_schema for introspection.
-  - For jsonb columns, use value_json -> 'key' or value_json ->> 'key'.
-  - See \`acrm execute --help\` for the full dialect reference.
-
-Introspection (run via \`acrm execute "<sql>"\`):
-  SELECT table_name FROM information_schema.tables WHERE table_schema='public'
-  SELECT column_name, data_type FROM information_schema.columns WHERE table_name='acrm_value'
-  SELECT * FROM acrm_object                                     -- registered objects
-  SELECT object_slug, attribute_slug, attribute_type FROM acrm_attribute
-  SELECT object_slug, COUNT(*) FROM acrm_record GROUP BY object_slug
-
-JSON value shapes per attribute_type (key for ->>):
-  text / url / number   {"value": ...}
-  date                  {"date": ...}        timestamp     {"timestamp": ...}
-  personal-name         {"full_name": ..., "first_name": ..., "last_name": ...}
-  email-address         {"email_address": ..., "email_domain": ..., ...}
-  domain                {"domain": ..., "root_domain": ...}
-  currency              {"currency_value": ..., "currency_code": ...}
-  json                  any JSON object/array/scalar
-  status / select       {"id": ..., "title": ...}
-  record-reference      {"target_object": ..., "target_record_id": ...}
-  (for record-references, prefer the indexed \`ref_record_id\` column)
+Field syntax:
+  acrm records create <object> --field slug=value
+  acrm records update <object> <record_id> --field slug=value
+  For record-reference attributes, pass slug=<target_object>:<target_record_id>.
+  Repeat --field for multivalued attributes.
 `,
   );
 
@@ -121,7 +100,6 @@ attachPostSubcommand(getOrCreateImportCommand(program));
 attachGmailSubcommand(getOrCreateImportCommand(program));
 attachGranolaSubcommand(getOrCreateImportCommand(program));
 attachTranscriptSubcommand(getOrCreateImportCommand(program));
-registerExecute(program);
 registerRecords(program);
 registerSchema(program);
 registerDeals(program);

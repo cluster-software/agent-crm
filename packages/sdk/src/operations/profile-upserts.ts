@@ -244,7 +244,7 @@ export async function upsertMappedXProfile(
           bio,
           missing,
           instructions:
-            "Extract role/company from `bio`. For each slug in `missing`, write a value via `acrm execute` UPDATE/INSERT on acrm_value. Only write what's clearly stated; skip if uncertain. Source: 'x-bio-enrichment'.",
+            "Extract role/company from `bio`. For each slug in `missing`, use first-class `acrm records` commands only. For `job_title`, update the people record with `--field job_title=<title>`. For `company`, create or reuse a companies record when you have one, then update people.company with `--field company=companies:<company_record_id>`. Only write what's clearly stated; skip if uncertain. Source: 'x-bio-enrichment'.",
         }
       : null;
 

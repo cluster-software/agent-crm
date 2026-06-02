@@ -7,7 +7,7 @@ import { exec } from "../db/execute.js";
 import { PostgresDatabase } from "../db/postgres.js";
 import type { AcrmDatabase, ExecuteResult, SqlValue } from "../db/types.js";
 import { uuidv7 } from "../lib/uuidv7.js";
-import { Workspace } from "../workspace.js";
+import { Workspace, workspaceDatabase } from "../workspace.js";
 import { importLinkedinProfile } from "./import-linkedin.js";
 import { importLinkedinRelations } from "./import-linkedin-relations.js";
 
@@ -147,7 +147,7 @@ class FailingValueInsertDatabase implements AcrmDatabase {
 
 async function recordCount(workspace: Workspace, objectSlug: string): Promise<number> {
   const result = await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     "SELECT COUNT(*) AS count FROM acrm_record WHERE object_slug = $1",
     [objectSlug],
   );
@@ -155,6 +155,6 @@ async function recordCount(workspace: Workspace, objectSlug: string): Promise<nu
 }
 
 async function valueCount(workspace: Workspace): Promise<number> {
-  const result = await exec(workspace.db, "SELECT COUNT(*) AS count FROM acrm_value");
+  const result = await exec(workspaceDatabase(workspace), "SELECT COUNT(*) AS count FROM acrm_value");
   return Number(result.rows[0]?.count ?? 0);
 }

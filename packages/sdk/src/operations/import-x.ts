@@ -4,7 +4,7 @@ import {
 } from "../integrations/apify-x.js";
 import { mapProfile } from "../integrations/x-mapping.js";
 import { nowIso } from "../lib/time.js";
-import type { Workspace } from "../workspace.js";
+import { workspaceDatabase, type Workspace } from "../workspace.js";
 import {
   normalizedXProfileKey,
   upsertMappedXProfile,
@@ -51,7 +51,7 @@ export async function importXProfile(
 
   const twitterKey = normalizedXProfileKey(mapped);
 
-  return await workspace.db.transaction((db) =>
+  return await workspaceDatabase(workspace).transaction((db) =>
     upsertMappedXProfile(db, {
       twitterKey,
       cachePath,

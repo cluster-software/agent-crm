@@ -42,9 +42,9 @@ export async function exec(
             `\`${slug}\` is an object_slug, not a table. Try: ` +
             `\`SELECT record_id FROM acrm_record WHERE object_slug='${slug}'\`. ` +
             `To read fields, pivot from acrm_value (filter active_until IS NULL). ` +
-            `Run \`acrm execute --help\` for the full EAV cheat-sheet.`;
+            `Use first-class Agent CRM commands or REST APIs instead of direct object tables.`;
         } else {
-          hint = `Records are EAV: try \`acrm execute "SELECT object_slug, COUNT(*) FROM acrm_record GROUP BY object_slug"\` to see what's loaded, then query acrm_value for attribute values.`;
+          hint = `Records are EAV: objects are stored as acrm_record rows and fields as acrm_value rows. Use first-class Agent CRM commands or REST APIs for workspace access.`;
         }
       }
       throw new AcrmError(

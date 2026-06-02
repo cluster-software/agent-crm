@@ -1,4 +1,4 @@
-import type { SqlValue } from "../db/types.js";
+import type { AcrmDatabase, SqlValue } from "../db/types.js";
 import { exec } from "../db/execute.js";
 import {
   prepareValueInsert,
@@ -15,7 +15,7 @@ import {
 } from "../domain/values.js";
 import { uuidv7 } from "../lib/uuidv7.js";
 import { nowIso } from "../lib/time.js";
-import type { Workspace } from "../workspace.js";
+import { workspaceDatabase, type Workspace } from "../workspace.js";
 import { seedAttributes, seedObjects } from "../workspace/seeds.js";
 
 export type CommunicationImportPerson = {
@@ -137,7 +137,7 @@ export async function importCommunicationBatch(
   await ensureCommunicationSchema(workspace);
 
   const normalizedBatch = normalizeCommunicationBatch(batch);
-  return await workspace.db.transaction(async (db) =>
+  return await workspaceDatabase(workspace).transaction(async (db) =>
     importNormalizedCommunicationBatch(db, normalizedBatch)
   );
 }
@@ -377,8 +377,8 @@ async function importNormalizedCommunicationBatch(
 }
 
 async function ensureCommunicationSchema(workspace: Workspace): Promise<void> {
-  await seedObjects(workspace.db);
-  await seedAttributes(workspace.db);
+  await seedObjects(workspaceDatabase(workspace));
+  await seedAttributes(workspaceDatabase(workspace));
 }
 
 function normalizeCommunicationBatch(batch: CommunicationImportBatch): CommunicationImportBatch {
@@ -776,7 +776,7 @@ class CommunicationWriteBatcher {
   private singlesToRetire: Array<{ object_slug: string; record_id: string; attribute_slug: string }> = [];
   private pendingRetireKeys = new Set<string>();
 
-  constructor(private readonly db: Workspace["db"]) {}
+  constructor(private readonly db: AcrmDatabase) {}
 
   enqueueRecord(record: { object_slug: string; record_id: string }): void {
     this.records.push(record);

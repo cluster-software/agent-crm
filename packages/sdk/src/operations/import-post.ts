@@ -31,7 +31,7 @@ import { mapProfile as mapXProfile } from "../integrations/x-mapping.js";
 import { AcrmError, ERR } from "../lib/errors.js";
 import { generateUuid } from "../lib/ids.js";
 import { nowIso } from "../lib/time.js";
-import type { Workspace } from "../workspace.js";
+import { workspaceDatabase, type Workspace } from "../workspace.js";
 import {
   normalizedXProfileKey,
   upsertMappedLinkedinProfile,
@@ -124,7 +124,7 @@ export async function importPost(
 
   const authorProfile = await loadAuthorProfile(platform, mapped, args);
 
-  const imported = await workspace.db.transaction(async (db) => {
+  const imported = await workspaceDatabase(workspace).transaction(async (db) => {
     const author =
       authorProfile.platform === "linkedin"
         ? await upsertMappedLinkedinProfile(db, authorProfile)

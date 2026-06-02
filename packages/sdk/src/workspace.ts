@@ -16,7 +16,7 @@ export type WorkspaceOpenOptions = {
 // pluggable Postgres-compatible providers; callers that inject a db handle own
 // its lifecycle unless closeDatabaseOnClose is explicitly true.
 export class Workspace {
-  readonly db: AcrmDatabase;
+  private readonly db: AcrmDatabase;
   private closed = false;
 
   constructor(
@@ -29,7 +29,7 @@ export class Workspace {
   static async open(input: string | WorkspaceOpenOptions = {}): Promise<Workspace> {
     const workspace = await openWorkspace(input);
     try {
-      await initializeWorkspace(workspace.db);
+      await initializeWorkspace(workspaceDatabase(workspace));
       await ensureWorkspaceIdentity(workspace);
       return workspace;
     } catch (error) {
@@ -56,6 +56,10 @@ export class Workspace {
       await this.db.close();
     }
   }
+}
+
+export function workspaceDatabase(workspace: Workspace): AcrmDatabase {
+  return (workspace as unknown as { db: AcrmDatabase }).db;
 }
 
 async function openWorkspace(

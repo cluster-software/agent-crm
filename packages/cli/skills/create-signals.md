@@ -75,18 +75,6 @@ acrm signals run --missing --signal <slug> --object companies --record-id <id> -
 Imports run missing-only signals in the background unless the user passes
 `--no-signals`.
 
-To inspect results, query `acrm_value`:
-
-```sh
-acrm execute 'SELECT attribute_slug, value_json, source, provenance_json
-FROM acrm_value
-WHERE object_slug = $1
-  AND record_id = $2
-  AND source = $3
-  AND active_until IS NULL' \
-'["companies","<record_id>","signal:<slug>"]'
-```
-
 Signal definitions are local files in `signals/`; the definitions themselves
 are not stored in Postgres. Synced attributes and generated values are stored
 in the Postgres workspace.

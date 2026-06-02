@@ -8,7 +8,7 @@ import { PostgresDatabase } from "../db/postgres.js";
 import type { AcrmDatabase, ExecuteResult, SqlValue } from "../db/types.js";
 import { setSingleValue } from "../db/upsert.js";
 import { uuidv7 } from "../lib/uuidv7.js";
-import { Workspace } from "../workspace.js";
+import { Workspace, workspaceDatabase } from "../workspace.js";
 import { importCsv } from "./import-csv.js";
 import { importGoogleContacts } from "./import-google.js";
 import { importPost } from "./import-post.js";
@@ -310,7 +310,7 @@ describe("transactional SDK writes", () => {
           fields: ["name=Example Co"],
         });
         await ensureSignalAttributes(workspace, [textDefinition]);
-        await setSingleValue(workspace.db, {
+        await setSingleValue(workspaceDatabase(workspace), {
           object_slug: "companies",
           record_id: company.record_id,
           attribute_slug: "operator_signal",
@@ -558,7 +558,7 @@ async function restoreRecordsAndValues(
 
 async function recordCount(workspace: Workspace, objectSlug: string): Promise<number> {
   const result = await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     "SELECT COUNT(*) AS count FROM acrm_record WHERE object_slug = $1",
     [objectSlug],
   );
@@ -571,7 +571,7 @@ async function recordExists(
   recordId: string,
 ): Promise<boolean> {
   const result = await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     "SELECT 1 FROM acrm_record WHERE object_slug = $1 AND record_id = $2",
     [objectSlug, recordId],
   );
@@ -579,7 +579,7 @@ async function recordExists(
 }
 
 async function valueCount(workspace: Workspace): Promise<number> {
-  const result = await exec(workspace.db, "SELECT COUNT(*) AS count FROM acrm_value");
+  const result = await exec(workspaceDatabase(workspace), "SELECT COUNT(*) AS count FROM acrm_value");
   return Number(result.rows[0]?.count ?? 0);
 }
 
@@ -590,7 +590,7 @@ async function activeValueRecordId(
   normalizedKey: string,
 ): Promise<string | null> {
   const result = await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     `SELECT record_id
        FROM acrm_value
       WHERE object_slug = $1
@@ -609,7 +609,7 @@ async function normalizedKeyFor(
   attributeSlug: string,
 ): Promise<string | null> {
   const result = await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     `SELECT normalized_key
        FROM acrm_value
       WHERE object_slug = $1
@@ -628,7 +628,7 @@ async function activeAttributeCount(
 ): Promise<number> {
   const placeholders = attributeSlugs.map((_, index) => `$${index + 2}`).join(", ");
   const result = await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     `SELECT COUNT(*) AS count
        FROM acrm_value
       WHERE object_slug = 'companies'
@@ -646,7 +646,7 @@ async function attributeType(
   attributeSlug: string,
 ): Promise<string | null> {
   const result = await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     `SELECT attribute_type
        FROM acrm_attribute
       WHERE object_slug = $1

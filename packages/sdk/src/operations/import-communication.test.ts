@@ -4,7 +4,7 @@ import { exec } from "../db/execute.js";
 import { PostgresDatabase } from "../db/postgres.js";
 import type { AcrmDatabase, ExecuteResult, SqlValue } from "../db/types.js";
 import { uuidv7 } from "../lib/uuidv7.js";
-import { Workspace } from "../workspace.js";
+import { Workspace, workspaceDatabase } from "../workspace.js";
 import { importCommunicationBatch, type CommunicationImportBatch } from "./import-communication.js";
 
 describe("importCommunicationBatch", () => {
@@ -240,7 +240,7 @@ function duplicateCommunicationBatch(): CommunicationImportBatch {
 
 async function recordCount(workspace: Workspace, objectSlug: string): Promise<number> {
   const result = await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     "SELECT COUNT(*) AS count FROM acrm_record WHERE object_slug = $1",
     [objectSlug],
   );
@@ -253,7 +253,7 @@ async function activeValueCount(
   attributeSlug: string,
 ): Promise<number> {
   const result = await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     `SELECT COUNT(*) AS count
      FROM acrm_value
      WHERE active_until IS NULL
@@ -270,7 +270,7 @@ async function normalizedKeyFor(
   attributeSlug: string,
 ): Promise<string | null> {
   const result = await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     `SELECT normalized_key
      FROM acrm_value
      WHERE active_until IS NULL
@@ -288,7 +288,7 @@ async function singleDisplayValue(
   attributeSlug: string,
 ): Promise<string | null> {
   const result = await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     `SELECT value_json
      FROM acrm_value
      WHERE active_until IS NULL
@@ -316,7 +316,7 @@ async function singleJsonValue(
   attributeSlug: string,
 ): Promise<unknown> {
   const result = await exec(
-    workspace.db,
+    workspaceDatabase(workspace),
     `SELECT value_json
      FROM acrm_value
      WHERE active_until IS NULL

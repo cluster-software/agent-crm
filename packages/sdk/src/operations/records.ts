@@ -17,7 +17,7 @@ import {
   assertObjectExists,
   loadAttribute as loadCatalogAttribute,
 } from "../workspace/catalog.js";
-import type { Workspace } from "../workspace.js";
+import { workspaceDatabase, type Workspace } from "../workspace.js";
 
 type ValueRow = {
   id: string;
@@ -141,7 +141,7 @@ export async function planDedupe(
   workspace: Workspace,
   input: PlanDedupeInput,
 ): Promise<DedupePlan> {
-  const db = workspace.db;
+  const db = workspaceDatabase(workspace);
   const { object_slug, keep_record_id, discard_record_id } = input;
   const resolver: ConflictResolver = input.resolveConflict ?? "keep";
 
@@ -311,7 +311,7 @@ export async function applyDedupe(
   workspace: Workspace,
   plan: DedupePlan,
 ): Promise<DedupeResult> {
-  return await workspace.db.transaction((db) => applyDedupeInDatabase(db, plan));
+  return await workspaceDatabase(workspace).transaction((db) => applyDedupeInDatabase(db, plan));
 }
 
 async function applyDedupeInDatabase(
@@ -745,11 +745,11 @@ export async function createRecord(
   const { object_slug, fields } = args;
   const source = args.source ?? "sdk:records-create";
 
-  const db = workspace.db;
+  const db = workspaceDatabase(workspace);
   await assertObjectRegistered(db, object_slug);
   const prepared = await prepareFields(db, object_slug, fields);
 
-  return await workspace.db.transaction(async (tx) => {
+  return await workspaceDatabase(workspace).transaction(async (tx) => {
     const record_id = await generateUuid(tx);
     await insertRecord(tx, object_slug, record_id);
     const inserted = await applyFields(tx, object_slug, record_id, prepared, source);
@@ -775,7 +775,7 @@ export async function updateRecord(
   const { object_slug, record_id, fields } = args;
   const source = args.source ?? "sdk:records-update";
 
-  const db = workspace.db;
+  const db = workspaceDatabase(workspace);
   await assertObjectRegistered(db, object_slug);
   const prepared = await prepareFields(db, object_slug, fields);
   if (prepared.length === 0) {
@@ -785,7 +785,7 @@ export async function updateRecord(
     );
   }
 
-  return await workspace.db.transaction(async (tx) => {
+  return await workspaceDatabase(workspace).transaction(async (tx) => {
     const exists = await exec(
       tx,
       "SELECT record_id FROM acrm_record WHERE object_slug = $1 AND record_id = $2",

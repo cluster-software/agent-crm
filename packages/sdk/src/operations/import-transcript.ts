@@ -19,7 +19,7 @@ import type {
   ParticipantInput,
   TranscriptPayload,
 } from "../integrations/transcript.js";
-import type { Workspace } from "../workspace.js";
+import { workspaceDatabase, type Workspace } from "../workspace.js";
 
 type ParticipantIdentifiersOut = {
   email?: string;
@@ -62,7 +62,7 @@ export async function importTranscript(
   workspace: Workspace,
   payload: TranscriptPayload,
 ): Promise<TranscriptImportResult> {
-  return await workspace.db.transaction((db) => importTranscriptInDatabase(db, payload));
+  return await workspaceDatabase(workspace).transaction((db) => importTranscriptInDatabase(db, payload));
 }
 
 async function importTranscriptInDatabase(

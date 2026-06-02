@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openTestWorkspace } from "../test/open-test-db.js";
 import {
-  exec,
   importGoogleContacts,
   Workspace,
+  type AcrmDatabase,
   type GoogleContact,
 } from "@agent-crm/sdk";
+import { exec } from "../../../sdk/src/db/execute.js";
 import { __test as gmailCommandTest } from "./import-gmail.js";
 
 const TEST_DATABASE_URL = "postgres://user:pass@localhost/acrm_test";
@@ -16,7 +17,7 @@ async function rowsFor(
   attribute_slug: string,
 ) {
   const r = await exec(
-    ws.db,
+    databaseForWorkspace(ws),
     `SELECT record_id, normalized_key, value_json FROM acrm_value
      WHERE object_slug = $1 AND attribute_slug = $2 AND active_until IS NULL
      ORDER BY normalized_key`,
@@ -27,6 +28,10 @@ async function rowsFor(
     normalized_key: (row.normalized_key as string | null) ?? null,
     value_json: row.value_json,
   }));
+}
+
+function databaseForWorkspace(workspace: Workspace): AcrmDatabase {
+  return (workspace as unknown as { db: AcrmDatabase }).db;
 }
 
 describe("importGoogleContacts", () => {
