@@ -1,5 +1,11 @@
 # @agent-crm/sdk
 
+## 2.0.0
+
+### Major Changes
+
+- 5c47466: Remove the raw SQL execution surface. The CLI no longer registers `acrm execute`, bundled skills no longer instruct agents to run raw SQL, and the SDK no longer exports raw query helpers, `Workspace.db`, or wildcard subpaths for private database modules.
+
 ## 1.0.4
 
 ### Patch Changes
