@@ -1,5 +1,11 @@
 # @agent-crm/cli
 
+## 2.0.1
+
+### Patch Changes
+
+- 8914202: Route `acrm import linkedin` through the cloud LinkedIn import endpoint instead of importing exported relations into a local workspace.
+
 ## 2.0.0
 
 ### Major Changes
