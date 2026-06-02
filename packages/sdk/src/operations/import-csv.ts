@@ -21,7 +21,7 @@ import {
 import { generateUuid } from "../lib/ids.js";
 import { nowIso } from "../lib/time.js";
 import { loadAttribute } from "../workspace/catalog.js";
-import type { Workspace } from "../workspace.js";
+import { workspaceDatabase, type Workspace } from "../workspace.js";
 import { runWithConcurrency } from "./run-with-concurrency.js";
 
 type CsvRow = Record<string, string>;
@@ -1103,7 +1103,7 @@ export async function importCsv(
   const detected = detectColumns(rows);
   args.onStart?.({ total: rows.length, detected });
 
-  return await workspace.db.transaction((db) =>
+  return await workspaceDatabase(workspace).transaction((db) =>
     importCsvRowsInDatabase(db, rows, detected, args)
   );
 }

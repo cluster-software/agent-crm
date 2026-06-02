@@ -1,12 +1,12 @@
 import { newDb } from "pg-mem";
 import {
-  PostgresDatabase,
   registerAllSchemas,
   seedAttributes,
   seedObjects,
   uuidv7,
   type AcrmDatabase,
 } from "@agent-crm/sdk";
+import { PostgresDatabase } from "../../../sdk/src/db/postgres.js";
 
 export async function openTestDatabase(): Promise<AcrmDatabase> {
   const mem = newDb({ noAstCoverageCheck: true });

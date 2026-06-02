@@ -2,15 +2,26 @@
 //
 // Most consumers should import from "@agent-crm/sdk" directly. A handful of
 // modules share symbol names (e.g. mapProfile in linkedin-mapping vs
-// x-mapping) — those are reachable via subpath imports like
+// x-mapping) — those are reachable via explicit subpath imports like
 // "@agent-crm/sdk/integrations/linkedin-mapping.js".
 
-export * from "./db/execute.js";
-export * from "./db/postgres.js";
-export * from "./db/providers/registry.js";
-export * from "./db/providers/types.js";
-export * from "./db/types.js";
-export * from "./db/upsert.js";
+export {
+  isPostgresDatabaseUrl,
+  resolveDatabaseProviderConfig,
+} from "./db/providers/registry.js";
+export type {
+  DatabasePoolOptions,
+  DatabaseProviderName,
+  DatabaseProviderResolveInput,
+  ResolvedDatabaseProviderConfig,
+} from "./db/providers/types.js";
+export type {
+  AcrmDatabase,
+  ExecuteResult,
+  JsonValue,
+  Row,
+  SqlValue,
+} from "./db/types.js";
 export * from "./domain/resolve-person.js";
 export * from "./domain/values.js";
 export * from "./agent-instructions.js";
@@ -33,7 +44,6 @@ export * from "./workspace/identity.js";
 export { seedAttributes, seedObjects } from "./workspace/seeds.js";
 export { Workspace } from "./workspace.js";
 
-export * from "./operations/execute.js";
 export * from "./operations/import-csv.js";
 export * from "./operations/import-communication.js";
 export * from "./operations/import-google.js";

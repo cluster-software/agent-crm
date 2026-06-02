@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { AcrmDatabase } from "../db/types.js";
 import { exec } from "../db/execute.js";
-import type { Workspace } from "../workspace.js";
+import { workspaceDatabase, type Workspace } from "../workspace.js";
 import { registerAllSchemas } from "./schemas/index.js";
 
 const LOCAL_WORKSPACE_ID_KEY = "local_workspace_id";
 
 export async function ensureWorkspaceIdentity(workspace: Workspace): Promise<string> {
-  return ensureWorkspaceIdentityForDatabase(workspace.db);
+  return ensureWorkspaceIdentityForDatabase(workspaceDatabase(workspace));
 }
 
 export async function ensureWorkspaceIdentityForDatabase(db: AcrmDatabase): Promise<string> {

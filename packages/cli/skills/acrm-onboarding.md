@@ -144,12 +144,9 @@ Both require `APIFY_API_TOKEN` in `.env` in the current project directory or in 
 For Gmail, do not add a separate confirmation or next-step message after
 the OAuth auth-window copy above.
 
-For local imports, after the import succeeds, show a short summary tied to
-what they actually have:
-
-```sh
-acrm execute "SELECT object_slug, COUNT(*) AS n FROM acrm_record GROUP BY object_slug" --json
-```
+For local imports, after the import succeeds, use the command output to show a
+short summary tied to what was imported. Do not run extra database inspection
+commands.
 
 Then suggest up to 2 valuable things they can do next, based on what got imported:
 

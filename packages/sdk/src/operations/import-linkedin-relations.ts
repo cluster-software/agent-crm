@@ -1,4 +1,4 @@
-import type { SqlValue } from "../db/types.js";
+import type { AcrmDatabase, SqlValue } from "../db/types.js";
 import { exec } from "../db/execute.js";
 import {
   prepareValueInsert,
@@ -14,7 +14,7 @@ import {
 } from "../domain/values.js";
 import { uuidv7 } from "../lib/uuidv7.js";
 import { nowIso } from "../lib/time.js";
-import type { Workspace } from "../workspace.js";
+import { workspaceDatabase, type Workspace } from "../workspace.js";
 import { seedAttributes, seedObjects } from "../workspace/seeds.js";
 
 export type LinkedinRelation = {
@@ -117,7 +117,7 @@ export async function importLinkedinRelations(
     relations.push(normalized);
   }
 
-  return await workspace.db.transaction((db) =>
+  return await workspaceDatabase(workspace).transaction((db) =>
     importNormalizedLinkedinRelations(db, relations, stats)
   );
 }
@@ -293,8 +293,8 @@ async function importNormalizedLinkedinRelations(
 }
 
 async function ensurePeopleSchema(workspace: Workspace): Promise<void> {
-  await seedObjects(workspace.db);
-  await seedAttributes(workspace.db);
+  await seedObjects(workspaceDatabase(workspace));
+  await seedAttributes(workspaceDatabase(workspace));
 }
 
 function normalizeRelation(relation: LinkedinRelation): NormalizedRelation | null {
@@ -775,7 +775,7 @@ class LinkedinRelationWriteBatcher {
   private records: Array<{ object_slug: ObjectSlug; record_id: string }> = [];
   private values: PreparedValueInsert[] = [];
 
-  constructor(private readonly db: Workspace["db"]) {}
+  constructor(private readonly db: AcrmDatabase) {}
 
   enqueueRecord(record: { object_slug: ObjectSlug; record_id: string }): void {
     this.records.push(record);

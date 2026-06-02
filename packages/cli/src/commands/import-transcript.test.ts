@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { AcrmDatabase } from "-crm/sdk";
+import type { AcrmDatabase } from "@agent-crm/sdk";
 import { openTestWorkspace } from "../test/open-test-db.js";
-import { exec } from "@agent-crm/sdk";
+import { exec } from "../../../sdk/src/db/execute.js";
 import {
   addMultiValue,
   insertRecord,
   setSingleValue,
-} from "@agent-crm/sdk";
+} from "../../../sdk/src/db/upsert.js";
 import { generateUuid } from "@agent-crm/sdk";
 import {
   importTranscript,

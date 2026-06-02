@@ -17,7 +17,7 @@ describe("bundled skills", () => {
       "utf8",
     );
 
-    expect(skill).not.toContain('acrm execute "SELECT 1" --json');
+    expect(skill).not.toContain("acrm " + "execute");
     expect(skill).not.toContain("ACRM_ERROR_NO_WORKSPACE");
     expect(skill).not.toContain("acrm init");
     expect(skill).not.toContain("acrm --version");

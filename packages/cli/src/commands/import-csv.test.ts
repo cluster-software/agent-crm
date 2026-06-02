@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { AcrmDatabase } from "-crm/sdk";
+import type { AcrmDatabase } from "@agent-crm/sdk";
 import { openTestWorkspace } from "../test/open-test-db.js";
-import { exec, importCsv, Workspace } from "@agent-crm/sdk";
+import { importCsv, Workspace } from "@agent-crm/sdk";
+import { exec } from "../../../sdk/src/db/execute.js";
 
 async function rowsForAttribute(
   db: AcrmDatabase,

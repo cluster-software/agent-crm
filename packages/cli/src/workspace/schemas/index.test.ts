@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { exec, registerAllSchemas } from "@agent-crm/sdk";
+import { registerAllSchemas } from "@agent-crm/sdk";
+import { exec } from "../../../../sdk/src/db/execute.js";
 import { openTestDatabase, openTestWorkspace } from "../../test/open-test-db.js";
 
 describe("registerAllSchemas", () => {

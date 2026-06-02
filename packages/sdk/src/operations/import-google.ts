@@ -14,7 +14,7 @@ import {
 } from "../domain/values.js";
 import { resolvePersonByIdentifiers } from "../domain/resolve-person.js";
 import { generateUuid } from "../lib/ids.js";
-import type { Workspace } from "../workspace.js";
+import { workspaceDatabase, type Workspace } from "../workspace.js";
 
 // Subset of the Google People API `Person` resource we care about for
 // onboarding. The CLI shells out to `gws people ... --page-all` and flattens
@@ -96,7 +96,7 @@ export async function importGoogleContacts(
   workspace: Workspace,
   args: ImportGoogleContactsArgs,
 ): Promise<ImportGoogleContactsResult> {
-  return await workspace.db.transaction((db) => importGoogleContactsInDatabase(db, args));
+  return await workspaceDatabase(workspace).transaction((db) => importGoogleContactsInDatabase(db, args));
 }
 
 async function importGoogleContactsInDatabase(

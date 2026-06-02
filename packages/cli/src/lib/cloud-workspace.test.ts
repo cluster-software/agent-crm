@@ -18,7 +18,8 @@ import {
   startCloudGranolaBackfill,
   startCloudLinkedinMessageBackfill,
 } from "./cloud-workspace.js";
-import { ERR, exec } from "@agent-crm/sdk";
+import { ERR } from "@agent-crm/sdk";
+import { exec } from "../../../sdk/src/db/execute.js";
 import { openTestWorkspace } from "../test/open-test-db.js";
 
 const TEST_DATABASE_URL = "postgres://user:pass@localhost/acrm_test";

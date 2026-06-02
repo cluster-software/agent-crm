@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { exec, importCommunicationBatch, Workspace } from "@agent-crm/sdk";
+import { importCommunicationBatch, Workspace } from "@agent-crm/sdk";
+import { exec } from "../../../sdk/src/db/execute.js";
 import { openTestWorkspace } from "../test/open-test-db.js";
 
 describe("importCommunicationBatch", () => {

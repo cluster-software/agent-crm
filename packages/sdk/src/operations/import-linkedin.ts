@@ -4,7 +4,7 @@ import {
 } from "../integrations/apify-linkedin.js";
 import { mapProfile } from "../integrations/linkedin-mapping.js";
 import { nowIso } from "../lib/time.js";
-import type { Workspace } from "../workspace.js";
+import { workspaceDatabase, type Workspace } from "../workspace.js";
 import {
   upsertMappedLinkedinProfile,
   type LinkedinProfileUpsertResult,
@@ -48,7 +48,7 @@ export async function importLinkedinProfile(
     cache_hit: cacheHit,
   };
 
-  return await workspace.db.transaction((db) =>
+  return await workspaceDatabase(workspace).transaction((db) =>
     upsertMappedLinkedinProfile(db, {
       url,
       cachePath,

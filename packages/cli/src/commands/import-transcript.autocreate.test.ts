@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { AcrmDatabase } from "-crm/sdk";
+import type { AcrmDatabase } from "@agent-crm/sdk";
 import { openTestWorkspace } from "../test/open-test-db.js";
-import { exec } from "@agent-crm/sdk";
+import { exec } from "../../../sdk/src/db/execute.js";
 import { importTranscript, Workspace } from "@agent-crm/sdk";
 
 async function emailsFor(db: AcrmDatabase, personId: string): Promise<string[]> {

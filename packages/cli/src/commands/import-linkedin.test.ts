@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ERR, Workspace, exec, type AcrmError } from "@agent-crm/sdk";
+import { ERR, Workspace, type AcrmDatabase, type AcrmError } from "@agent-crm/sdk";
+import { exec } from "../../../sdk/src/db/execute.js";
 import { __test as linkedinCommandTest } from "./import-linkedin.js";
 import {
   LINKEDIN_NOT_CONNECTED_HINT,
@@ -156,7 +157,7 @@ async function singleValue(
   objectSlug = "people",
 ): Promise<string | null> {
   const result = await exec(
-    ws.db,
+    databaseForWorkspace(ws),
     `SELECT value_json
      FROM acrm_value
      WHERE object_slug = $2
@@ -168,4 +169,8 @@ async function singleValue(
   const raw = result.rows[0]?.value_json;
   const parsed = typeof raw === "string" ? JSON.parse(raw) as { value?: string; timestamp?: string } : raw as { value?: string; timestamp?: string } | undefined;
   return parsed?.value ?? parsed?.timestamp ?? null;
+}
+
+function databaseForWorkspace(workspace: Workspace): AcrmDatabase {
+  return (workspace as unknown as { db: AcrmDatabase }).db;
 }

@@ -5,7 +5,6 @@ import {
   AcrmError,
   ERR,
   Workspace,
-  exec,
   ensureWorkspaceIdentity,
   type AcrmDatabase,
   type CommunicationImportBatch,
@@ -176,7 +175,7 @@ export async function ensureCloudWorkspaceMetadataForWorkspace(
       ? readLegacyCloudMetadata(options.legacyMetadataDir)
       : {};
     const localWorkspaceId = await ensureWorkspaceIdentity(workspace);
-    return await ensureCloudWorkspaceMetadataInDatabase(workspace.db, {
+    return await ensureCloudWorkspaceMetadataInDatabase(databaseForWorkspace(workspace), {
       workspaceId: preferred.workspaceId,
       clientToken: preferred.clientToken,
       orgId: preferred.orgId,
@@ -187,11 +186,14 @@ export async function ensureCloudWorkspaceMetadataForWorkspace(
   }
 }
 
+function databaseForWorkspace(workspace: Workspace): AcrmDatabase {
+  return (workspace as unknown as { db: AcrmDatabase }).db;
+}
+
 async function readCloudMetadata(db: AcrmDatabase): Promise<CloudMetadata> {
   const keys = Object.values(CLOUD_METADATA_KEYS);
   const placeholders = keys.map((_, index) => `$${index + 1}`).join(", ");
-  const result = await exec(
-    db,
+  const result = await db.execute(
     `SELECT key, value
      FROM acrm_metadata
      WHERE key IN (${placeholders})`,
@@ -220,8 +222,7 @@ async function insertCloudMetadataBundleIfMissing(
   db: AcrmDatabase,
   metadata: Required<Pick<CloudMetadata, "workspaceId" | "clientToken" | "createdAt">> & CloudMetadata,
 ): Promise<void> {
-  await exec(
-    db,
+  await db.execute(
     `INSERT INTO acrm_metadata (key, value)
      VALUES ($1, $2)
      ON CONFLICT (key) DO NOTHING`,
@@ -230,8 +231,7 @@ async function insertCloudMetadataBundleIfMissing(
 }
 
 async function writeCloudMetadata(db: AcrmDatabase, metadata: Required<Pick<CloudMetadata, "workspaceId" | "clientToken" | "createdAt">> & CloudMetadata): Promise<void> {
-  await exec(
-    db,
+  await db.execute(
     `INSERT INTO acrm_metadata (key, value)
      VALUES ($1, $2)
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
@@ -247,8 +247,7 @@ async function writeCloudMetadata(db: AcrmDatabase, metadata: Required<Pick<Clou
   ];
   for (const [key, value] of entries) {
     if (value == null) continue;
-    await exec(
-      db,
+    await db.execute(
       `INSERT INTO acrm_metadata (key, value)
        VALUES ($1, $2)
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,

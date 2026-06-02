@@ -10,9 +10,41 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./*.js": {
-      "types": "./dist/*.d.ts",
-      "default": "./dist/*.js"
+    "./integrations/apify-linkedin.js": {
+      "types": "./dist/integrations/apify-linkedin.d.ts",
+      "default": "./dist/integrations/apify-linkedin.js"
+    },
+    "./integrations/apify-post.js": {
+      "types": "./dist/integrations/apify-post.d.ts",
+      "default": "./dist/integrations/apify-post.js"
+    },
+    "./integrations/apify-x.js": {
+      "types": "./dist/integrations/apify-x.d.ts",
+      "default": "./dist/integrations/apify-x.js"
+    },
+    "./integrations/google-oauth-client.js": {
+      "types": "./dist/integrations/google-oauth-client.d.ts",
+      "default": "./dist/integrations/google-oauth-client.js"
+    },
+    "./integrations/linkedin-mapping.js": {
+      "types": "./dist/integrations/linkedin-mapping.d.ts",
+      "default": "./dist/integrations/linkedin-mapping.js"
+    },
+    "./integrations/post-mapping.js": {
+      "types": "./dist/integrations/post-mapping.d.ts",
+      "default": "./dist/integrations/post-mapping.js"
+    },
+    "./integrations/transcript.js": {
+      "types": "./dist/integrations/transcript.d.ts",
+      "default": "./dist/integrations/transcript.js"
+    },
+    "./integrations/x-mapping.js": {
+      "types": "./dist/integrations/x-mapping.d.ts",
+      "default": "./dist/integrations/x-mapping.js"
+    },
+    "./workspace/identity.js": {
+      "types": "./dist/workspace/identity.d.ts",
+      "default": "./dist/workspace/identity.js"
     }
   },
   "files": [

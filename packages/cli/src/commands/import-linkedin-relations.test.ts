@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
-  addMultiValue,
-  exec,
   importLinkedinRelations,
-  insertRecord,
-  setSingleValue,
   Workspace,
+  type AcrmDatabase,
   type LinkedinRelation,
 } from "@agent-crm/sdk";
+import { exec } from "../../../sdk/src/db/execute.js";
+import {
+  addMultiValue,
+  insertRecord,
+  setSingleValue,
+} from "../../../sdk/src/db/upsert.js";
 import { openTestWorkspace } from "../test/open-test-db.js";
 
 describe("importLinkedinRelations", () => {
@@ -199,7 +202,7 @@ function relation(overrides: Partial<LinkedinRelation>): LinkedinRelation {
 
 async function valueFor(ws: Workspace, objectSlug: string, attributeSlug: string): Promise<string | null> {
   const result = await exec(
-    ws.db,
+    databaseForWorkspace(ws),
     `SELECT value_json
      FROM acrm_value
      WHERE object_slug = $1
@@ -223,7 +226,7 @@ async function referenceCount(
   refObject: string,
 ): Promise<number> {
   const result = await exec(
-    ws.db,
+    databaseForWorkspace(ws),
     `SELECT COUNT(*) AS n
      FROM acrm_value
      WHERE object_slug = $1
@@ -237,7 +240,7 @@ async function referenceCount(
 
 async function countRecords(ws: Workspace, objectSlug: string): Promise<number> {
   const result = await exec(
-    ws.db,
+    databaseForWorkspace(ws),
     "SELECT COUNT(*) AS n FROM acrm_record WHERE object_slug = $1",
     [objectSlug],
   );
@@ -246,7 +249,7 @@ async function countRecords(ws: Workspace, objectSlug: string): Promise<number> 
 
 async function countValues(ws: Workspace, attributeSlug: string): Promise<number> {
   const result = await exec(
-    ws.db,
+    databaseForWorkspace(ws),
     `SELECT COUNT(*) AS n
      FROM acrm_value
      WHERE object_slug = 'people'
@@ -259,8 +262,12 @@ async function countValues(ws: Workspace, attributeSlug: string): Promise<number
 
 async function countAllValues(ws: Workspace): Promise<number> {
   const result = await exec(
-    ws.db,
+    databaseForWorkspace(ws),
     "SELECT COUNT(*) AS n FROM acrm_value WHERE active_until IS NULL",
   );
   return Number(result.rows[0]?.n ?? 0);
+}
+
+function databaseForWorkspace(workspace: Workspace): AcrmDatabase {
+  return (workspace as unknown as { db: AcrmDatabase }).db;
 }

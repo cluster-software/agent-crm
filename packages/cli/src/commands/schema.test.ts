@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { openTestWorkspace } from "../test/open-test-db.js";
-import { exec } from "@agent-crm/sdk";
+import { exec } from "../../../sdk/src/db/execute.js";
 import { createRecord, updateRecord, Workspace } from "@agent-crm/sdk";
 import { AcrmError } from "@agent-crm/sdk";
 import { encode } from "@agent-crm/sdk";
