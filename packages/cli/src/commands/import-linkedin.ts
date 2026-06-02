@@ -3,13 +3,9 @@ import type { Command } from "commander";
 import {
   AcrmError,
   ERR,
-  importCommunicationBatch,
-  importLinkedinRelations,
   importLinkedinProfile,
   normalizeLinkedinUrl,
   type AcrmDatabase,
-  type CommunicationImportBatch,
-  type CommunicationImportResult,
   type ImportLinkedinRelationsResult,
   type LinkedinImportResult,
   type LinkedinRelation,
@@ -20,8 +16,7 @@ import { loadDotenv } from "../lib/dotenv.js";
 import {
   DEFAULT_SYNC_ENGINE_URL,
   ensureCloudWorkspaceMetadataForWorkspace,
-  fetchCloudCommunicationExport,
-  fetchCloudLinkedinRelationsExport,
+  importCloudLinkedinRelations,
   readCloudSessionContext,
   startCloudLinkedinMessageBackfill,
 } from "../lib/cloud-workspace.js";
@@ -31,7 +26,6 @@ type Opts = {
   refresh?: boolean;
   cache?: boolean; // commander negation: --no-cache → cache=false
   signals?: boolean;
-  sync?: boolean;
   cutoffDate?: string;
 };
 
@@ -39,9 +33,8 @@ export function attachLinkedinSubcommand(parent: Command): void {
   parent
     .command("linkedin [url-or-slug]")
     .description(
-      "With no URL, import existing LinkedIn contacts from the connected account. With a LinkedIn profile URL (or `/in/<slug>`), import one person locally via Apify. For a LinkedIn post URL instead, use `acrm import post`.",
+      "With no URL, import existing LinkedIn contacts into the cloud workspace. With a LinkedIn profile URL (or `/in/<slug>`), import one person locally via Apify. For a LinkedIn post URL instead, use `acrm import post`.",
     )
-    .option("--sync", "pull LinkedIn messages from Agent CRM's hosted sync engine into this workspace")
     .option("--cutoff-date <YYYY-MM-DD>", "only import LinkedIn contacts connected on or after this date")
     .option("--refresh", "bypass cache and re-fetch from Apify")
     .option("--no-cache", "do not write the response to cache")
@@ -52,19 +45,6 @@ export function attachLinkedinSubcommand(parent: Command): void {
         | undefined;
       setJsonMode(root?.json);
       try {
-        if (opts.sync) {
-          if (urlOrSlug) {
-            throw new AcrmError("--sync does not accept a LinkedIn profile URL", ERR.INVALID_INPUT);
-          }
-          if (opts.cutoffDate) {
-            throw new AcrmError("--sync does not accept --cutoff-date", ERR.INVALID_INPUT);
-          }
-          const result = await runSyncLinkedin({
-            workspace: root?.workspace,
-          });
-          ok(result);
-          return;
-        }
         if (!urlOrSlug) {
           const result = await runImportLinkedinNetwork({
             workspace: root?.workspace,
@@ -115,7 +95,7 @@ async function runImportLinkedinNetwork(opts: { workspace?: string; db?: AcrmDat
 }> {
   const cloudSession = readCloudSessionContext();
   if (cloudSession) {
-    const { relations, company_enrichment } = await fetchCloudLinkedinRelationsExport({
+    const { relations, stats, company_enrichment } = await importCloudLinkedinRelations({
       syncEngineUrl: cloudSession.syncEngineUrl,
       workspaceId: cloudSession.workspaceId,
       sessionToken: cloudSession.desktopSessionToken,
@@ -139,14 +119,7 @@ async function runImportLinkedinNetwork(opts: { workspace?: string; db?: AcrmDat
     return {
       workspace_id: cloudSession.workspaceId,
       sync_engine_url: cloudSession.syncEngineUrl,
-      stats: {
-        relations_seen: relations.length,
-        people_created: 0,
-        people_updated: 0,
-        companies_created: 0,
-        companies_updated: 0,
-        relations_skipped_no_key: 0,
-      },
+      stats,
       ...(company_enrichment ? { company_enrichment } : {}),
       ...(messageBackfill ? { message_backfill: messageBackfill } : {}),
       ...(messageBackfillWarning ? { message_backfill_warning: messageBackfillWarning } : {}),
@@ -164,71 +137,34 @@ async function runImportLinkedinNetwork(opts: { workspace?: string; db?: AcrmDat
     orgId: process.env.ACRM_CLOUD_ORG_ID,
   }, { db: opts.db });
   const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
-  const { relations } = await fetchCloudLinkedinRelationsExport({
+  const { relations, stats, company_enrichment } = await importCloudLinkedinRelations({
     syncEngineUrl,
     workspaceId: metadata.workspaceId,
     clientToken: metadata.clientToken,
     cutoffDate: opts.cutoffDate,
+    enrichCompanies: true,
   });
-  const ws = await openResolvedWorkspace(workspaceFile, opts.db);
-  try {
-    const result = await importLinkedinRelations(ws, { relations });
-    let stats = result.stats;
-    let companyEnrichment: unknown;
-    let companyEnrichmentWarning: string | undefined;
-    let messageBackfill: { started: number; integration_account_ids: string[]; scoped?: boolean } | undefined;
-    let messageBackfillWarning: string | undefined;
-    if (relations.length > 0) {
-      try {
-        messageBackfill = await startCloudLinkedinMessageBackfill({
-          syncEngineUrl,
-          workspaceId: metadata.workspaceId,
-          clientToken: metadata.clientToken,
-          scope: linkedinMessageBackfillScope(relations),
-        });
-      } catch (error) {
-        messageBackfillWarning = error instanceof Error ? error.message : String(error);
-      }
-      try {
-        const enriched = await fetchCloudLinkedinRelationsExport({
-          syncEngineUrl,
-          workspaceId: metadata.workspaceId,
-          clientToken: metadata.clientToken,
-          cutoffDate: opts.cutoffDate,
-          enrichCompanies: true,
-        });
-        companyEnrichment = enriched.company_enrichment;
-        const enrichedResult = await importLinkedinRelations(ws, { relations: enriched.relations });
-        stats = mergeLinkedinRelationStats(stats, enrichedResult.stats);
-      } catch (error) {
-        companyEnrichmentWarning = error instanceof Error ? error.message : String(error);
-      }
+  let messageBackfill: { started: number; integration_account_ids: string[]; scoped?: boolean } | undefined;
+  let messageBackfillWarning: string | undefined;
+  if (relations.length > 0) {
+    try {
+      messageBackfill = await startCloudLinkedinMessageBackfill({
+        syncEngineUrl,
+        workspaceId: metadata.workspaceId,
+        clientToken: metadata.clientToken,
+        scope: linkedinMessageBackfillScope(relations),
+      });
+    } catch (error) {
+      messageBackfillWarning = error instanceof Error ? error.message : String(error);
     }
-    return {
-      workspace_id: metadata.workspaceId,
-      sync_engine_url: syncEngineUrl,
-      stats,
-      ...(companyEnrichment ? { company_enrichment: companyEnrichment } : {}),
-      ...(companyEnrichmentWarning ? { company_enrichment_warning: companyEnrichmentWarning } : {}),
-      ...(messageBackfill ? { message_backfill: messageBackfill } : {}),
-      ...(messageBackfillWarning ? { message_backfill_warning: messageBackfillWarning } : {}),
-    };
-  } finally {
-    await ws.close();
   }
-}
-
-function mergeLinkedinRelationStats(
-  left: ImportLinkedinRelationsResult["stats"],
-  right: ImportLinkedinRelationsResult["stats"],
-): ImportLinkedinRelationsResult["stats"] {
   return {
-    relations_seen: left.relations_seen,
-    people_created: left.people_created + right.people_created,
-    people_updated: left.people_updated + right.people_updated,
-    companies_created: left.companies_created + right.companies_created,
-    companies_updated: left.companies_updated + right.companies_updated,
-    relations_skipped_no_key: left.relations_skipped_no_key,
+    workspace_id: metadata.workspaceId,
+    sync_engine_url: syncEngineUrl,
+    stats,
+    ...(company_enrichment ? { company_enrichment } : {}),
+    ...(messageBackfill ? { message_backfill: messageBackfill } : {}),
+    ...(messageBackfillWarning ? { message_backfill_warning: messageBackfillWarning } : {}),
   };
 }
 
@@ -261,69 +197,6 @@ function cleanString(value: unknown): string | null {
 
 function uniqueStrings(values: Array<string | null>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value)))];
-}
-
-async function runSyncLinkedin(opts: { workspace?: string; db?: AcrmDatabase }): Promise<{
-  workspace_id: string;
-  sync_engine_url: string;
-  stats: CommunicationImportResult["stats"];
-}> {
-  const cloudSession = readCloudSessionContext();
-  if (cloudSession) {
-    const batch = await fetchCloudCommunicationExport({
-      syncEngineUrl: cloudSession.syncEngineUrl,
-      workspaceId: cloudSession.workspaceId,
-      sessionToken: cloudSession.desktopSessionToken,
-      provider: "linkedin",
-    });
-    return {
-      workspace_id: cloudSession.workspaceId,
-      sync_engine_url: cloudSession.syncEngineUrl,
-      stats: communicationBatchStats(batch),
-    };
-  }
-
-  const workspaceFile = resolveWorkspacePath(opts.workspace);
-  const workspaceDir = localWorkspaceDir(workspaceFile);
-  loadDotenv(workspaceDir);
-  loadDotenv(process.cwd());
-
-  const metadata = await ensureCloudWorkspaceMetadataForWorkspace(workspaceFile, {
-    workspaceId: process.env.ACRM_CLOUD_WORKSPACE_ID,
-    clientToken: process.env.ACRM_CLOUD_WORKSPACE_CLIENT_TOKEN,
-    orgId: process.env.ACRM_CLOUD_ORG_ID,
-  }, { db: opts.db });
-  const syncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL ?? DEFAULT_SYNC_ENGINE_URL;
-  const batch = await fetchCloudCommunicationExport({
-    syncEngineUrl,
-    workspaceId: metadata.workspaceId,
-    clientToken: metadata.clientToken,
-    provider: "linkedin",
-  });
-  const ws = await openResolvedWorkspace(workspaceFile, opts.db);
-  try {
-    const result = await importCommunicationBatch(ws, batch);
-    return {
-      workspace_id: metadata.workspaceId,
-      sync_engine_url: syncEngineUrl,
-      stats: result.stats,
-    };
-  } finally {
-    await ws.close();
-  }
-}
-
-function communicationBatchStats(batch: CommunicationImportBatch): CommunicationImportResult["stats"] {
-  return {
-    people_seen: Array.isArray(batch.people) ? batch.people.length : 0,
-    people_created: Array.isArray(batch.people) ? batch.people.length : 0,
-    companies_seen: 0,
-    companies_created: 0,
-    communication_threads_seen: Array.isArray(batch.communicationThreads) ? batch.communicationThreads.length : 0,
-    communication_threads_created: Array.isArray(batch.communicationThreads) ? batch.communicationThreads.length : 0,
-    communication_messages_seen: Array.isArray(batch.communicationMessages) ? batch.communicationMessages.length : 0,
-    communication_messages_created: Array.isArray(batch.communicationMessages) ? batch.communicationMessages.length : 0,
-  };
 }
 
 async function runImportLinkedin(

@@ -9,9 +9,9 @@ import {
   fetchCloudCommunicationExport,
   fetchCloudGranolaTranscriptsExport,
   fetchCloudIntegrationStatus,
-  fetchCloudLinkedinRelationsExport,
   GRANOLA_NOT_CONNECTED_HINT,
   GRANOLA_NOT_CONNECTED_MESSAGE,
+  importCloudLinkedinRelations,
   LINKEDIN_NOT_CONNECTED_HINT,
   LINKEDIN_NOT_CONNECTED_MESSAGE,
   registerCloudWorkspace,
@@ -436,7 +436,7 @@ describe("cloud workspace metadata", () => {
     );
   });
 
-  it("fetches LinkedIn relations export data with a cutoff date and company enrichment", async () => {
+  it("imports LinkedIn relations with a cutoff date and company enrichment", async () => {
     const relations = [
       {
         object: "UserRelation",
@@ -444,24 +444,38 @@ describe("cloud workspace metadata", () => {
         public_profile_url: "https://www.linkedin.com/in/member-1/",
       },
     ];
+    const stats = {
+      relations_seen: 1,
+      people_created: 1,
+      people_updated: 0,
+      companies_created: 1,
+      companies_updated: 0,
+      relations_skipped_no_key: 0,
+    };
     const company_enrichment = { requested: true, provider: "fiber" };
-    const fetchMock = vi.fn(async () => Response.json({ ok: true, data: { relations, company_enrichment } }));
+    const fetchMock = vi.fn(async () => Response.json({ ok: true, data: { relations, stats, company_enrichment } }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(fetchCloudLinkedinRelationsExport({
+    await expect(importCloudLinkedinRelations({
       syncEngineUrl: "https://sync.example.com",
       workspaceId: "workspace-1",
       clientToken: "client-token-1",
       cutoffDate: "2026-04-25",
       enrichCompanies: true,
-    })).resolves.toEqual({ relations, company_enrichment });
+    })).resolves.toEqual({ relations, stats, company_enrichment });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://sync.example.com/workspaces/workspace-1/integrations/linkedin/relations/export?cutoff_date=2026-04-25&enrich_companies=1",
+      "https://sync.example.com/workspaces/workspace-1/integrations/linkedin/relations/import",
       {
+        method: "POST",
         headers: {
           authorization: "Bearer client-token-1",
+          "content-type": "application/json",
         },
+        body: JSON.stringify({
+          cutoff_date: "2026-04-25",
+          enrich_companies: true,
+        }),
       },
     );
   });
@@ -494,14 +508,14 @@ describe("cloud workspace metadata", () => {
     );
   });
 
-  it("turns LinkedIn not-connected export responses into an actionable error", async () => {
+  it("turns LinkedIn not-connected import responses into an actionable error", async () => {
     const fetchMock = vi.fn(async () => Response.json({
       ok: false,
       error: { code: "linkedin_not_connected" },
     }, { status: 409 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(fetchCloudLinkedinRelationsExport({
+    await expect(importCloudLinkedinRelations({
       syncEngineUrl: "https://sync.example.com",
       workspaceId: "workspace-1",
       clientToken: "client-token-1",

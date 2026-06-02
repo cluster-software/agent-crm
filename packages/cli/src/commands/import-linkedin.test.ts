@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ERR, Workspace, type AcrmDatabase, type AcrmError } from "@agent-crm/sdk";
-import { exec } from "../../../sdk/src/db/execute.js";
+import { ERR, type AcrmError } from "@agent-crm/sdk";
 import { __test as linkedinCommandTest } from "./import-linkedin.js";
 import {
   LINKEDIN_NOT_CONNECTED_HINT,
@@ -12,16 +11,27 @@ const TEST_DATABASE_URL = "postgres://user:pass@localhost/acrm_test";
 
 describe("import linkedin command", () => {
   const oldSyncEngineUrl = process.env.ACRM_SYNC_ENGINE_URL;
+  const oldCloudWorkspaceId = process.env.ACRM_CLOUD_WORKSPACE_ID;
+  const oldCloudOrgId = process.env.ACRM_CLOUD_ORG_ID;
+  const oldDesktopSessionToken = process.env.ACRM_DESKTOP_SESSION_TOKEN;
 
   afterEach(() => {
     vi.unstubAllGlobals();
     if (oldSyncEngineUrl === undefined) delete process.env.ACRM_SYNC_ENGINE_URL;
     else process.env.ACRM_SYNC_ENGINE_URL = oldSyncEngineUrl;
+    if (oldCloudWorkspaceId === undefined) delete process.env.ACRM_CLOUD_WORKSPACE_ID;
+    else process.env.ACRM_CLOUD_WORKSPACE_ID = oldCloudWorkspaceId;
+    if (oldCloudOrgId === undefined) delete process.env.ACRM_CLOUD_ORG_ID;
+    else process.env.ACRM_CLOUD_ORG_ID = oldCloudOrgId;
+    if (oldDesktopSessionToken === undefined) delete process.env.ACRM_DESKTOP_SESSION_TOKEN;
+    else process.env.ACRM_DESKTOP_SESSION_TOKEN = oldDesktopSessionToken;
   });
 
-  it("imports relations from the hosted sync-engine export endpoint", async () => {
-    const db = await openTestWorkspace();
+  it("imports relations through the hosted sync-engine import endpoint", async () => {
     process.env.ACRM_SYNC_ENGINE_URL = "https://sync.example.com";
+    process.env.ACRM_CLOUD_WORKSPACE_ID = "workspace-1";
+    process.env.ACRM_CLOUD_ORG_ID = "org-1";
+    process.env.ACRM_DESKTOP_SESSION_TOKEN = "desktop-token";
     const baseRelation = {
       object: "UserRelation",
       member_id: "member-1",
@@ -32,6 +42,8 @@ describe("import linkedin command", () => {
       public_identifier: "ada-lovelace",
       public_profile_url: "https://www.linkedin.com/in/ada-lovelace/",
       profile_picture_url: "https://media.example.com/ada.jpg",
+      company_name: "Analytical Engines",
+      company_linkedin_url: "https://www.linkedin.com/company/analytical-engines/",
     };
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
       const parsed = new URL(url);
@@ -43,73 +55,66 @@ describe("import linkedin command", () => {
           scoped: true,
         });
       }
-      const enrichCompanies = parsed.searchParams.get("enrich_companies") === "1";
       return Response.json({
         ok: true,
         data: {
-          relations: [
-            enrichCompanies
-              ? {
-                ...baseRelation,
-                company_name: "Analytical Engines",
-                company_linkedin_url: "https://www.linkedin.com/company/analytical-engines/",
-              }
-              : baseRelation,
-          ],
-          ...(enrichCompanies ? { company_enrichment: { requested: true, provider: "fiber" } } : {}),
+          relations: [baseRelation],
+          stats: {
+            relations_seen: 1,
+            people_created: 1,
+            people_updated: 0,
+            companies_created: 1,
+            companies_updated: 0,
+            relations_skipped_no_key: 0,
+          },
+          company_enrichment: { requested: true, provider: "fiber" },
         },
       });
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    try {
-      const result = await linkedinCommandTest.runImportLinkedinNetwork({
-        workspace: TEST_DATABASE_URL,
-        db,
-      });
+    const result = await linkedinCommandTest.runImportLinkedinNetwork({});
 
-      expect(result.stats.people_created).toBe(1);
-      expect(result.stats.companies_created).toBe(1);
-      expect(result.message_backfill).toEqual({
-        started: 1,
-        integration_account_ids: ["acct-1"],
-        scoped: true,
-      });
-      expect(fetchMock).toHaveBeenCalledTimes(3);
-      const [url] = fetchMock.mock.calls[0] as [string];
-      const [backfillUrl, backfillInit] = fetchMock.mock.calls[1] as [string, RequestInit];
-      const [enrichedUrl] = fetchMock.mock.calls[2] as [string];
-      expect(url).toContain("/integrations/linkedin/relations/export");
-      expect(url).not.toContain("enrich_companies=1");
-      expect(backfillUrl).toContain("/integrations/linkedin/messages/backfill");
-      expect(JSON.parse(String(backfillInit.body))).toEqual({
-        scope: {
-          providerPersonIds: ["member-1"],
-          linkedinUrls: ["linkedin.com/in/ada-lovelace"],
-          publicIdentifiers: ["ada-lovelace"],
-        },
-      });
-      expect(enrichedUrl).toContain("enrich_companies=1");
-      const reopened = Workspace.fromDatabase(db);
-      try {
-        await expect(singleValue(reopened, "linkedin_url")).resolves.toBe("linkedin.com/in/ada-lovelace");
-        await expect(singleValue(reopened, "profile_picture_url")).resolves.toBe("https://media.example.com/ada.jpg");
-        await expect(singleValue(reopened, "linkedin_connected_at")).resolves.toBe("2025-03-15T15:16:09.000Z");
-        await expect(singleValue(reopened, "linkedin_url", "companies")).resolves.toBe("linkedin.com/company/analytical-engines");
-      } finally {
-        await reopened.close();
-      }
-    } finally {
-      await db.close();
-    }
+    expect(result.stats.people_created).toBe(1);
+    expect(result.stats.companies_created).toBe(1);
+    expect(result.message_backfill).toEqual({
+      started: 1,
+      integration_account_ids: ["acct-1"],
+      scoped: true,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [backfillUrl, backfillInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(url).toBe("https://sync.example.com/workspaces/workspace-1/integrations/linkedin/relations/import");
+    expect(init.method).toBe("POST");
+    expect(init.headers).toMatchObject({ authorization: "Bearer desktop-token" });
+    expect(JSON.parse(String(init.body))).toEqual({ enrich_companies: true });
+    expect(backfillUrl).toContain("/integrations/linkedin/messages/backfill");
+    expect(JSON.parse(String(backfillInit.body))).toEqual({
+      scope: {
+        providerPersonIds: ["member-1"],
+        linkedinUrls: ["linkedin.com/in/ada-lovelace"],
+        publicIdentifiers: ["ada-lovelace"],
+      },
+    });
   });
 
-  it("passes cutoff-date to the relations export endpoint", async () => {
+  it("passes cutoff-date to the relations import endpoint", async () => {
     const db = await openTestWorkspace();
     process.env.ACRM_SYNC_ENGINE_URL = "https://sync.example.com";
     const fetchMock = vi.fn(async () => Response.json({
       ok: true,
-      data: { relations: [] },
+      data: {
+        relations: [],
+        stats: {
+          relations_seen: 0,
+          people_created: 0,
+          people_updated: 0,
+          companies_created: 0,
+          companies_updated: 0,
+          relations_skipped_no_key: 0,
+        },
+      },
     }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -120,10 +125,14 @@ describe("import linkedin command", () => {
         cutoffDate: "2026-04-25",
       });
 
-      const [url] = fetchMock.mock.calls[0] as [string];
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
       expect(url).toBe(
-        `https://sync.example.com/workspaces/${encodeURIComponent(result.workspace_id)}/integrations/linkedin/relations/export?cutoff_date=2026-04-25`,
+        `https://sync.example.com/workspaces/${encodeURIComponent(result.workspace_id)}/integrations/linkedin/relations/import`,
       );
+      expect(JSON.parse(String(init.body))).toEqual({
+        cutoff_date: "2026-04-25",
+        enrich_companies: true,
+      });
     } finally {
       await db.close();
     }
@@ -150,27 +159,3 @@ describe("import linkedin command", () => {
     }
   });
 });
-
-async function singleValue(
-  ws: Workspace,
-  attributeSlug: string,
-  objectSlug = "people",
-): Promise<string | null> {
-  const result = await exec(
-    databaseForWorkspace(ws),
-    `SELECT value_json
-     FROM acrm_value
-     WHERE object_slug = $2
-       AND attribute_slug = $1
-       AND active_until IS NULL
-     LIMIT 1`,
-    [attributeSlug, objectSlug],
-  );
-  const raw = result.rows[0]?.value_json;
-  const parsed = typeof raw === "string" ? JSON.parse(raw) as { value?: string; timestamp?: string } : raw as { value?: string; timestamp?: string } | undefined;
-  return parsed?.value ?? parsed?.timestamp ?? null;
-}
-
-function databaseForWorkspace(workspace: Workspace): AcrmDatabase {
-  return (workspace as unknown as { db: AcrmDatabase }).db;
-}
