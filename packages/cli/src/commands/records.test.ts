@@ -8,7 +8,11 @@ import {
   setSingleValue,
 } from "../../../sdk/src/db/upsert.js";
 import { generateUuid } from "@agent-crm/sdk";
-import { dedupeRecords, importTranscript, Workspace } from "@agent-crm/sdk";
+import {
+  dedupeRecords,
+  importTranscript,
+  Workspace,
+} from "@agent-crm/sdk";
 
 async function seedPerson(
   db: AcrmDatabase,
