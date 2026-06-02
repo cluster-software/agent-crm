@@ -7,6 +7,7 @@ import { registerInit } from "../commands/init.js";
 import { registerExecute } from "../commands/execute.js";
 import { registerRecords } from "../commands/records.js";
 import { registerSchema } from "../commands/schema.js";
+import { registerDeals } from "../commands/deals.js";
 import { registerSignals } from "../commands/signals.js";
 import { registerImport, getOrCreateImportCommand } from "../commands/import.js";
 import { registerConnect } from "../commands/connect.js";
@@ -57,8 +58,8 @@ Data model:
 
   Need a different shape (hiring pipeline, fundraising, projects, …)? Register
   a custom object: \`acrm object create candidates\`, then add fields with
-  \`acrm attribute add\`. Don't coerce non-sales data into \`deals\` — the
-  \`deals.stage\` enum is locked to sales values (lead/in_progress/won/lost).
+  \`acrm attribute add\`. Don't coerce non-sales data into \`deals\`; use
+  \`acrm deals pipeline set\` only for sales-opportunity workflows.
 
 Typical flow:
   acrm init                       initialize the EAV schema in Neon, Supabase, or Postgres
@@ -73,6 +74,7 @@ Typical flow:
   acrm import post <url>          add a LinkedIn or X **post** by URL — upserts the author as a person and stores the post (use when a user shares a post link they want to track)
   acrm import transcript          import a meeting transcript — use \`--from <provider>\` for the fast path, or pipe JSON via stdin / \`--file\`
   acrm execute "SELECT ..."       run SQL against the workspace
+  acrm deals pipeline set --stage lead:Lead --stage closed_won:"Closed Won" --stage closed_lost:"Closed Lost"
   acrm records create deals --field name=... --field stage=...  create a single record
   acrm records update candidates <id> --field stage=screen      advance / edit fields on an existing record
   acrm records dedupe people --keep <id> --discard <id>   collapse two duplicate records into one
@@ -122,6 +124,7 @@ attachTranscriptSubcommand(getOrCreateImportCommand(program));
 registerExecute(program);
 registerRecords(program);
 registerSchema(program);
+registerDeals(program);
 registerSignals(program);
 registerSkills(program);
 
