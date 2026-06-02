@@ -1,5 +1,13 @@
 # @agent-crm/cli
 
+## 2.0.4
+
+### Patch Changes
+
+- 0f88aeb: Add a cloud `acrm records list` command for finding existing record IDs before linking deals.
+- Updated dependencies [0f88aeb]
+  - @agent-crm/sdk@2.0.3
+
 ## 2.0.3
 
 ### Patch Changes

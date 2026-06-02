@@ -17,18 +17,21 @@ import { readCloudSessionContext, type CloudSessionContext } from "../lib/cloud-
 
 type Prefer = "keep" | "discard" | "interactive";
 
+type RecordsListOpts = {
+  search?: string;
+  limit?: string;
+  cursor?: string;
+  value?: string[];
+  field?: string[];
+  secondaryLabels?: boolean;
+  json?: boolean;
+};
+
 type DedupeOpts = {
   keep: string;
   discard: string;
   dryRun?: boolean;
   prefer?: string;
-  json?: boolean;
-};
-
-type ListOpts = {
-  search?: string;
-  limit?: string;
-  field?: string[];
   json?: boolean;
 };
 
@@ -53,94 +56,6 @@ function truncate(s: string, n = 80): string {
 
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
-}
-
-function parseOptionalLimit(value: string | undefined): number | undefined {
-  if (value == null) return undefined;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new AcrmError(
-      `invalid --limit: ${value} (expected a positive integer)`,
-      ERR.INVALID_INPUT,
-    );
-  }
-  return parsed;
-}
-
-function requireCloudSession(explicitWorkspace: string | undefined): CloudSessionContext {
-  if (explicitWorkspace) {
-    throw new AcrmError(
-      "acrm records read commands require an Agent CRM cloud desktop session",
-      ERR.INVALID_INPUT,
-      "`-w/--workspace` local Postgres reads are not supported. Run this command from the Agent CRM app terminal.",
-    );
-  }
-  const session = readCloudSessionContext();
-  if (!session) {
-    throw new AcrmError(
-      "acrm records read commands require an Agent CRM cloud desktop session",
-      ERR.INVALID_INPUT,
-      "Open the Agent CRM app and run this command from its terminal so ACRM_DESKTOP_SESSION_TOKEN and ACRM_CLOUD_WORKSPACE_ID are available.",
-    );
-  }
-  return session;
-}
-
-async function runCloudRecordsList(
-  session: CloudSessionContext,
-  object: string,
-  opts: { search?: string; limit?: number; fields: string[] },
-): Promise<unknown> {
-  const url = new URL("/app/workspace/records", session.syncEngineUrl);
-  url.searchParams.set("object_slug", object);
-  if (opts.search) url.searchParams.set("search_query", opts.search);
-  if (opts.limit !== undefined) url.searchParams.set("limit", String(opts.limit));
-  for (const field of opts.fields) url.searchParams.append("field", field);
-  const payload = await requestCloudRecordsApi(session, url);
-  const { ok: _ok, objectSlug, ...rest } = payload;
-  return {
-    object_slug: typeof objectSlug === "string" ? objectSlug : object,
-    ...rest,
-  };
-}
-
-async function runCloudRecordsShow(
-  session: CloudSessionContext,
-  object: string,
-  idOrIdentityKey: string,
-): Promise<unknown> {
-  const url = new URL(
-    `/app/workspace/records/${encodeURIComponent(object)}/${encodeURIComponent(idOrIdentityKey)}`,
-    session.syncEngineUrl,
-  );
-  const payload = await requestCloudRecordsApi(session, url);
-  const { ok: _ok, ...data } = payload;
-  return data;
-}
-
-async function requestCloudRecordsApi(
-  session: CloudSessionContext,
-  url: URL,
-): Promise<Record<string, unknown>> {
-  const response = await fetch(url.toString(), {
-    headers: {
-      authorization: `Bearer ${session.desktopSessionToken}`,
-      accept: "application/json",
-    },
-  });
-  const payload = await response.json().catch(() => undefined) as
-    | { ok?: unknown; error?: unknown; [key: string]: unknown }
-    | undefined;
-  if (!response.ok || payload?.ok !== true) {
-    throw new AcrmError(
-      "failed to read records",
-      ERR.IMPORT,
-      typeof payload?.error === "string"
-        ? payload.error
-        : `sync engine returned HTTP ${response.status}`,
-    );
-  }
-  return payload;
 }
 
 // Readline-based conflict resolver for `--prefer interactive`. Each conflict
@@ -188,31 +103,42 @@ export function registerRecords(program: Command): void {
   records
     .command("list <object>")
     .description(
-      "list records on an object, optionally searching identity fields and filtering by field values.",
+      "list/search records in the active cloud desktop workspace. Use this to find record IDs before linking deals, people, or companies.",
     )
-    .option("--search <query>", "search people by name/email/LinkedIn/X URL, companies by name/domain, and other objects by active values")
-    .option("--limit <n>", "maximum records to return (default: 25)")
+    .option("--search <query>", "search labels and active values")
+    .option("--limit <n>", "maximum records to return (default: 25, max: 250)")
+    .option("--cursor <record_id>", "continue after a previous page cursor")
+    .option("--value <attribute_slug>", "include a specific attribute value; repeatable", collect, [] as string[])
     .option("--field <slug=value>", "filter records by an active field value; repeatable", collect, [] as string[])
+    .option("--no-secondary-labels", "do not include secondary labels in previews")
     .option("--json", "force JSON output")
     .addHelpText(
       "after",
       `
 Examples:
-  acrm records list people --search greg --json
-  acrm records list companies --search acme --limit 10
+  # find a company record id before creating a linked deal
+  acrm records list companies --search Kubby --limit 5 --json
+
+  # search people and include likely linking fields
+  acrm records list people --search "Jane Acme" \\
+      --value email_addresses \\
+      --value linkedin_url \\
+      --json
+
+  # filter by a known active field value
   acrm records list people --field email_addresses=greg@example.com --json
+
+  # create a deal linked to the returned records
+  acrm deals create --name "Acme pilot" \\
+      --company <company_record_id> \\
+      --person <person_record_id>
 `,
     )
-    .action(async (object: string, opts: ListOpts) => {
+    .action(async (object: string, opts: RecordsListOpts) => {
       const root = program.opts() as { json?: boolean; workspace?: string };
       setJsonMode(root.json || opts.json);
       try {
-        const limit = parseOptionalLimit(opts.limit);
-        ok(await runCloudRecordsList(requireCloudSession(root.workspace), object, {
-          search: opts.search,
-          limit,
-          fields: opts.field ?? [],
-        }));
+        ok(await runRecordsList(object, opts, root.workspace));
       } catch (e) {
         if (e instanceof AcrmError) fail(e.message, e.code, e.hint);
         else fail(e instanceof Error ? e.message : String(e), ERR.UNHANDLED);
@@ -239,11 +165,7 @@ Examples:
       const root = program.opts() as { json?: boolean; workspace?: string };
       setJsonMode(root.json || opts.json);
       try {
-        ok(await runCloudRecordsShow(
-          requireCloudSession(root.workspace),
-          object,
-          idOrIdentityKey,
-        ));
+        ok(await runRecordsShow(object, idOrIdentityKey, root.workspace));
       } catch (e) {
         if (e instanceof AcrmError) fail(e.message, e.code, e.hint);
         else fail(e instanceof Error ? e.message : String(e), ERR.UNHANDLED);
@@ -488,3 +410,99 @@ to inspect the validated plan before applying it.
       }
     });
 }
+
+async function runRecordsList(
+  objectSlug: string,
+  opts: RecordsListOpts,
+  explicitWorkspace?: string,
+): Promise<unknown> {
+  const session = requireCloudSession(explicitWorkspace, "acrm records list");
+  const url = new URL("/app/workspace/records", session.syncEngineUrl);
+  url.searchParams.set("object_slug", objectSlug);
+  url.searchParams.set("limit", String(parseRecordListLimit(opts.limit)));
+  if (opts.cursor) url.searchParams.set("cursor", opts.cursor);
+  if (opts.value?.length) url.searchParams.set("value_attributes", opts.value.join(","));
+  for (const field of opts.field ?? []) url.searchParams.append("field", field);
+  if (opts.secondaryLabels === false) url.searchParams.set("include_secondary_labels", "false");
+  if (opts.search) url.searchParams.set("search_query", opts.search);
+  const payload = await requestCloudRecordsApi(session, url, "failed to list records");
+  const { ok: _ok, ...data } = payload;
+  return data;
+}
+
+async function runRecordsShow(
+  objectSlug: string,
+  idOrIdentityKey: string,
+  explicitWorkspace?: string,
+): Promise<unknown> {
+  const session = requireCloudSession(explicitWorkspace, "acrm records show");
+  const url = new URL(
+    `/app/workspace/records/${encodeURIComponent(objectSlug)}/${encodeURIComponent(idOrIdentityKey)}`,
+    session.syncEngineUrl,
+  );
+  const payload = await requestCloudRecordsApi(session, url, "failed to show record");
+  const { ok: _ok, ...data } = payload;
+  return data;
+}
+
+async function requestCloudRecordsApi(
+  session: CloudSessionContext,
+  url: URL,
+  failureMessage: string,
+): Promise<Record<string, unknown>> {
+  const response = await fetch(url.toString(), {
+    headers: {
+      authorization: `Bearer ${session.desktopSessionToken}`,
+      accept: "application/json",
+    },
+  });
+  const payload = await response.json().catch(() => undefined) as
+    | { ok?: unknown; error?: unknown; [key: string]: unknown }
+    | undefined;
+  if (!response.ok || payload?.ok !== true) {
+    throw new AcrmError(
+      failureMessage,
+      ERR.IMPORT,
+      typeof payload?.error === "string" ? payload.error : `sync engine returned HTTP ${response.status}`,
+    );
+  }
+  return payload;
+}
+
+function requireCloudSession(
+  explicitWorkspace?: string,
+  commandName = "acrm records read",
+): CloudSessionContext {
+  if (explicitWorkspace) {
+    throw new AcrmError(
+      `${commandName} requires an Agent CRM cloud desktop session`,
+      ERR.INVALID_INPUT,
+      "`-w/--workspace` local Postgres reads are not supported. Run this command from the Agent CRM app terminal.",
+    );
+  }
+  const session = readCloudSessionContext();
+  if (!session) {
+    throw new AcrmError(
+      `${commandName} requires an Agent CRM cloud desktop session`,
+      ERR.INVALID_INPUT,
+      "Open the Agent CRM app and run this command from its terminal so ACRM_DESKTOP_SESSION_TOKEN and ACRM_CLOUD_WORKSPACE_ID are available.",
+    );
+  }
+  return session;
+}
+
+function parseRecordListLimit(raw: string | undefined): number {
+  if (raw == null || raw.trim() === "") return 25;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 250) {
+    throw new AcrmError("invalid --limit value (expected an integer from 1 to 250)", ERR.INVALID_INPUT);
+  }
+  return parsed;
+}
+
+export const __test = {
+  parseRecordListLimit,
+  requireCloudSession,
+  runRecordsList,
+  runRecordsShow,
+};
