@@ -1,6 +1,6 @@
 {
   "name": "@agent-crm/cli",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "The headless CRM for Claude",
   "homepage": "https://github.com/cluster-software/agent-crm#readme",
   "repository": {
@@ -31,7 +31,7 @@
     "postinstall": "node ./postinstall.cjs"
   },
   "dependencies": {
-    "@agent-crm/sdk": "2.0.1",
+    "@agent-crm/sdk": "2.0.2",
     "commander": "^12.1.0"
   },
   "engines": {

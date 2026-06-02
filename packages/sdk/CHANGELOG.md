@@ -1,5 +1,11 @@
 # @agent-crm/sdk
 
+## 2.0.2
+
+### Patch Changes
+
+- cfc62cd: Guide agents to ask which real deals to create after configuring a Deals pipeline.
+
 ## 2.0.1
 
 ### Patch Changes
