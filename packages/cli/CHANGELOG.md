@@ -1,5 +1,13 @@
 # @agent-crm/cli
 
+## 1.0.5
+
+### Patch Changes
+
+- 0c42e05: Add cloud deals commands and bundled setup-deal-pipeline agent guidance.
+- Updated dependencies [0c42e05]
+  - @agent-crm/sdk@1.0.4
+
 ## 1.0.4
 
 ### Patch Changes
