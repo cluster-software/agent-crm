@@ -150,8 +150,9 @@ jobs:
             "$RUNNER_TEMP"/agent-crm-cli-*.tgz
           ./node_modules/.bin/acrm --version
           ./node_modules/.bin/acrm init
-          ./node_modules/.bin/acrm records create people \
+          created=$(./node_modules/.bin/acrm --json records create people \
             --field name=Smoke \
-            --field email_addresses=smoke@test.com
-          ./node_modules/.bin/acrm execute \
-            "select count(*) as n from acrm_record"
+            --field email_addresses=smoke@test.com)
+          record_id=$(node -e "const p = JSON.parse(process.argv[1]); if (!p.ok || !p.data.record_id) throw new Error('missing created record_id'); console.log(p.data.record_id)" "$created")
+          ./node_modules/.bin/acrm --json records update people "$record_id" \
+            --field job_title=Smoke-tested
