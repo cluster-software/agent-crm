@@ -72,6 +72,10 @@ into `deals`. Suggest a custom object instead.
      --map lost:closed_lost
    ```
 
+6. After the pipeline is set, keep the user in flow by asking which real deals
+   they want to create next. Ask for the company/person, stage, and next step
+   for each deal; do not invent deals without user-provided opportunities.
+
 ## Create or update deals
 
 Only create a first deal if the user asks for it or gives a real opportunity.

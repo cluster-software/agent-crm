@@ -77,6 +77,7 @@ export const AGENT_INSTRUCTIONS_BLOCK = [
   "- `acrm records update <object> <record_id> --field slug=value` updates an existing record; repeat `--field` for multiple or multivalued fields.",
   "- `acrm records dedupe <object> --keep <record_id> --discard <record_id>` merges duplicate records.",
   "- In desktop cloud sessions, `acrm deals pipeline set --stage lead:Lead --stage closed_won:\"Closed Won\" --stage closed_lost:\"Closed Lost\"` configures the Deals pipeline.",
+  "- After configuring a Deals pipeline, ask which real deals the user wants to create next; do not invent deals without user-provided opportunities.",
   "- In desktop cloud sessions, `acrm deals create`, `acrm deals update`, `acrm deals list`, and `acrm deals delete` manage sales opportunities through the hosted backend API.",
   "",
   "Data model:",
